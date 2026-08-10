@@ -1,0 +1,9 @@
+node_modules/
+dist/
+screenshots/
+test-results/
+playwright-report/
+*.local
+.DS_Store
+.claude/settings.local.json
+poc-video/

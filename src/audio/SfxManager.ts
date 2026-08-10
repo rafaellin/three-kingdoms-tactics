@@ -1,0 +1,103 @@
+import type Phaser from 'phaser'
+import { setSoundVolume } from './sound'
+
+/**
+ * 音效管理器（渲染层）。
+ *
+ * 职责：
+ * - 构建期自动发现 assets/sound/ 下全部可播音频（新增文件无需改代码）；
+ * - 移动等需要循环的音效：playLooped 开始循环、stopLooped 停止（移动结束必须停）；
+ * - 一次性音效（战斗/点击等）后续按需在 playLooped 基础上加 playOnce。
+ *
+ * 与 BGM 并发：每次 sound.add() 是独立实例，WebAudio 混音下可同时播放，互不影响。
+ * 与 core 的边界：音效属纯视听层，不进事件日志/确定性回放。
+ */
+
+/** 默认音效音量（0~1）；未来"设置"界面调整 */
+export const DEFAULT_SFX_VOLUME = 0.3
+
+/** 浏览器可播放的音频扩展名（.pkf 等伴生文件自动忽略） */
+const SFX_URLS: Record<string, string> = import.meta.glob('/assets/sound/*.{wav,mp3,ogg,m4a}', {
+  query: '?url',
+  import: 'default',
+  eager: true
+})
+
+/** 对外暴露的音效状态（dev bridge / e2e 断言用） */
+export interface SfxState {
+  /** 音频已加载完成，可播放 */
+  ready: boolean
+  /** 当前音量（0~1） */
+  volume: number
+  /** 当前是否有循环音效在播（如移动脚步） */
+  loopPlaying: boolean
+}
+
+export class SfxManager {
+  private readonly keys: Set<string> = new Set()
+  /** 当前循环音效（同一时刻只允许一个，如移动脚步） */
+  private loop: Phaser.Sound.BaseSound | null = null
+  private volume = DEFAULT_SFX_VOLUME
+  private ready = false
+
+  constructor(private readonly scene: Phaser.Scene) {
+    for (const [path, url] of Object.entries(SFX_URLS)) {
+      const key = SfxManager.baseKey(path)
+      this.keys.add(key)
+      this.scene.load.audio(key, url)
+    }
+    // 场景关闭时停止循环音效
+    this.scene.events.once('shutdown', () => this.stopLooped())
+  }
+
+  /** 路径 → 缓存 key：取文件名（去扩展名），如 '/assets/sound/hero move.wav' → 'hero move' */
+  private static baseKey(path: string): string {
+    const file = path.split('/').pop() ?? path
+    return file.replace(/\.[^.]+$/, '')
+  }
+
+  /** 开始异步加载音效；resolve 时已可播放 */
+  load(): Promise<void> {
+    return new Promise((resolve) => {
+      if (this.keys.size === 0) {
+        resolve()
+        return
+      }
+      this.scene.load.once('complete', () => {
+        this.ready = true
+        resolve()
+      })
+      this.scene.load.start()
+    })
+  }
+
+  /** 循环播放一个音效（如移动脚步）；未就绪或已有循环音效时忽略 */
+  playLooped(key: string): void {
+    if (!this.ready || !this.keys.has(key) || this.loop) return
+    const s = this.scene.sound.add(key, { loop: true, volume: this.volume })
+    s.play()
+    this.loop = s
+  }
+
+  /** 停止当前循环音效（移动结束必须调用） */
+  stopLooped(): void {
+    if (!this.loop) return
+    this.loop.stop()
+    this.loop.destroy()
+    this.loop = null
+  }
+
+  /** 设置音量（0~1，clamp）；未来"设置"界面用 */
+  setVolume(v: number): void {
+    this.volume = Math.max(0, Math.min(1, v))
+    if (this.loop) setSoundVolume(this.loop, this.volume)
+  }
+
+  getVolume(): number {
+    return this.volume
+  }
+
+  getState(): SfxState {
+    return { ready: this.ready, volume: this.volume, loopPlaying: this.loop !== null }
+  }
+}
