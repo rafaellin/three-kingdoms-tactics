@@ -13,10 +13,9 @@ import {
   BASE_MAX_MOVEMENT,
   BASE_SIGHT_RANGE,
   addResources,
-  applyWeeklyIncome,
+  applyDailyIncome,
   canAfford,
   subResources,
-  weekOf,
   ZERO_RESOURCES,
   type FactionId,
   type General,
@@ -100,7 +99,7 @@ function setup(state: GameState, payload: SetupPayload): GameState {
   }
 }
 
-/** 轮到下一势力；一圈轮完则天数 +1；轮到英雄所属势力时重置其移动力；跨周触发每周结算 */
+/** 轮到下一势力；一圈轮完则天数 +1；轮到英雄所属势力时重置其移动力；天数 +1 触发每日结算 */
 function advanceTurn(state: GameState): GameState {
   const order = state.turnOrder
   if (order.length === 0) return state
@@ -119,10 +118,11 @@ function advanceTurn(state: GameState): GameState {
     hero,
     turn: newTurn
   }
-  // 跨周（第 N 周 → 第 N+1 周）：触发每周结算（城池收入 + 矿产出）
-  if (weekOf(newTurn) !== weekOf(oldTurn)) {
-    nextState = applyWeeklyIncome(nextState)
+  // 天数 +1（一圈轮完回第一势力）：每日结算（城池产金 + 矿产出）
+  if (newTurn !== oldTurn) {
+    nextState = applyDailyIncome(nextState)
   }
+  // 跨周（第 N 周 → 第 N+1 周）的"产出预备役部队"依赖军制/招募系统，未实现（PRD 注明）
   return nextState
 }
 
@@ -208,7 +208,7 @@ function interactNode(
       nodeStates: { ...state.nodeStates, [hex]: { ...nodeState, visited: true } }
     }
   }
-  if (def.weeklyBonus) {
+  if (def.dailyBonus) {
     if (nodeState.owner) return state // 已有主不夺占（战斗留后续）
     return {
       ...state,

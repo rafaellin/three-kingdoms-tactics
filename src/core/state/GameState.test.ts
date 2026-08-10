@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'vitest'
 import { CommandLog } from '../events/CommandLog'
 import {
-  applyWeeklyIncome,
+  applyDailyIncome,
   canAfford,
   createInitialState,
   deserializeState,
@@ -75,9 +75,9 @@ describe('周计算 weekOf', () => {
   })
 })
 
-describe('game/advanceTurn 跨周触发每周结算', () => {
-  test('第 7 天跨到第 8 天（week1→2）：城池收入 + 矿产出到账', () => {
-    // 手工构造：turn=7（第 1 周最后一天），蜀有成都（Lv1）+ 木矿
+describe('game/advanceTurn 每日结算', () => {
+  test('天数 +1（圈回第一势力）：城池产金 + 矿产出到账（每天结算一次）', () => {
+    // 手工构造：turn=7，蜀有成都（Lv1）+ 木矿，从魏开始推一圈回到魏（天数 +1）
     const map = makePlainMap(5)
     map.nodes[key({ q: 1, r: 0 })] = 'woodMine'
     const base = new CommandLog<GameState>(createInitialState(), gameReducer)
@@ -85,31 +85,36 @@ describe('game/advanceTurn 跨周触发每周结算', () => {
     const crafted: GameState = {
       ...base.getState(),
       turn: 7,
-      currentFaction: 'wei', // 从魏开始推，轮到蜀时跨周
+      currentFaction: 'wei',
       nodeStates: {
         ...base.getState().nodeStates,
         [key({ q: 1, r: 0 })]: { owner: 'shu', visited: false }
       }
     }
     const store = new CommandLog<GameState>(crafted, gameReducer)
-    // wei → shu → wu → qun → wei 一圈回来 turn 7→8，跨周
+    // wei → shu → wu → qun → wei 一圈回来 turn 7→8，天数 +1 → 每日结算
     for (let i = 0; i < 4; i++) store.dispatch('game/advanceTurn')
     const s = store.getState()
     expect(s.turn).toBe(8)
-    expect(s.resources.shu?.gold).toBe((crafted.resources.shu?.gold ?? 0) + 100) // 成都 Lv1
-    expect(s.resources.shu?.wood).toBe((crafted.resources.shu?.wood ?? 0) + 10) // 木矿
+    expect(s.resources.shu?.gold).toBe((crafted.resources.shu?.gold ?? 0) + 10) // 成都 Lv1 ×10金/天
+    expect(s.resources.shu?.wood).toBe((crafted.resources.shu?.wood ?? 0) + 2) // 木矿 +2木/天
   })
 
-  test('同周内推进（turn 6→7）不触发结算', () => {
+  test('同一天内轮换（天数未变）不触发结算', () => {
     const base = new CommandLog<GameState>(createInitialState(), gameReducer)
     base.dispatch('game/setup', makeSetup())
     const crafted: GameState = { ...base.getState(), turn: 6, currentFaction: 'wei' }
     const store = new CommandLog<GameState>(crafted, gameReducer)
     const before = store.getState().resources
-    for (let i = 0; i < 4; i++) store.dispatch('game/advanceTurn')
+    // wei→shu→wu→qun：3 次推进，天数仍为 6，不结算
+    for (let i = 0; i < 3; i++) store.dispatch('game/advanceTurn')
     const s = store.getState()
-    expect(s.turn).toBe(7) // 未跨周
-    expect(s.resources).toEqual(before) // 无结算
+    expect(s.turn).toBe(6)
+    expect(s.resources).toEqual(before)
+    // 第 4 次推进（qun→wei）天数 6→7，结算一次
+    store.dispatch('game/advanceTurn')
+    expect(store.getState().turn).toBe(7)
+    expect(store.getState().resources.shu?.gold).toBe((before.shu?.gold ?? 0) + 10)
   })
 })
 
@@ -140,7 +145,7 @@ describe('economy 资源增扣', () => {
   })
 })
 
-describe('applyWeeklyIncome（每周结算）', () => {
+describe('applyDailyIncome（每日结算）', () => {
   /** 带两座矿（木矿→蜀、石矿→魏）+ 成都（蜀，Lv1）的地图 */
   function makeMineState(): GameState {
     const map = makePlainMap(3, {
@@ -158,33 +163,33 @@ describe('applyWeeklyIncome（每周结算）', () => {
     return s
   }
 
-  test('城池收入：内政厅等级 ×100 金给所属势力', () => {
+  test('城池收入：内政厅等级 ×10 金/天 给所属势力', () => {
     const s = makeMineState()
-    const after = applyWeeklyIncome(s)
-    // 成都 Lv1 → shu +100 金；魏无城
-    expect(after.resources.shu?.gold).toBe(s.resources.shu?.gold + 100)
+    const after = applyDailyIncome(s)
+    // 成都 Lv1 → shu +10 金；魏无城
+    expect(after.resources.shu?.gold).toBe(s.resources.shu?.gold + 10)
     expect(after.resources.wei?.gold).toBe(s.resources.wei?.gold)
   })
 
-  test('矿产出：木矿+10木 / 石矿+8石 给占领方', () => {
+  test('矿产出：木矿+2木/天 / 石矿+1石/天 给占领方', () => {
     const s = makeMineState()
-    const after = applyWeeklyIncome(s)
-    expect(after.resources.shu?.wood).toBe((s.resources.shu?.wood ?? 0) + 10)
-    expect(after.resources.wei?.stone).toBe((s.resources.wei?.stone ?? 0) + 8)
+    const after = applyDailyIncome(s)
+    expect(after.resources.shu?.wood).toBe((s.resources.shu?.wood ?? 0) + 2)
+    expect(after.resources.wei?.stone).toBe((s.resources.wei?.stone ?? 0) + 1)
     // 其他资源不变
-    expect(after.resources.shu?.gold).toBe((s.resources.shu?.gold ?? 0) + 100)
+    expect(after.resources.shu?.gold).toBe((s.resources.shu?.gold ?? 0) + 10)
     expect(after.resources.shu?.iron).toBe(s.resources.shu?.iron)
   })
 
   test('无主矿不产出', () => {
     const s = makeMineState()
     s.nodeStates[key({ q: 1, r: 0 })] = { owner: null, visited: false }
-    const after = applyWeeklyIncome(s)
+    const after = applyDailyIncome(s)
     expect(after.resources.shu?.wood).toBe(s.resources.shu?.wood)
-    expect(after.resources.shu?.gold).toBe((s.resources.shu?.gold ?? 0) + 100)
+    expect(after.resources.shu?.gold).toBe((s.resources.shu?.gold ?? 0) + 10)
   })
 
-  test('宝箱非矿，每周结算不计产出', () => {
+  test('宝箱非矿，每日结算不计产出', () => {
     const map = makePlainMap(3)
     map.nodes[key({ q: 1, r: 0 })] = 'chest'
     const store = new CommandLog<GameState>(createInitialState(), gameReducer)
@@ -192,7 +197,7 @@ describe('applyWeeklyIncome（每周结算）', () => {
     store.dispatch('game/setup', makeSetup({ map, towns: [] }))
     const s = store.getState()
     s.nodeStates[key({ q: 1, r: 0 })] = { owner: null, visited: true }
-    const after = applyWeeklyIncome(s)
+    const after = applyDailyIncome(s)
     expect(after).toEqual(s) // 无城无矿 → 结算无变化
   })
 })

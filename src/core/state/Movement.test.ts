@@ -186,8 +186,8 @@ describe('unit/move 资源点拾取', () => {
     expect(store.getState().nodeStates[key({ q: 1, r: 0 })]?.owner).toBe('wei')
   })
 
-  test('矿产出类型由数据表决定（木矿 +10 木）', () => {
-    expect(RESOURCE_NODE_DEFS.woodMine.weeklyBonus?.wood).toBe(10)
+  test('矿产出类型由数据表决定（木矿 +2 木/天）', () => {
+    expect(RESOURCE_NODE_DEFS.woodMine.dailyBonus?.wood).toBe(2)
     expect(isMine('woodMine')).toBe(true)
     expect(isMine('chest')).toBe(false)
   })

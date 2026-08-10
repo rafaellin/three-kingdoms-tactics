@@ -14,19 +14,20 @@ export interface ResourceNodeDef {
   name: string
   /** 一次性拾取加成（chest）；矿无 */
   oneTime?: Partial<Resources>
-  /** 矿的每周产出（仅 mine 有）；占领后每周结算 */
-  weeklyBonus?: Partial<Resources>
+  /** 矿的每日产出（仅 mine 有）；占领后每天结算（用户确认：矿产出是每天） */
+  dailyBonus?: Partial<Resources>
 }
 
 export const RESOURCE_NODE_DEFS: Readonly<Record<ResourceNodeType, ResourceNodeDef>> = {
-  woodMine: { type: 'woodMine', name: '伐木场', weeklyBonus: { wood: 10 } },
-  stoneMine: { type: 'stoneMine', name: '采石场', weeklyBonus: { stone: 8 } },
-  ironMine: { type: 'ironMine', name: '冶铁厂', weeklyBonus: { iron: 6 } },
+  // 每日产出为占位数值（后续平衡调整）：木多、石中、铁少
+  woodMine: { type: 'woodMine', name: '伐木场', dailyBonus: { wood: 2 } },
+  stoneMine: { type: 'stoneMine', name: '采石场', dailyBonus: { stone: 1 } },
+  ironMine: { type: 'ironMine', name: '冶铁厂', dailyBonus: { iron: 1 } },
   // 宝箱固定 30金+5木（PRD 说"随机"，随机化需 RNG 注入，后续接入）
   chest: { type: 'chest', name: '宝箱', oneTime: { gold: 30, wood: 5 } }
 }
 
-/** 该类型是否为矿（可占领、每周产出） */
+/** 该类型是否为矿（可占领、每日产出） */
 export function isMine(type: ResourceNodeType): boolean {
   return type === 'woodMine' || type === 'stoneMine' || type === 'ironMine'
 }

@@ -30,13 +30,19 @@ const FACTION_COLORS: Record<FactionId, number> = {
   qun: 0x8844aa
 }
 
-/** 资源点图标颜色（渲染层专用） */
-const NODE_COLORS: Record<string, number> = {
-  woodMine: 0x8b5a2b,
-  stoneMine: 0x9aa0a6,
-  ironMine: 0xb0bec5,
-  chest: 0xd4af37
+/** 资源点图标 key（渲染层专用；Kenney CC0，见 assets/icons/README.md） */
+const NODE_ICON_KEYS: Record<string, string> = {
+  woodMine: 'icon-wood',
+  stoneMine: 'icon-stone',
+  ironMine: 'icon-iron',
+  chest: 'icon-gold'
 }
+
+/** 图标 URL（Vite 构建期自动发现 assets/icons/*.png；新增图标无需改代码） */
+const ICON_URLS = import.meta.glob('/assets/icons/*.png', { query: '?url', import: 'default', eager: true }) as Record<
+  string,
+  string
+>
 
 /**
  * 大地图场景（渲染层）。
@@ -70,8 +76,13 @@ export class AdventureScene extends Phaser.Scene {
   private townGraphics!: Phaser.GameObjects.Graphics
   private overlayGraphics!: Phaser.GameObjects.Graphics
   private heroSprite!: Phaser.GameObjects.Graphics
-  /** 顶部 HUD：资源条 + 日期 */
-  private hudText!: Phaser.GameObjects.Text
+  /** 顶部 HUD：资源条（图标 + 数值）+ 日期 */
+  private hudValueTexts!: Phaser.GameObjects.Text[]
+  private hudDateText!: Phaser.GameObjects.Text
+  /** 资源点图标 sprite（hexKey → image；随迷雾探索创建、重建清理） */
+  private nodeSprites = new Map<string, Phaser.GameObjects.Image>()
+  /** 城池图标 sprite（town.id → image） */
+  private townSprites = new Map<string, Phaser.GameObjects.Image>()
   /** 城池详情 tag（点击城池格显示） */
   private townDetailText!: Phaser.GameObjects.Text
   /** 结束回合按钮 */
@@ -96,6 +107,16 @@ export class AdventureScene extends Phaser.Scene {
 
   constructor() {
     super(AdventureScene.KEY)
+  }
+
+  /** 预加载资源图标（Kenney CC0，assets/icons/）；key = 文件名去扩展名 */
+  preload(): void {
+    for (const [path, url] of Object.entries(ICON_URLS)) {
+      const file = path.split('/').pop()
+      if (!file) continue
+      const key = file.replace(/\.png$/, '')
+      this.load.image(key, url)
+    }
   }
 
   create(): void {
@@ -196,13 +217,24 @@ export class AdventureScene extends Phaser.Scene {
     this.heroSprite.fillCircle(0, 0, 10)
     this.heroSprite.lineStyle(2, 0xffffff, 1)
     this.heroSprite.strokeCircle(0, 0, 10)
-    // 顶部 HUD：资源条 + 日期（固定视口坐标，非世界坐标）
-    this.hudText = this.add
-      .text(16, 10, '', {
-        fontFamily: 'sans-serif',
-        fontSize: '22px',
-        color: '#f5f2e8'
-      })
+    // 顶部 HUD：资源条（图标 + 数值）+ 日期（固定视口坐标，非世界坐标）。
+    // 每项固定列：图标在 x、数值右对齐到 right，列宽给足避免数字变长时重叠。
+    const hudStyle = { fontFamily: 'sans-serif', fontSize: '20px', color: '#f5f2e8' }
+    const HUD_COLS = [
+      { key: 'icon-gold', x: 16, right: 68 },
+      { key: 'icon-wood', x: 116, right: 168 },
+      { key: 'icon-stone', x: 216, right: 268 },
+      { key: 'icon-iron', x: 316, right: 368 }
+    ]
+    for (const col of HUD_COLS) {
+      this.add.image(col.x, 24, col.key).setDepth(10).setScrollFactor(0).setScale(22 / 64)
+    }
+    this.hudValueTexts = HUD_COLS.map((col) =>
+      this.add.text(col.right, 24, '', hudStyle).setOrigin(1, 0.5).setDepth(10).setScrollFactor(0)
+    )
+    this.hudDateText = this.add
+      .text(404, 24, '', hudStyle)
+      .setOrigin(0, 0.5)
       .setDepth(10)
       .setScrollFactor(0)
     // 城池详情 tag（默认隐藏）
@@ -264,68 +296,94 @@ export class AdventureScene extends Phaser.Scene {
     }
   }
 
-  /** 城池渲染：方块按归属色填充，叠在 hero 之下 */
+  /** 城池渲染：房屋图标按归属色 tint，叠在 hero 之下；未探索区域的城池不可见 */
   private drawTowns(): void {
     this.townGraphics.clear()
+    const hero = this.state.hero
+    if (!hero) return
+    const fog = this.state.visibility[hero.faction] ?? {}
+    const seen = new Set<string>()
     for (const town of this.state.towns) {
+      if (fog[hexKey(town.position)] === 'unexplored') continue
+      seen.add(town.id)
       const c = this.layout.hexToPixel(town.position)
-      const color = FACTION_COLORS[town.owner]
-      this.townGraphics.fillStyle(color, 1)
-      // 方块比 hero 圆点略大，叠在 (0,0) 时从 hero 底部露出来
-      this.townGraphics.fillRect(c.x - 14, c.y - 14, 28, 28)
-      this.townGraphics.lineStyle(2, 0xffffff, 1)
-      this.townGraphics.strokeRect(c.x - 14, c.y - 14, 28, 28)
+      let sprite = this.townSprites.get(town.id)
+      if (!sprite) {
+        sprite = this.add.image(c.x, c.y, 'icon-town').setDepth(2).setScale(34 / 64)
+        this.townSprites.set(town.id, sprite)
+      }
+      sprite.setPosition(c.x, c.y)
+      // 归属色 tint：魏红 蜀绿 吴蓝 群紫
+      sprite.setTint(FACTION_COLORS[town.owner])
+    }
+    // 重建（换种子）后清理已不存在城池的 sprite
+    for (const id of this.townSprites.keys()) {
+      if (!seen.has(id)) {
+        this.townSprites.get(id)?.destroy()
+        this.townSprites.delete(id)
+      }
     }
   }
 
-  /** 资源点渲染：矿/宝箱按类型着色圆点；已拾取宝箱变暗、已占矿描边 */
+  /**
+   * 资源点渲染：按类型用图标（木/石/铁/金宝箱）；已拾取宝箱变暗、已占矿画白框；
+   * 未探索区域的资源点不可见。
+   */
   private drawNodes(): void {
     this.nodeGraphics.clear()
     const map = this.state.map
-    if (!map) return
+    const hero = this.state.hero
+    if (!map || !hero) return
+    const fog = this.state.visibility[hero.faction] ?? {}
+    const seen = new Set<string>()
     for (const [k, type] of Object.entries(map.nodes ?? {})) {
+      // 未探索区域资源不可见（与迷雾两态一致；该格被探索后永久可见）
+      if (fog[k] === 'unexplored') continue
       const node = this.state.nodeStates[k]
       if (!node) continue
       const hex = this.parseKey(k)
       if (!hex) continue
+      seen.add(k)
       const c = this.layout.hexToPixel(hex)
+      const iconKey = NODE_ICON_KEYS[type] ?? 'icon-gold'
+      let sprite = this.nodeSprites.get(k)
+      if (!sprite) {
+        sprite = this.add.image(c.x, c.y, iconKey).setDepth(2).setScale(24 / 64)
+        this.nodeSprites.set(k, sprite)
+      } else if (sprite.texture.key !== iconKey) {
+        sprite.setTexture(iconKey)
+      }
+      sprite.setPosition(c.x, c.y)
       const def = RESOURCE_NODE_DEFS[type]
-      const isMineType = Boolean(def.weeklyBonus)
-      // 矿：方块；宝箱：菱形。已拾取宝箱整体变暗
-      const base = NODE_COLORS[type] ?? 0xffffff
+      const isMineType = Boolean(def.dailyBonus)
       const claimed = node.owner !== null
       const dimmed = !isMineType && node.visited
-      const color = dimmed ? 0x555555 : base
-      this.nodeGraphics.fillStyle(color, 1)
-      if (isMineType) {
-        this.nodeGraphics.fillRect(c.x - 8, c.y - 8, 16, 16)
-      } else {
-        this.nodeGraphics.fillPoints(
-          [
-            new Phaser.Math.Vector2(c.x, c.y - 10),
-            new Phaser.Math.Vector2(c.x + 10, c.y),
-            new Phaser.Math.Vector2(c.x, c.y + 10),
-            new Phaser.Math.Vector2(c.x - 10, c.y)
-          ],
-          true
-        )
-      }
-      // 已占矿：白边
+      // 已拾取宝箱变暗；已占矿叠加白框（nodeGraphics）
+      sprite.setAlpha(dimmed ? 0.35 : 1)
       if (isMineType && claimed) {
         this.nodeGraphics.lineStyle(2, 0xffffff, 1)
-        this.nodeGraphics.strokeRect(c.x - 8, c.y - 8, 16, 16)
+        this.nodeGraphics.strokeRect(c.x - 13, c.y - 13, 26, 26)
+      }
+    }
+    // 重建（换种子）后清理已不存在资源点的 sprite
+    for (const k of this.nodeSprites.keys()) {
+      if (!seen.has(k)) {
+        this.nodeSprites.get(k)?.destroy()
+        this.nodeSprites.delete(k)
       }
     }
   }
 
-  /** 顶部 HUD：金/木/石/铁 + 第X周第X天（视口固定） */
+  /** 顶部 HUD：金/木/石/铁 图标+数值 + 第X周第X天（视口固定） */
   private updateHud(): void {
     const state = this.state
     if (!state.hero) return
     const r = state.resources[state.hero.faction]
-    this.hudText.setText(
-      `金: ${r.gold}   木: ${r.wood}   石: ${r.stone}   铁: ${r.iron}    第${weekOf(state.turn)}周第${state.turn}天`
-    )
+    this.hudValueTexts[0]?.setText(`${r.gold}`)
+    this.hudValueTexts[1]?.setText(`${r.wood}`)
+    this.hudValueTexts[2]?.setText(`${r.stone}`)
+    this.hudValueTexts[3]?.setText(`${r.iron}`)
+    this.hudDateText.setText(`第${weekOf(state.turn)}周第${state.turn}天`)
   }
 
   /** hexKey → Axial（渲染层命中/解析用；无法解析返回 null） */
@@ -532,6 +590,8 @@ export class AdventureScene extends Phaser.Scene {
   // ---------- dev 调试句柄 / e2e ----------
 
   getDebugState(): Record<string, unknown> {
+    // preload 加载图标期间 create() 尚未运行，store 未建：返回未就绪，让 e2e waitReady 轮询等待
+    if (!this.store) return { ready: false }
     const state = this.state
     const fog = state.hero ? (state.visibility[state.hero.faction] ?? {}) : {}
     const counts = { explored: 0, unexplored: 0 }
@@ -562,6 +622,11 @@ export class AdventureScene extends Phaser.Scene {
         picked: Object.values(state.nodeStates).filter((n) => n.visited).length,
         claimedMines: Object.values(state.nodeStates).filter((n) => n.owner !== null).length
       },
+      // 当前渲染的资源点 hexKey（仅已探索区域；迷雾中不可见）
+      visibleNodes: Object.entries(state.map?.nodes ?? {})
+        .filter(([k]) => fog[k] !== 'unexplored')
+        .map(([k]) => k)
+        .sort(),
       visibility: counts,
       busy: this.busy,
       bgm: this.bgm ? this.bgm.getState() : null,

@@ -140,29 +140,30 @@ export function canAfford(state: GameState, faction: FactionId, cost: Resources)
 }
 
 /**
- * 每周结算（纯函数）：城池收入 + 矿产出。
- * - 城池：内政厅等级 ×100 金 → 所属势力（政治加成依赖武将六维属性，暂为 0，PRD 注明）
- * - 矿：按 RESOURCE_NODE_DEFS 的 weeklyBonus 产出 → 占领方
+ * 每日结算（纯函数）：城池收入 + 矿产出。
+ * - 城池：内政厅等级 ×10 金/天 → 所属势力（政治加成依赖武将六维属性，暂为 0，PRD 注明）
+ * - 矿：按 RESOURCE_NODE_DEFS 的 dailyBonus 产出 → 占领方（用户确认：矿产出是每天）
+ * - 每周"产出预备役部队（需金钱/物资招募）"依赖军制/招募系统，未实现（PRD 注明）
  * 返回新 state，不就地修改。
  */
-export function applyWeeklyIncome(state: GameState): GameState {
+export function applyDailyIncome(state: GameState): GameState {
   let resources = state.resources
-  // 城池收入
+  // 城池收入（每天）
   for (const town of state.towns) {
     if (!town.owner) continue
     const owner = resources[town.owner]
     if (!owner) continue
     resources = {
       ...resources,
-      [town.owner]: addResources(owner, { gold: town.level * 100, wood: 0, stone: 0, iron: 0 })
+      [town.owner]: addResources(owner, { gold: town.level * 10, wood: 0, stone: 0, iron: 0 })
     }
   }
-  // 矿产出
+  // 矿产出（每天）
   for (const [hexKeyStr, nodeState] of Object.entries(state.nodeStates)) {
     if (!nodeState.owner) continue
     const nodeType = state.map?.nodes?.[hexKeyStr]
     if (!nodeType || !isMine(nodeType)) continue
-    const bonus = RESOURCE_NODE_DEFS[nodeType].weeklyBonus
+    const bonus = RESOURCE_NODE_DEFS[nodeType].dailyBonus
     if (!bonus) continue
     const owner = resources[nodeState.owner]
     if (!owner) continue

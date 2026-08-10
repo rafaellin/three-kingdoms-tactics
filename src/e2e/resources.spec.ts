@@ -1,7 +1,7 @@
 import { expect, test } from '@playwright/test'
 import { generateMap } from '../core/map/MapGen'
 import { computeVision, type Visibility } from '../core/fog/Fog'
-import { reachableArea } from '../core/pathfinding/Pathfinding'
+import { findPath, reachableArea } from '../core/pathfinding/Pathfinding'
 import { MapMovementCost } from '../core/pathfinding/MapMovementCost'
 import { hexKey, HexLayout, type Axial } from '../core/hex/HexGrid'
 import { BASE_MAX_MOVEMENT, BASE_SIGHT_RANGE } from '../core/state/GameState'
@@ -28,6 +28,8 @@ interface DebugGameState {
   hero?: { position: Axial; movementLeft: number; maxMovement: number }
   resources?: { gold: number; wood: number; stone: number; iron: number }
   nodeStates?: { picked: number; claimedMines: number }
+  /** 当前渲染的资源点 hexKey（仅已探索区域；未探索资源不可见） */
+  visibleNodes?: string[]
   towns?: { id: string; name: string; owner: string; level: number; position: Axial }[]
 }
 
@@ -74,6 +76,27 @@ const nodeOf = (kind: 'chest' | 'mine'): Axial => {
 
 const CHEST = nodeOf('chest')
 const MINE = nodeOf('mine')
+
+/** 沿路径逐格折叠视野（复现 reducer 每步 computeVision），返回最终 fog */
+const foldVision = (path: Axial[], startFog: Record<string, Visibility>): Record<string, Visibility> => {
+  let fog = startFog
+  for (let i = 1; i < path.length; i++) {
+    fog = computeVision({
+      sources: [{ position: path[i] as Axial, sightRange: BASE_SIGHT_RANGE }],
+      mapHexes: map.hexes,
+      terrainAt,
+      oldFog: fog
+    })
+  }
+  return fog
+}
+
+/** 给定 fog 下应渲染的资源点 hexKey 集合（未探索区域不渲染） */
+const visibleNodesFor = (fog: Record<string, Visibility>): string[] =>
+  Object.entries(map.nodes)
+    .filter(([k]) => fog[k] !== 'unexplored')
+    .map(([k]) => k)
+    .sort()
 
 /** hex → 屏幕像素（世界原点在视口中心，1920×1080） */
 const hexToScreen = (h: Axial): { x: number; y: number } => {
@@ -133,6 +156,8 @@ const chestReward = () => ({
 test('初始化：资源条 = shu 初始资源、第1周第1天、成都城池位于 (0,0)、点城池不移动', async ({ page }) => {
   await page.goto('/')
   await waitReady(page)
+  await page.evaluate((seed) => (window as { __game?: { setSeed(seed: number): void } }).__game?.setSeed(seed), SEED)
+  await page.evaluate(() => (window as { __game?: { setAnimationSpeed(ms: number): void } }).__game?.setAnimationSpeed(0))
 
   const s = await getState(page)
   expect(s.turn).toBe(1)
@@ -142,6 +167,8 @@ test('初始化：资源条 = shu 初始资源、第1周第1天、成都城池�
   expect(s.resources).toEqual(START_RESOURCES.shu)
   // 成都城池：蜀 Lv1，位于 (0,0)（与英雄出生点重合）
   expect(s.towns).toEqual([{ id: 't-chengdu', name: '成都', owner: 'shu', level: 1, position: { q: 0, r: 0 } }])
+  // 未探索区域资源不可见：渲染的资源点 = 仅开局已探索的那部分（与 core 复算一致）
+  expect(s.visibleNodes).toEqual(visibleNodesFor(initialFog))
   // 点击城池格 → 显示详情（不触发移动），英雄仍在出生点
   const townScreen = hexToScreen({ q: 0, r: 0 })
   await page.mouse.click(townScreen.x, townScreen.y)
@@ -170,6 +197,10 @@ test('拾取宝箱：移动到宝箱格后一次性 +30金+5木，picked=1', asy
     iron: START_RESOURCES.shu.iron
   })
   expect(s.nodeStates?.picked).toBe(1)
+  // 探索后新资源点变为可见：渲染集合 = 沿到达路径逐格折叠视野后的期望集合
+  const leg1 = findPath(START, CHEST, costWithFog(initialFog))
+  expect(leg1).not.toBeNull()
+  expect(s.visibleNodes).toEqual(visibleNodesFor(foldVision(leg1!, initialFog)))
 })
 
 test('占矿：走入无主矿格后 claimedMines=1、资源不变（未拾宝箱）', async ({ page }) => {
@@ -212,7 +243,7 @@ test('结束回合（E 键）：四势力轮完一圈回魏、天数 +1，周不
   expect(s.week).toBe(1)
 })
 
-test('跨周结算：拾取宝箱 + 占矿后推进到第2周，城池收入与矿产出到账', async ({ page }) => {
+test('每日结算：拾取宝箱 + 占矿后推进到第2周，城池每日产金 + 矿每日产出', async ({ page }) => {
   await page.goto('/')
   await waitReady(page)
   await page.evaluate((seed) => (window as { __game?: { setSeed(seed: number): void } }).__game?.setSeed(seed), SEED)
@@ -232,19 +263,23 @@ test('跨周结算：拾取宝箱 + 占矿后推进到第2周，城池收入与�
     wood: (r?.wood ?? 0) - chestReward().wood
   })
 
-  // ③ 推进到 turn=7（第1周末）：跨周结算尚未触发，仅有宝箱收益（城池/矿产未到账）
+  // ③ 推进到 turn=7（第1周）：每日结算已到账 6 次（turn 2..7 每天圈回魏时结算一次）
+  //    成都 Lv1 +10金/天 → +60金；木矿 +2木/天 → +12木（已占矿，从 turn2 起生效）
   const s7 = await pressUntil(page, (s) => s.turn === 7, 40)
   expect(s7.week).toBe(1)
-  expect(noChest(s7.resources)).toEqual({ gold: START_RESOURCES.shu.gold, wood: START_RESOURCES.shu.wood })
+  expect(noChest(s7.resources)).toEqual({
+    gold: START_RESOURCES.shu.gold + 6 * 10,
+    wood: START_RESOURCES.shu.wood + 6 * 2
+  })
   expect(s7.resources?.stone).toBe(START_RESOURCES.shu.stone)
   expect(s7.resources?.iron).toBe(START_RESOURCES.shu.iron)
 
-  // ④ 再推进一圈到 turn=8（跨周 1→2）：成都 Lv1 +100金、木矿 +10木 到账
+  // ④ 再推进一圈到 turn=8（第2周）：每日结算累计 7 次，成都 +70金、木矿 +14木
   const s8 = await pressUntil(page, (s) => s.turn === 8, 10)
   expect(s8.week).toBe(2)
   expect(noChest(s8.resources)).toEqual({
-    gold: START_RESOURCES.shu.gold + 100,
-    wood: START_RESOURCES.shu.wood + 10
+    gold: START_RESOURCES.shu.gold + 7 * 10,
+    wood: START_RESOURCES.shu.wood + 7 * 2
   })
   expect(s8.resources?.stone).toBe(START_RESOURCES.shu.stone)
   expect(s8.resources?.iron).toBe(START_RESOURCES.shu.iron)
