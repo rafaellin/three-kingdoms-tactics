@@ -56,3 +56,40 @@ describe('generateMap 确定性地图生成', () => {
     }
   })
 })
+
+describe('generateMap 资源点放置', () => {
+  test('半径 6 放置 8 个资源点（含矿与宝箱）', () => {
+    const map = generateMap(42, 6)
+    const types = Object.values(map.nodes)
+    expect(types.length).toBe(8)
+    expect(types.some((t) => t === 'woodMine')).toBe(true)
+    expect(types.some((t) => t === 'stoneMine')).toBe(true)
+    expect(types.some((t) => t === 'ironMine')).toBe(true)
+    expect(types.some((t) => t === 'chest')).toBe(true)
+  })
+
+  test('资源点落在平地格、且不在出生 clearing（中心+六邻居）', () => {
+    const map = generateMap(42, 6)
+    const clearingKeys = new Set<string>([hexKey({ q: 0, r: 0 })])
+    const center: Axial = { q: 0, r: 0 }
+    for (const h of map.hexes) {
+      if (hexDistance(center, h) === 1) clearingKeys.add(hexKey(h))
+    }
+    for (const [k, type] of Object.entries(map.nodes)) {
+      expect(type).toBeDefined()
+      expect(clearingKeys.has(k)).toBe(false)
+      expect(map.terrain[k]).toBe('plain')
+    }
+  })
+
+  test('确定性：同种子资源点布局一致', () => {
+    const a = generateMap(42, 6)
+    const b = generateMap(42, 6)
+    expect(a.nodes).toEqual(b.nodes)
+  })
+
+  test('小地图（半径 2）也至少 1 个资源点', () => {
+    const map = generateMap(1, 2)
+    expect(Object.keys(map.nodes).length).toBeGreaterThanOrEqual(1)
+  })
+})

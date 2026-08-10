@@ -7,8 +7,10 @@ import { hexKey, HexLayout, type Axial } from '../core/hex/HexGrid'
 import { findPath, reachableArea } from '../core/pathfinding/Pathfinding'
 import { MapMovementCost } from '../core/pathfinding/MapMovementCost'
 import { getTerrain } from '../data/terrain'
+import { RESOURCE_NODE_DEFS } from '../data/resourceNode'
 import { BgmManager } from '../audio/BgmManager'
 import { SfxManager } from '../audio/SfxManager'
+import { weekOf } from '../core/state/GameState'
 import {
   HERO_FACTION,
   HERO_GENERAL_ID,
@@ -18,6 +20,23 @@ import {
   START_TOWNS,
   TURN_ORDER
 } from '../data/bootstrap'
+import type { FactionId } from '../core/state/GameState'
+
+/** 势力显示颜色（渲染层专用）：魏红 蜀绿 吴蓝 群紫 */
+const FACTION_COLORS: Record<FactionId, number> = {
+  wei: 0xcc3333,
+  shu: 0x33aa44,
+  wu: 0x3366cc,
+  qun: 0x8844aa
+}
+
+/** 资源点图标颜色（渲染层专用） */
+const NODE_COLORS: Record<string, number> = {
+  woodMine: 0x8b5a2b,
+  stoneMine: 0x9aa0a6,
+  ironMine: 0xb0bec5,
+  chest: 0xd4af37
+}
 
 /**
  * 大地图场景（渲染层）。
@@ -47,8 +66,16 @@ export class AdventureScene extends Phaser.Scene {
   private readonly moveSfxKey = 'hero move'
   private mapGraphics!: Phaser.GameObjects.Graphics
   private fogGraphics!: Phaser.GameObjects.Graphics
+  private nodeGraphics!: Phaser.GameObjects.Graphics
+  private townGraphics!: Phaser.GameObjects.Graphics
   private overlayGraphics!: Phaser.GameObjects.Graphics
   private heroSprite!: Phaser.GameObjects.Graphics
+  /** 顶部 HUD：资源条 + 日期 */
+  private hudText!: Phaser.GameObjects.Text
+  /** 城池详情 tag（点击城池格显示） */
+  private townDetailText!: Phaser.GameObjects.Text
+  /** 结束回合按钮 */
+  private endTurnButton!: Phaser.GameObjects.Text
 
   /** 逐格移动动画耗时（ms）；0 = 瞬间完成（e2e 用） */
   private animationMs = 150
@@ -83,6 +110,15 @@ export class AdventureScene extends Phaser.Scene {
     void this.bgm.load()
     this.sfx = new SfxManager(this)
     void this.sfx.load()
+    // E 键结束回合（与右下角按钮等效）
+    this.input.keyboard?.on('keydown-E', () => this.endTurn())
+  }
+
+  /** 结束回合：dispatch game/advanceTurn，推进到下一势力（跨周自动结算） */
+  private endTurn(): void {
+    if (this.busy) return
+    this.store.dispatch('game/advanceTurn')
+    this.refreshViews()
   }
 
   // ---------- 生命周期 / 重建 ----------
@@ -108,6 +144,8 @@ export class AdventureScene extends Phaser.Scene {
     })
     this.mapKeys = new Set(this.state.map?.hexes.map(hexKey) ?? [])
     this.drawMap()
+    this.drawTowns()
+    this.drawNodes()
   }
 
   /** 重建游戏（dev：换种子重开） */
@@ -149,13 +187,48 @@ export class AdventureScene extends Phaser.Scene {
   private createLayers(): void {
     this.mapGraphics = this.add.graphics().setDepth(0)
     this.fogGraphics = this.add.graphics().setDepth(1)
-    this.overlayGraphics = this.add.graphics().setDepth(2)
-    this.heroSprite = this.add.graphics().setDepth(3)
+    this.nodeGraphics = this.add.graphics().setDepth(2)
+    this.townGraphics = this.add.graphics().setDepth(2)
+    this.overlayGraphics = this.add.graphics().setDepth(3)
+    this.heroSprite = this.add.graphics().setDepth(4)
     // hero 精灵绘制在局部原点（0,0），位置由 syncHeroSprite 按核心坐标设置
     this.heroSprite.fillStyle(0xffd166, 1)
     this.heroSprite.fillCircle(0, 0, 10)
     this.heroSprite.lineStyle(2, 0xffffff, 1)
     this.heroSprite.strokeCircle(0, 0, 10)
+    // 顶部 HUD：资源条 + 日期（固定视口坐标，非世界坐标）
+    this.hudText = this.add
+      .text(16, 10, '', {
+        fontFamily: 'sans-serif',
+        fontSize: '22px',
+        color: '#f5f2e8'
+      })
+      .setDepth(10)
+      .setScrollFactor(0)
+    // 城池详情 tag（默认隐藏）
+    this.townDetailText = this.add
+      .text(0, 0, '', {
+        fontFamily: 'sans-serif',
+        fontSize: '18px',
+        color: '#ffffff',
+        backgroundColor: 'rgba(0,0,0,0.65)'
+      })
+      .setDepth(11)
+      .setScrollFactor(0)
+      .setVisible(false)
+    // 结束回合按钮（右下角，视口固定）
+    this.endTurnButton = this.add
+      .text(1920 - 140, 1080 - 56, '结束回合 [E]', {
+        fontFamily: 'sans-serif',
+        fontSize: '20px',
+        color: '#ffffff',
+        backgroundColor: '#33415c'
+      })
+      .setDepth(12)
+      .setScrollFactor(0)
+      .setPadding(14, 8)
+      .setInteractive({ useHandCursor: true })
+    this.endTurnButton.on('pointerdown', () => this.endTurn())
   }
 
   /** 读 core 状态重绘地形（setup/重建后调用一次） */
@@ -191,6 +264,77 @@ export class AdventureScene extends Phaser.Scene {
     }
   }
 
+  /** 城池渲染：方块按归属色填充，叠在 hero 之下 */
+  private drawTowns(): void {
+    this.townGraphics.clear()
+    for (const town of this.state.towns) {
+      const c = this.layout.hexToPixel(town.position)
+      const color = FACTION_COLORS[town.owner]
+      this.townGraphics.fillStyle(color, 1)
+      // 方块比 hero 圆点略大，叠在 (0,0) 时从 hero 底部露出来
+      this.townGraphics.fillRect(c.x - 14, c.y - 14, 28, 28)
+      this.townGraphics.lineStyle(2, 0xffffff, 1)
+      this.townGraphics.strokeRect(c.x - 14, c.y - 14, 28, 28)
+    }
+  }
+
+  /** 资源点渲染：矿/宝箱按类型着色圆点；已拾取宝箱变暗、已占矿描边 */
+  private drawNodes(): void {
+    this.nodeGraphics.clear()
+    const map = this.state.map
+    if (!map) return
+    for (const [k, type] of Object.entries(map.nodes ?? {})) {
+      const node = this.state.nodeStates[k]
+      if (!node) continue
+      const hex = this.parseKey(k)
+      if (!hex) continue
+      const c = this.layout.hexToPixel(hex)
+      const def = RESOURCE_NODE_DEFS[type]
+      const isMineType = Boolean(def.weeklyBonus)
+      // 矿：方块；宝箱：菱形。已拾取宝箱整体变暗
+      const base = NODE_COLORS[type] ?? 0xffffff
+      const claimed = node.owner !== null
+      const dimmed = !isMineType && node.visited
+      const color = dimmed ? 0x555555 : base
+      this.nodeGraphics.fillStyle(color, 1)
+      if (isMineType) {
+        this.nodeGraphics.fillRect(c.x - 8, c.y - 8, 16, 16)
+      } else {
+        this.nodeGraphics.fillPoints(
+          [
+            new Phaser.Math.Vector2(c.x, c.y - 10),
+            new Phaser.Math.Vector2(c.x + 10, c.y),
+            new Phaser.Math.Vector2(c.x, c.y + 10),
+            new Phaser.Math.Vector2(c.x - 10, c.y)
+          ],
+          true
+        )
+      }
+      // 已占矿：白边
+      if (isMineType && claimed) {
+        this.nodeGraphics.lineStyle(2, 0xffffff, 1)
+        this.nodeGraphics.strokeRect(c.x - 8, c.y - 8, 16, 16)
+      }
+    }
+  }
+
+  /** 顶部 HUD：金/木/石/铁 + 第X周第X天（视口固定） */
+  private updateHud(): void {
+    const state = this.state
+    if (!state.hero) return
+    const r = state.resources[state.hero.faction]
+    this.hudText.setText(
+      `金: ${r.gold}   木: ${r.wood}   石: ${r.stone}   铁: ${r.iron}    第${weekOf(state.turn)}周第${state.turn}天`
+    )
+  }
+
+  /** hexKey → Axial（渲染层命中/解析用；无法解析返回 null） */
+  private parseKey(k: string): Axial | null {
+    const m = /^(-?\d+),(-?\d+)$/.exec(k)
+    if (!m) return null
+    return { q: Number(m[1]), r: Number(m[2]) }
+  }
+
   /** 悬停格路径高亮（淡黄）；不再高亮可达范围 */
   private drawOverlay(): void {
     this.overlayGraphics.clear()
@@ -212,12 +356,15 @@ export class AdventureScene extends Phaser.Scene {
     this.heroSprite.setPosition(c.x, c.y)
   }
 
-  /** 状态变化后统一刷新：迷雾 + 可达重算 + 高亮 + hero 位置 */
+  /** 状态变化后统一刷新：迷雾 + 资源点 + 城池 + 可达 + 高亮 + hero 位置 + HUD */
   private refreshViews(): void {
     this.drawFog()
+    this.drawNodes()
+    this.drawTowns()
     this.computeReachable()
     this.drawOverlay()
     this.syncHeroSprite()
+    this.updateHud()
   }
 
   /** 在指定 Graphics 上画一个填充六角格 */
@@ -304,11 +451,39 @@ export class AdventureScene extends Phaser.Scene {
     const world = this.cameras.main.getWorldPoint(p.x, p.y)
     const hex = this.layout.pixelToHex(world.x, world.y)
     const hero = this.state.hero
+    // 点击城池格：显示城池详情（不触发移动）
+    const town = this.state.towns.find((t) => hexKey(t.position) === hexKey(hex))
+    if (town) {
+      this.showTownDetail(town, p)
+      return
+    }
+    this.hideTownDetail()
     if (!hero || !this.mapKeys.has(hexKey(hex))) return
     if (!this.reachable.has(hexKey(hex))) return
     const path = findPath(hero.position, hex, this.makeMapCosts())
     if (!path || path.length < 2) return
     void this.animateMove(path)
+  }
+
+  /** 显示城池详情 tag（点击城池格时） */
+  private showTownDetail(
+    town: { id: string; name: string; owner: FactionId; level: number; garrisonGeneralId: string | null },
+    pointer: Phaser.Input.Pointer
+  ): void {
+    const ownerName: Record<FactionId, string> = { wei: '魏', shu: '蜀', wu: '吴', qun: '群' }
+    const garrison = town.garrisonGeneralId
+      ? this.state.generals.find((g) => g.id === town.garrisonGeneralId)?.name ?? ''
+      : ''
+    this.townDetailText.setText(
+      `${town.name}  Lv${town.level}  势力:${ownerName[town.owner]}${garrison ? `  驻将:${garrison}` : ''}`
+    )
+    // tag 跟随点击位置，视口坐标
+    this.townDetailText.setPosition(pointer.x + 12, pointer.y - 8)
+    this.townDetailText.setVisible(true)
+  }
+
+  private hideTownDetail(): void {
+    this.townDetailText.setVisible(false)
   }
 
   /** 沿路径逐格移动：dispatch unit/move → tween 到位 → 刷新迷雾（揭开新地形） */
@@ -372,6 +547,7 @@ export class AdventureScene extends Phaser.Scene {
         zoom: Math.round(this.cameras.main.zoom * 100) / 100
       },
       turn: state.turn,
+      week: weekOf(state.turn),
       currentFaction: state.currentFaction,
       hero: state.hero
         ? {
@@ -380,6 +556,12 @@ export class AdventureScene extends Phaser.Scene {
             maxMovement: state.hero.maxMovement
           }
         : null,
+      resources: state.hero ? state.resources[state.hero.faction] : null,
+      towns: state.towns.map((t) => ({ id: t.id, name: t.name, owner: t.owner, level: t.level, position: t.position })),
+      nodeStates: {
+        picked: Object.values(state.nodeStates).filter((n) => n.visited).length,
+        claimedMines: Object.values(state.nodeStates).filter((n) => n.owner !== null).length
+      },
       visibility: counts,
       busy: this.busy,
       bgm: this.bgm ? this.bgm.getState() : null,

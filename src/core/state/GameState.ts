@@ -1,12 +1,13 @@
 /**
  * 游戏状态模块（core 地基收尾）。
- * 定义核心领域实体（势力/资源/武将/城池/英雄/视野）与回合推进、序列化。
+ * 定义核心领域实体（势力/资源/武将/城池/英雄/视野/资源点）与回合推进、序列化。
  * 所有状态都是纯数据（可直接 JSON 序列化），由 reducer 经 CommandLog 驱动。
  * 确定性规则：本模块禁止裸 Math.random / Date.now。
  */
 import type { Visibility } from '../fog/Fog'
 import type { MapData } from '../map/MapGen'
 import type { Axial } from '../hex/HexGrid'
+import { completeResources, isMine, RESOURCE_NODE_DEFS } from '../../data/resourceNode'
 
 /** 4 大势力：魏 / 蜀 / 吴 / 群 */
 export type FactionId = 'wei' | 'shu' | 'wu' | 'qun'
@@ -42,8 +43,16 @@ export interface Town {
   name: string
   owner: FactionId
   level: number
+  /** 所在地图格 */
+  position: Axial
   /** 驻城武将，决定政治/魅力产出 */
   garrisonGeneralId: string | null
+}
+
+/** 单个资源点状态：占领方 / 是否已拾取 */
+export interface NodeState {
+  owner: FactionId | null
+  visited: boolean
 }
 
 /** 大地图上的英雄（P0 单人 hero，后续可扩为多名） */
@@ -77,6 +86,8 @@ export interface GameState {
   hero: HeroUnit | null
   /** 按势力的战争迷雾（两态：explored 已探索永久可见 / unexplored 未探索；hexKey → 状态） */
   visibility: Record<FactionId, Record<string, Visibility>>
+  /** 资源点状态（hexKey → 占领方/已拾取）；setup 时按 map.nodes 初始化 */
+  nodeStates: Record<string, NodeState>
 }
 
 /** 空壳初始状态：等待 game/setup 填充 */
@@ -92,7 +103,8 @@ export function createInitialState(): GameState {
     map: null,
     mapSeed: 0,
     hero: null,
-    visibility: { wei: {}, shu: {}, wu: {}, qun: {} }
+    visibility: { wei: {}, shu: {}, wu: {}, qun: {} },
+    nodeStates: {}
   }
 }
 
@@ -125,6 +137,41 @@ export function subResources(a: Resources, b: Resources): Resources {
 export function canAfford(state: GameState, faction: FactionId, cost: Resources): boolean {
   const r = state.resources[faction]
   return r.gold >= cost.gold && r.wood >= cost.wood && r.stone >= cost.stone && r.iron >= cost.iron
+}
+
+/**
+ * 每周结算（纯函数）：城池收入 + 矿产出。
+ * - 城池：内政厅等级 ×100 金 → 所属势力（政治加成依赖武将六维属性，暂为 0，PRD 注明）
+ * - 矿：按 RESOURCE_NODE_DEFS 的 weeklyBonus 产出 → 占领方
+ * 返回新 state，不就地修改。
+ */
+export function applyWeeklyIncome(state: GameState): GameState {
+  let resources = state.resources
+  // 城池收入
+  for (const town of state.towns) {
+    if (!town.owner) continue
+    const owner = resources[town.owner]
+    if (!owner) continue
+    resources = {
+      ...resources,
+      [town.owner]: addResources(owner, { gold: town.level * 100, wood: 0, stone: 0, iron: 0 })
+    }
+  }
+  // 矿产出
+  for (const [hexKeyStr, nodeState] of Object.entries(state.nodeStates)) {
+    if (!nodeState.owner) continue
+    const nodeType = state.map?.nodes?.[hexKeyStr]
+    if (!nodeType || !isMine(nodeType)) continue
+    const bonus = RESOURCE_NODE_DEFS[nodeType].weeklyBonus
+    if (!bonus) continue
+    const owner = resources[nodeState.owner]
+    if (!owner) continue
+    resources = {
+      ...resources,
+      [nodeState.owner]: addResources(owner, completeResources(bonus))
+    }
+  }
+  return { ...state, resources }
 }
 
 /** 序列化（存档 / e2e 断言 / 回放期望态比对） */

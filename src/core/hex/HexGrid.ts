@@ -100,5 +100,7 @@ function axialRound(fq: number, fr: number): Axial {
   } else if (dy > dz) {
     rz = -rx - ry
   }
-  return { q: rx, r: rz }
+  // 归一化 -0 → 0：Math.round 对 -0.0056 这类近零负值会返回 -0，
+  // 会让 core 坐标带上负零（污染相等性断言/序列化）。+0 把 -0 归正，整数值不受影响。
+  return { q: rx + 0, r: rz + 0 }
 }

@@ -12,7 +12,7 @@ export function makePlainMap(radius: number, overrides: Record<string, TerrainId
   const terrain: Record<string, TerrainId> = {}
   for (const h of hexes) terrain[hexKey(h)] = 'plain'
   for (const [k, v] of Object.entries(overrides)) terrain[k] = v
-  return { hexes, terrain }
+  return { hexes, terrain, nodes: {} }
 }
 
 /** 起一个 hexKey 别名便于测试书写 */

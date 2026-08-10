@@ -28,9 +28,9 @@ export const START_GENERALS: readonly General[] = [
   { id: 'g-guan', name: '关羽', faction: 'shu', type: '全能', level: 1, xp: 0 }
 ]
 
-/** 初始城池（P0：蜀占成都） */
+/** 初始城池（P0：蜀占成都，位于地图中心 = 英雄出生点） */
 export const START_TOWNS: readonly Town[] = [
-  { id: 't-chengdu', name: '成都', owner: 'shu', level: 1, garrisonGeneralId: 'g-guan' }
+  { id: 't-chengdu', name: '成都', owner: 'shu', level: 1, garrisonGeneralId: 'g-guan', position: { q: 0, r: 0 } }
 ]
 
 /** 英雄出生点（地图中心） */

@@ -48,6 +48,15 @@ describe('HexLayout（纯数学像素换算，不依赖 Phaser）', () => {
     }
   })
 
+  test('pixelToHex 对靠近中心的整数点击不产生 -0 坐标', () => {
+    const layout = new HexLayout({ size: 36, origin: { x: 0, y: 0 } })
+    // 世界点 (62,108) 是 hex(0,2) 中心 (62.35,108) 的整数取整——e2e 鼠标点击即如此舍入，
+    // fq = 0.9944 - 1.0 = -0.0056 → Math.round → -0（sign 位为负），会污染 core 状态。
+    const back = layout.pixelToHex(62, 108)
+    expect(back).toEqual({ q: 0, r: 2 })
+    expect(Object.is(back.q, -0)).toBe(false)
+  })
+
   test('相邻 hex 中心间距（pointy-top 水平方向）= sqrt(3) × size', () => {
     const a = layout.hexToPixel({ q: 0, r: 0 })
     const b = layout.hexToPixel({ q: 1, r: 0 })

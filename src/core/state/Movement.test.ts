@@ -5,6 +5,7 @@ import { createInitialState, type GameState, type HeroUnit } from './GameState'
 import { gameReducer } from './reducer'
 import { makeSetup } from '../testing/setup'
 import { makePlainMap, key } from '../testing/maps'
+import { isMine, RESOURCE_NODE_DEFS } from '../../data/resourceNode'
 
 function makeStore(overrides: Partial<Parameters<typeof makeSetup>[0]> = {}): CommandLog<GameState> {
   const store = new CommandLog<GameState>(createInitialState(), gameReducer)
@@ -131,5 +132,63 @@ describe('回合推进重置移动力', () => {
     const s = store.getState()
     expect(s.currentFaction).toBe('shu')
     expect(s.hero?.movementLeft).toBe(6)
+  })
+})
+
+describe('unit/move 资源点拾取', () => {
+  /** 构造带宝箱/木矿/石矿的平地地图 + setup */
+  function makeNodeStore(): CommandLog<GameState> {
+    const map = makePlainMap(5)
+    map.nodes[key({ q: 1, r: 0 })] = 'chest'
+    map.nodes[key({ q: 2, r: 0 })] = 'woodMine'
+    map.nodes[key({ q: 3, r: 0 })] = 'stoneMine'
+    return makeStore({ map })
+  }
+
+  test('setup 时初始化 nodeStates：地图上所有资源点进入状态表', () => {
+    const s = makeNodeStore().getState()
+    expect(s.nodeStates[key({ q: 1, r: 0 })]).toEqual({ owner: null, visited: false })
+    expect(s.nodeStates[key({ q: 2, r: 0 })]).toEqual({ owner: null, visited: false })
+    expect(s.nodeStates[key({ q: 3, r: 0 })]).toEqual({ owner: null, visited: false })
+  })
+
+  test('走入宝箱格：一次性拾取（+30金+5木），visited 置真，可重复进入但不重复拾取', () => {
+    const store = makeNodeStore()
+    store.dispatch('unit/move', { to: { q: 1, r: 0 } })
+    const s1 = store.getState()
+    expect(s1.resources.shu?.gold).toBe(80 + 30)
+    expect(s1.resources.shu?.wood).toBe(20 + 5)
+    expect(s1.nodeStates[key({ q: 1, r: 0 })]?.visited).toBe(true)
+    // 走出再回来：不重复拾取
+    store.dispatch('unit/move', { to: { q: 0, r: 0 } })
+    store.dispatch('unit/move', { to: { q: 1, r: 0 } })
+    const s2 = store.getState()
+    expect(s2.resources.shu?.gold).toBe(80 + 30)
+  })
+
+  test('走入无主矿格：占领（owner=hero.faction）', () => {
+    const store = makeNodeStore()
+    store.dispatch('unit/move', { to: { q: 1, r: 0 } })
+    store.dispatch('unit/move', { to: { q: 2, r: 0 } })
+    const s = store.getState()
+    expect(s.nodeStates[key({ q: 2, r: 0 })]?.owner).toBe('shu')
+    expect(s.nodeStates[key({ q: 2, r: 0 })]?.visited).toBe(false) // 矿非一次性，visited 语义不适用
+  })
+
+  test('移动进入已有主的矿：不夺占（战斗留后续）', () => {
+    const map = makePlainMap(5)
+    map.nodes[key({ q: 1, r: 0 })] = 'woodMine'
+    const store = makeStore({ map })
+    // 预置矿归魏
+    const s0 = store.getState()
+    s0.nodeStates[key({ q: 1, r: 0 })] = { owner: 'wei', visited: false }
+    store.dispatch('unit/move', { to: { q: 1, r: 0 } })
+    expect(store.getState().nodeStates[key({ q: 1, r: 0 })]?.owner).toBe('wei')
+  })
+
+  test('矿产出类型由数据表决定（木矿 +10 木）', () => {
+    expect(RESOURCE_NODE_DEFS.woodMine.weeklyBonus?.wood).toBe(10)
+    expect(isMine('woodMine')).toBe(true)
+    expect(isMine('chest')).toBe(false)
   })
 })

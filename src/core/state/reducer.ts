@@ -8,12 +8,15 @@ import { computeVision, type FogMap } from '../fog/Fog'
 import { hexKey, hexNeighbor, type Axial, type HexDir } from '../hex/HexGrid'
 import type { MapData } from '../map/MapGen'
 import { getTerrain } from '../../data/terrain'
+import { completeResources, RESOURCE_NODE_DEFS } from '../../data/resourceNode'
 import {
   BASE_MAX_MOVEMENT,
   BASE_SIGHT_RANGE,
   addResources,
+  applyWeeklyIncome,
   canAfford,
   subResources,
+  weekOf,
   ZERO_RESOURCES,
   type FactionId,
   type General,
@@ -76,6 +79,11 @@ function setup(state: GameState, payload: SetupPayload): GameState {
     maxMovement: BASE_MAX_MOVEMENT,
     sightRange: BASE_SIGHT_RANGE
   }
+  // 初始化资源点状态：地图上每个资源点 → 无主、未拾取
+  const nodeStates: Record<string, { owner: FactionId | null; visited: boolean }> = {}
+  for (const hex of Object.keys(payload.map.nodes ?? {})) {
+    nodeStates[hex] = { owner: null, visited: false }
+  }
   return {
     ...state,
     turn: 1,
@@ -87,11 +95,12 @@ function setup(state: GameState, payload: SetupPayload): GameState {
     map: payload.map,
     mapSeed: payload.mapSeed,
     hero,
-    visibility: { ...state.visibility, [hero.faction]: computeVisionFor(payload.map, hero, {}) }
+    visibility: { ...state.visibility, [hero.faction]: computeVisionFor(payload.map, hero, {}) },
+    nodeStates
   }
 }
 
-/** 轮到下一势力；一圈轮完则天数 +1；轮到英雄所属势力时重置其移动力 */
+/** 轮到下一势力；一圈轮完则天数 +1；轮到英雄所属势力时重置其移动力；跨周触发每周结算 */
 function advanceTurn(state: GameState): GameState {
   const order = state.turnOrder
   if (order.length === 0) return state
@@ -102,12 +111,19 @@ function advanceTurn(state: GameState): GameState {
   if (hero && hero.faction === nextFaction) {
     hero = { ...hero, movementLeft: hero.maxMovement }
   }
-  return {
+  const oldTurn = state.turn
+  const newTurn = next === 0 ? oldTurn + 1 : oldTurn
+  let nextState: GameState = {
     ...state,
     currentFaction: nextFaction,
     hero,
-    turn: next === 0 ? state.turn + 1 : state.turn
+    turn: newTurn
   }
+  // 跨周（第 N 周 → 第 N+1 周）：触发每周结算（城池收入 + 矿产出）
+  if (weekOf(newTurn) !== weekOf(oldTurn)) {
+    nextState = applyWeeklyIncome(nextState)
+  }
+  return nextState
 }
 
 function addRes(state: GameState, { faction, amount }: FactionResourcesPayload): GameState {
@@ -139,6 +155,7 @@ function isNeighbor(a: Axial, b: Axial): boolean {
  * 3. to 地形可通过
  * 4. 剩余移动力足够支付地形代价
  * 5. 扣移动力 → 更新位置 → 重算视野
+ * 6. 抵达含资源点的格：宝箱一次性拾取；无主矿被占领
  */
 function moveHero(state: GameState, { to }: MovePayload): GameState {
   const hero = state.hero
@@ -156,11 +173,49 @@ function moveHero(state: GameState, { to }: MovePayload): GameState {
     position: { ...to },
     movementLeft: hero.movementLeft - terrain.moveCost
   }
-  return {
+  let next: GameState = {
     ...state,
     hero: moved,
     visibility: { ...state.visibility, [hero.faction]: computeVisionFor(map, moved, fog) }
   }
+  // 资源点拾取 / 占领
+  const nodeType = map.nodes?.[hexKey(to)]
+  if (nodeType) {
+    next = interactNode(next, hero.faction, hexKey(to), nodeType)
+  }
+  return next
+}
+
+/** 走到含资源点的格：宝箱一次性拾取（visited），无主矿占领（owner） */
+function interactNode(
+  state: GameState,
+  faction: FactionId,
+  hex: string,
+  nodeType: string
+): GameState {
+  const nodeState = state.nodeStates[hex]
+  if (!nodeState) return state
+  const def = RESOURCE_NODE_DEFS[nodeType as keyof typeof RESOURCE_NODE_DEFS]
+  if (!def) return state
+  if (def.oneTime) {
+    if (nodeState.visited) return state // 已拾取不重复
+    return {
+      ...state,
+      resources: {
+        ...state.resources,
+        [faction]: addResources(state.resources[faction], completeResources(def.oneTime))
+      },
+      nodeStates: { ...state.nodeStates, [hex]: { ...nodeState, visited: true } }
+    }
+  }
+  if (def.weeklyBonus) {
+    if (nodeState.owner) return state // 已有主不夺占（战斗留后续）
+    return {
+      ...state,
+      nodeStates: { ...state.nodeStates, [hex]: { ...nodeState, owner: faction } }
+    }
+  }
+  return state
 }
 
 /** 游戏 reducer：dispatch 的入口 */
