@@ -366,7 +366,8 @@ export class AdventureScene extends Phaser.Scene {
   /**
    * 资源点渲染：
    * - 矿（持续产出）：资源图标 + 深色六角底座（设施感）+ 已占归属色边框；
-   * - 宝箱（一次性）：金色钱袋、无底座（散落物感），已拾取变暗；
+   * - 宝箱（一次性）：金色钱袋、无底座（散落物感），**拾取后从地图移除**（不再渲染；
+   *   core 仍保留 visited=true 供回放/确定性判断，仅渲染层不画）；
    * - 未探索区域的资源点不可见。
    */
   private drawNodes(): void {
@@ -383,13 +384,14 @@ export class AdventureScene extends Phaser.Scene {
       if (!node) continue
       const hex = this.parseKey(k)
       if (!hex) continue
+      const def = RESOURCE_NODE_DEFS[type]
+      const isMineType = Boolean(def.dailyBonus)
+      // 已拾取的宝箱：从大地图移除（continue → 不加入 seen → 尾部清理销毁其 sprite）
+      if (!isMineType && node.visited) continue
       seen.add(k)
       const c = this.layout.hexToPixel(hex)
       const iconKey = NODE_ICON_KEYS[type] ?? 'icon-gold'
-      const def = RESOURCE_NODE_DEFS[type]
-      const isMineType = Boolean(def.dailyBonus)
       const claimed = node.owner !== null
-      const dimmed = !isMineType && node.visited
       // 矿：六角底座（比图标略大，深色半透明）→ 设施感；宝箱无底座
       if (isMineType) {
         this.fillHexScaled(this.nodeGraphics, hex, 0.62, 0x0b0f18, 0.55)
@@ -404,9 +406,9 @@ export class AdventureScene extends Phaser.Scene {
         sprite.setTexture(iconKey)
       }
       sprite.setPosition(c.x, c.y)
-      // 图标上色（Kenney 白剪影 setTint → 资源代表色）；已拾取宝箱变暗
+      // 图标上色（Kenney 白剪影 setTint → 资源代表色）
       sprite.setTint(NODE_COLORS[type] ?? RESOURCE_COLORS.gold)
-      sprite.setAlpha(dimmed ? 0.35 : 1)
+      sprite.setAlpha(1)
     }
     // 重建（换种子）后清理已不存在资源点的 sprite
     for (const k of this.nodeSprites.keys()) {
@@ -567,7 +569,7 @@ export class AdventureScene extends Phaser.Scene {
     this.updateNodeTooltip(p, inMap ? hex : null)
   }
 
-  /** 悬停资源点 → tooltip：`名称  每日产出 +N木（已占领）` / `名称  一次性 +30金 +5木（已拾取）` */
+  /** 悬停资源点 → tooltip：`名称  每日产出 +N木（已占领）` / `名称  一次性 +30金 +5木` */
   private updateNodeTooltip(pointer: Phaser.Input.Pointer, hex: Axial | null): void {
     this.hideNodeTooltip()
     if (!hex) return
@@ -583,16 +585,12 @@ export class AdventureScene extends Phaser.Scene {
     const def = RESOURCE_NODE_DEFS[type]
     const node = state.nodeStates[k]
     const isMineType = Boolean(def.dailyBonus)
+    // 已拾取的宝箱已从地图移除 → 悬停不再显示
+    if (!isMineType && node?.visited) return
     const desc = isMineType
       ? `每日产出 +${this.formatBonus(def.dailyBonus)}`
       : `一次性 ${this.formatBonus(def.oneTime)}`
-    const status = isMineType
-      ? node?.owner !== null
-        ? '已占领'
-        : '无主，走近占领'
-      : node?.visited
-        ? '已拾取'
-        : '走近拾取'
+    const status = isMineType ? (node?.owner !== null ? '已占领' : '无主，走近占领') : '走近拾取'
     this.nodeDetailText.setText(`${def.name}  ${desc}（${status}）`)
     this.nodeDetailText.setPosition(pointer.x + 12, pointer.y - 8)
     this.nodeDetailText.setVisible(true)
@@ -730,9 +728,16 @@ export class AdventureScene extends Phaser.Scene {
         picked: Object.values(state.nodeStates).filter((n) => n.visited).length,
         claimedMines: Object.values(state.nodeStates).filter((n) => n.owner !== null).length
       },
-      // 当前渲染的资源点 hexKey（仅已探索区域；迷雾中不可见）
+      // 当前渲染的资源点 hexKey（仅已探索区域且未拾取宝箱；迷雾/已拾不可见）
       visibleNodes: Object.entries(state.map?.nodes ?? {})
         .filter(([k]) => fog[k] !== 'unexplored')
+        .filter(([k]) => {
+          const type = state.map?.nodes?.[k]
+          if (!type) return false
+          const node = state.nodeStates[k]
+          // 一次性资源（宝箱）拾取后从地图移除 → 不再视为可见渲染点
+          return !RESOURCE_NODE_DEFS[type].oneTime || !node?.visited
+        })
         .map(([k]) => k)
         .sort(),
       visibility: counts,

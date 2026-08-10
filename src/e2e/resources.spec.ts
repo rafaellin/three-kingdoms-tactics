@@ -91,10 +91,15 @@ const foldVision = (path: Axial[], startFog: Record<string, Visibility>): Record
   return fog
 }
 
-/** 给定 fog 下应渲染的资源点 hexKey 集合（未探索区域不渲染） */
-const visibleNodesFor = (fog: Record<string, Visibility>): string[] =>
+/**
+ * 给定 fog 下应渲染的资源点 hexKey 集合。
+ * 未探索区域不渲染；已拾取的宝箱从地图移除（一次性资源 visited → 不再渲染）。
+ * @param picked 已拾取的一次性资源 hexKey（宝箱）
+ */
+const visibleNodesFor = (fog: Record<string, Visibility>, picked: Set<string> = new Set()): string[] =>
   Object.entries(map.nodes)
     .filter(([k]) => fog[k] !== 'unexplored')
+    .filter(([k, type]) => !RESOURCE_NODE_DEFS[type].oneTime || !picked.has(k))
     .map(([k]) => k)
     .sort()
 
@@ -198,9 +203,10 @@ test('拾取宝箱：移动到宝箱格后一次性 +30金+5木，picked=1', asy
   })
   expect(s.nodeStates?.picked).toBe(1)
   // 探索后新资源点变为可见：渲染集合 = 沿到达路径逐格折叠视野后的期望集合
+  // （已拾宝箱从地图移除 → 从可见集合中排除）
   const leg1 = findPath(START, CHEST, costWithFog(initialFog))
   expect(leg1).not.toBeNull()
-  expect(s.visibleNodes).toEqual(visibleNodesFor(foldVision(leg1!, initialFog)))
+  expect(s.visibleNodes).toEqual(visibleNodesFor(foldVision(leg1!, initialFog), new Set([hexKey(CHEST)])))
 })
 
 test('占矿：走入无主矿格后 claimedMines=1、资源不变（未拾宝箱）', async ({ page }) => {
