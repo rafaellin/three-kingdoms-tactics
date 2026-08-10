@@ -2,6 +2,7 @@ import { describe, expect, test } from 'vitest'
 import { CommandLog } from '../events/CommandLog'
 import {
   applyDailyIncome,
+  computeDailyIncome,
   canAfford,
   createInitialState,
   deserializeState,
@@ -142,6 +143,67 @@ describe('economy 资源增扣', () => {
     const s = makeStore().getState()
     expect(canAfford(s, 'wei', gold(100))).toBe(true)
     expect(canAfford(s, 'wei', gold(101))).toBe(false)
+  })
+})
+
+describe('computeDailyIncome（每日产出汇总，供 HUD 显示 (+N)）', () => {
+  /** 带两座矿（木矿→蜀、石矿→魏）+ 成都（蜀，Lv1）的地图 */
+  function makeMineState(): GameState {
+    const map = makePlainMap(3, {
+      [key({ q: 1, r: 0 })]: 'plain',
+      [key({ q: 2, r: 0 })]: 'plain'
+    })
+    map.nodes[key({ q: 1, r: 0 })] = 'woodMine'
+    map.nodes[key({ q: 2, r: 0 })] = 'stoneMine'
+    const store = new CommandLog<GameState>(createInitialState(), gameReducer)
+    store.dispatch('game/setup', makeSetup({ map }))
+    const s = store.getState()
+    s.nodeStates[key({ q: 1, r: 0 })] = { owner: 'shu', visited: false }
+    s.nodeStates[key({ q: 2, r: 0 })] = { owner: 'wei', visited: false }
+    return s
+  }
+
+  test('按势力汇总：城池产金 + 已占矿产出，未占资源为 0', () => {
+    const s = makeMineState()
+    // 蜀：成都 Lv1 → +10金/天；木矿 → +2木/天
+    expect(computeDailyIncome(s, 'shu')).toEqual({ gold: 10, wood: 2, stone: 0, iron: 0 })
+    // 魏：无城；石矿 → +1石/天
+    expect(computeDailyIncome(s, 'wei')).toEqual({ gold: 0, wood: 0, stone: 1, iron: 0 })
+    // 吴：无城无矿
+    expect(computeDailyIncome(s, 'wu')).toEqual({ gold: 0, wood: 0, stone: 0, iron: 0 })
+  })
+
+  test('无主矿不计入产出', () => {
+    const s = makeMineState()
+    s.nodeStates[key({ q: 1, r: 0 })] = { owner: null, visited: false }
+    expect(computeDailyIncome(s, 'shu')).toEqual({ gold: 10, wood: 0, stone: 0, iron: 0 })
+  })
+
+  test('宝箱（一次性）不计入每日产出', () => {
+    const map = makePlainMap(3, {
+      [key({ q: 1, r: 0 })]: 'plain'
+    })
+    map.nodes[key({ q: 1, r: 0 })] = 'chest'
+    const store = new CommandLog<GameState>(createInitialState(), gameReducer)
+    store.dispatch('game/setup', makeSetup({ map }))
+    const s = store.getState()
+    s.nodeStates[key({ q: 1, r: 0 })] = { owner: null, visited: true }
+    expect(computeDailyIncome(s, 'shu')).toEqual({ gold: 10, wood: 0, stone: 0, iron: 0 })
+  })
+
+  test('多座同资源矿产出累加', () => {
+    const map = makePlainMap(3, {
+      [key({ q: 1, r: 0 })]: 'plain',
+      [key({ q: 2, r: 0 })]: 'plain'
+    })
+    map.nodes[key({ q: 1, r: 0 })] = 'woodMine'
+    map.nodes[key({ q: 2, r: 0 })] = 'woodMine'
+    const store = new CommandLog<GameState>(createInitialState(), gameReducer)
+    store.dispatch('game/setup', makeSetup({ map }))
+    const s = store.getState()
+    s.nodeStates[key({ q: 1, r: 0 })] = { owner: 'shu', visited: false }
+    s.nodeStates[key({ q: 2, r: 0 })] = { owner: 'shu', visited: false }
+    expect(computeDailyIncome(s, 'shu')).toEqual({ gold: 10, wood: 4, stone: 0, iron: 0 })
   })
 })
 

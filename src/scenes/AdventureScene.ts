@@ -1,7 +1,14 @@
 import Phaser from 'phaser'
 import { CommandLog } from '../core/events/CommandLog'
 import { gameReducer } from '../core/state/reducer'
-import { createInitialState, type GameState } from '../core/state/GameState'
+import {
+  computeDailyIncome,
+  createInitialState,
+  weekOf,
+  type FactionId,
+  type GameState,
+  type Resources
+} from '../core/state/GameState'
 import { generateMap } from '../core/map/MapGen'
 import { hexKey, HexLayout, type Axial } from '../core/hex/HexGrid'
 import { findPath, reachableArea } from '../core/pathfinding/Pathfinding'
@@ -10,7 +17,6 @@ import { getTerrain } from '../data/terrain'
 import { RESOURCE_NODE_DEFS } from '../data/resourceNode'
 import { BgmManager } from '../audio/BgmManager'
 import { SfxManager } from '../audio/SfxManager'
-import { weekOf } from '../core/state/GameState'
 import {
   HERO_FACTION,
   HERO_GENERAL_ID,
@@ -20,7 +26,6 @@ import {
   START_TOWNS,
   TURN_ORDER
 } from '../data/bootstrap'
-import type { FactionId } from '../core/state/GameState'
 
 /** 势力显示颜色（渲染层专用）：魏红 蜀绿 吴蓝 群紫 */
 const FACTION_COLORS: Record<FactionId, number> = {
@@ -101,9 +106,13 @@ export class AdventureScene extends Phaser.Scene {
   private townGraphics!: Phaser.GameObjects.Graphics
   private overlayGraphics!: Phaser.GameObjects.Graphics
   private heroSprite!: Phaser.GameObjects.Graphics
-  /** 顶部 HUD：资源条（图标 + 数值）+ 日期 */
-  private hudValueTexts!: Phaser.GameObjects.Text[]
+  /** 顶部 HUD：资源条（图标 + 数值(+每日产出)）+ 日期 */
+  private hudResourceCols!: { resource: keyof Resources; icon: Phaser.GameObjects.Image; text: Phaser.GameObjects.Text }[]
   private hudDateText!: Phaser.GameObjects.Text
+  /** HUD 悬停提示：`金 +10/天（成都 Lv1）+2/天（伐木场）` */
+  private hudTooltip!: Phaser.GameObjects.Text
+  /** HUD 资源列（图标 key → 资源键）与产出来源明细（悬停用） */
+  private hudIncomeDetail!: Record<keyof Resources, string[]>
   /** 资源点图标 sprite（hexKey → image；随迷雾探索创建、重建清理） */
   private nodeSprites = new Map<string, Phaser.GameObjects.Image>()
   /** 城池图标 sprite（town.id → image） */
@@ -244,21 +253,45 @@ export class AdventureScene extends Phaser.Scene {
     this.heroSprite.fillCircle(0, 0, 10)
     this.heroSprite.lineStyle(2, 0xffffff, 1)
     this.heroSprite.strokeCircle(0, 0, 10)
-    // 顶部 HUD：资源条（图标 + 数值）+ 日期（固定视口坐标，非世界坐标）。
-    // 每项固定列：图标在 x、数值右对齐到 right，列宽给足避免数字变长时重叠。
+    // 顶部 HUD：资源条（图标 + 数值(+每日产出)）+ 日期（固定视口坐标，非世界坐标）。
+    // 流式布局：每个资源列 = 图标紧跟其数值文本，按文本实际宽度自左向右排布；
+    // 图标不做固定绝对定位（否则 (+N) 变长会与图标重叠），列宽由 updateHud 按实际内容推进。
     const hudStyle = { fontFamily: 'sans-serif', fontSize: '20px', color: '#f5f2e8' }
-    const HUD_COLS = [
-      { key: 'icon-gold', x: 16, right: 68, tint: RESOURCE_COLORS.gold },
-      { key: 'icon-wood', x: 116, right: 168, tint: RESOURCE_COLORS.wood },
-      { key: 'icon-stone', x: 216, right: 268, tint: RESOURCE_COLORS.stone },
-      { key: 'icon-iron', x: 316, right: 368, tint: RESOURCE_COLORS.iron }
+    const HUD_COLS: { key: string; resource: keyof Resources; tint: number }[] = [
+      { key: 'icon-gold', resource: 'gold', tint: RESOURCE_COLORS.gold },
+      { key: 'icon-wood', resource: 'wood', tint: RESOURCE_COLORS.wood },
+      { key: 'icon-stone', resource: 'stone', tint: RESOURCE_COLORS.stone },
+      { key: 'icon-iron', resource: 'iron', tint: RESOURCE_COLORS.iron }
     ]
-    for (const col of HUD_COLS) {
-      this.add.image(col.x, 24, col.key).setDepth(10).setScrollFactor(0).setScale(22 / 64).setTint(col.tint)
-    }
-    this.hudValueTexts = HUD_COLS.map((col) =>
-      this.add.text(col.right, 24, '', hudStyle).setOrigin(1, 0.5).setDepth(10).setScrollFactor(0)
-    )
+    this.hudResourceCols = HUD_COLS.map((col) => {
+      const icon = this.add
+        .image(0, 24, col.key)
+        .setDepth(10)
+        .setScrollFactor(0)
+        .setScale(22 / 64)
+        .setTint(col.tint)
+      icon.setInteractive({ useHandCursor: true })
+      icon.on('pointerover', (p: Phaser.Input.Pointer) => this.showHudTooltip(col.resource, p))
+      icon.on('pointerout', () => this.hideHudTooltip())
+      const text = this.add.text(0, 24, '', hudStyle).setOrigin(0, 0.5).setDepth(10).setScrollFactor(0)
+      text.setInteractive({ useHandCursor: true })
+      text.on('pointerover', (p: Phaser.Input.Pointer) => this.showHudTooltip(col.resource, p))
+      text.on('pointerout', () => this.hideHudTooltip())
+      return { resource: col.resource, icon, text }
+    })
+    // HUD 悬停提示（默认隐藏；hover 资源图标/数值时显示产出来源明细）
+    this.hudTooltip = this.add
+      .text(0, 0, '', {
+        fontFamily: 'sans-serif',
+        fontSize: '16px',
+        color: '#ffffff',
+        backgroundColor: 'rgba(0,0,0,0.65)'
+      })
+      .setDepth(11)
+      .setScrollFactor(0)
+      .setVisible(false)
+    // 供 hover 回调查找资源的产出来源（每帧 updateHud 刷新）
+    this.hudIncomeDetail = { gold: [], wood: [], stone: [], iron: [] }
     this.hudDateText = this.add
       .text(404, 24, '', hudStyle)
       .setOrigin(0, 0.5)
@@ -419,16 +452,62 @@ export class AdventureScene extends Phaser.Scene {
     }
   }
 
-  /** 顶部 HUD：金/木/石/铁 图标+数值 + 第X周第X天（视口固定） */
+  /** 顶部 HUD：金/木/石/铁 图标+数值(+每日产出) + 第X周第X天（视口固定；流式布局自适应列宽） */
   private updateHud(): void {
     const state = this.state
     if (!state.hero) return
-    const r = state.resources[state.hero.faction]
-    this.hudValueTexts[0]?.setText(`${r.gold}`)
-    this.hudValueTexts[1]?.setText(`${r.wood}`)
-    this.hudValueTexts[2]?.setText(`${r.stone}`)
-    this.hudValueTexts[3]?.setText(`${r.iron}`)
+    const faction = state.hero.faction
+    const r = state.resources[faction]
+    // 当前势力的每日产出汇总（城池 + 已占矿）
+    const income = computeDailyIncome(state, faction)
+    // 流式排布：图标在左、数值文本紧随其后，按文本实际宽度推进游标（图标不固定绝对位置）
+    const ICON_SIZE = 22
+    const ICON_GAP = 6
+    const COL_GAP = 24
+    let cursorX = 16
+    for (const col of this.hudResourceCols) {
+      const suffix = income[col.resource] > 0 ? ` (+${income[col.resource]})` : ''
+      col.text.setText(`${r[col.resource]}${suffix}`)
+      // setText 后 text.width 立即更新；图标中心对齐文本左沿，两者随内容整体伸缩
+      col.icon.setX(cursorX + ICON_SIZE / 2)
+      col.text.setX(cursorX + ICON_SIZE + ICON_GAP)
+      cursorX = col.text.x + col.text.width + COL_GAP
+    }
+    this.hudDateText.setX(cursorX - COL_GAP + 12)
     this.hudDateText.setText(`第${weekOf(state.turn)}周第${state.turn}天`)
+    // 刷新产出来源明细（hover tooltip 用）：金 → `成都 Lv1 +10`；矿 → `伐木场 +2`
+    const detail: Record<keyof Resources, string[]> = { gold: [], wood: [], stone: [], iron: [] }
+    for (const town of state.towns) {
+      if (town.owner !== faction) continue
+      detail.gold.push(`${town.name} Lv${town.level} +${town.level * 10}`)
+    }
+    for (const [k, nodeState] of Object.entries(state.nodeStates)) {
+      if (nodeState.owner !== faction) continue
+      const type = state.map?.nodes?.[k]
+      if (!type || !RESOURCE_NODE_DEFS[type].dailyBonus) continue
+      const bonus = RESOURCE_NODE_DEFS[type].dailyBonus
+      for (const [resKey, v] of Object.entries(bonus)) {
+        const rk = resKey as keyof Resources
+        if (v > 0) detail[rk].push(`${RESOURCE_NODE_DEFS[type].name} +${v}`)
+      }
+    }
+    this.hudIncomeDetail = detail
+  }
+
+  /** 悬停 HUD 资源列 → tooltip：`金 +10/天：成都 Lv1 +10`；无产出则提示无来源 */
+  private showHudTooltip(resource: keyof Resources, pointer: Phaser.Input.Pointer): void {
+    const lines = this.hudIncomeDetail?.[resource] ?? []
+    if (lines.length === 0) {
+      this.hudTooltip.setText(`${RESOURCE_NAMES[resource]}：当前无每日产出`)
+    } else {
+      this.hudTooltip.setText(`${RESOURCE_NAMES[resource]} 每日产出：${lines.join('，')}`)
+    }
+    this.hudTooltip.setPosition(pointer.x + 12, pointer.y - 8)
+    this.hudTooltip.setVisible(true)
+  }
+
+  private hideHudTooltip(): void {
+    this.hudTooltip.setVisible(false)
   }
 
   /** hexKey → Axial（渲染层命中/解析用；无法解析返回 null） */
@@ -723,6 +802,14 @@ export class AdventureScene extends Phaser.Scene {
           }
         : null,
       resources: state.hero ? state.resources[state.hero.faction] : null,
+      // HUD 显示的每日产出汇总（当前势力；城池+已占矿）
+      dailyIncome: state.hero ? computeDailyIncome(state, state.hero.faction) : null,
+      // HUD 流式布局：每个资源列的图标中心 x / 文本左沿 x（e2e 断言图标与文本不重叠）
+      hudLayout: this.hudResourceCols.map((col) => ({
+        resource: col.resource,
+        iconX: col.icon.x,
+        textX: col.text.x
+      })),
       towns: state.towns.map((t) => ({ id: t.id, name: t.name, owner: t.owner, level: t.level, position: t.position })),
       nodeStates: {
         picked: Object.values(state.nodeStates).filter((n) => n.visited).length,

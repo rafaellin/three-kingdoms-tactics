@@ -140,6 +140,32 @@ export function canAfford(state: GameState, faction: FactionId, cost: Resources)
 }
 
 /**
+ * 某势力每日产出汇总（纯函数；供 HUD 显示 `当前值 (+N)` 与结算复用）。
+ * - 城池：内政厅等级 ×10 金/天 → 所属势力（政治加成依赖武将六维属性，暂为 0，PRD 注明）
+ * - 矿：按 RESOURCE_NODE_DEFS 的 dailyBonus 产出 → 占领方（用户确认：矿产出是每天）
+ * - 宝箱（一次性）不计入；无主矿不计入
+ * 不修改 state。
+ */
+export function computeDailyIncome(state: GameState, faction: FactionId): Resources {
+  let income: Resources = { gold: 0, wood: 0, stone: 0, iron: 0 }
+  // 城池收入（每天）
+  for (const town of state.towns) {
+    if (town.owner !== faction) continue
+    income = addResources(income, { gold: town.level * 10, wood: 0, stone: 0, iron: 0 })
+  }
+  // 矿产出（每天）
+  for (const [hexKeyStr, nodeState] of Object.entries(state.nodeStates)) {
+    if (nodeState.owner !== faction) continue
+    const nodeType = state.map?.nodes?.[hexKeyStr]
+    if (!nodeType || !isMine(nodeType)) continue
+    const bonus = RESOURCE_NODE_DEFS[nodeType].dailyBonus
+    if (!bonus) continue
+    income = addResources(income, completeResources(bonus))
+  }
+  return income
+}
+
+/**
  * 每日结算（纯函数）：城池收入 + 矿产出。
  * - 城池：内政厅等级 ×10 金/天 → 所属势力（政治加成依赖武将六维属性，暂为 0，PRD 注明）
  * - 矿：按 RESOURCE_NODE_DEFS 的 dailyBonus 产出 → 占领方（用户确认：矿产出是每天）
@@ -148,29 +174,10 @@ export function canAfford(state: GameState, faction: FactionId, cost: Resources)
  */
 export function applyDailyIncome(state: GameState): GameState {
   let resources = state.resources
-  // 城池收入（每天）
-  for (const town of state.towns) {
-    if (!town.owner) continue
-    const owner = resources[town.owner]
-    if (!owner) continue
-    resources = {
-      ...resources,
-      [town.owner]: addResources(owner, { gold: town.level * 10, wood: 0, stone: 0, iron: 0 })
-    }
-  }
-  // 矿产出（每天）
-  for (const [hexKeyStr, nodeState] of Object.entries(state.nodeStates)) {
-    if (!nodeState.owner) continue
-    const nodeType = state.map?.nodes?.[hexKeyStr]
-    if (!nodeType || !isMine(nodeType)) continue
-    const bonus = RESOURCE_NODE_DEFS[nodeType].dailyBonus
-    if (!bonus) continue
-    const owner = resources[nodeState.owner]
-    if (!owner) continue
-    resources = {
-      ...resources,
-      [nodeState.owner]: addResources(owner, completeResources(bonus))
-    }
+  // 各势力每日产出统一按 computeDailyIncome 汇总（城池 + 矿）
+  for (const faction of Object.keys(resources) as FactionId[]) {
+    const income = computeDailyIncome(state, faction)
+    resources = { ...resources, [faction]: addResources(resources[faction], income) }
   }
   return { ...state, resources }
 }

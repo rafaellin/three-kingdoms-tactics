@@ -6,7 +6,7 @@ import { MapMovementCost } from '../core/pathfinding/MapMovementCost'
 import { hexKey, HexLayout, type Axial } from '../core/hex/HexGrid'
 import { BASE_MAX_MOVEMENT, BASE_SIGHT_RANGE } from '../core/state/GameState'
 import { START_RESOURCES } from '../data/bootstrap'
-import { RESOURCE_NODE_DEFS } from '../data/resourceNode'
+import { RESOURCE_NODE_DEFS, type ResourceNodeType } from '../data/resourceNode'
 
 /**
  * 大地图资源系统 e2e：资源条 / 宝箱拾取 / 占矿 / 结束回合 / 跨周结算。
@@ -27,6 +27,10 @@ interface DebugGameState {
   currentFaction?: string
   hero?: { position: Axial; movementLeft: number; maxMovement: number }
   resources?: { gold: number; wood: number; stone: number; iron: number }
+  /** HUD 显示的每日产出汇总（当前势力；城池+已占矿） */
+  dailyIncome?: { gold: number; wood: number; stone: number; iron: number }
+  /** HUD 流式布局：各资源列图标中心 x 与文本左沿 x（断言图标与 (+N) 文本不重叠） */
+  hudLayout?: { resource: string; iconX: number; textX: number }[]
   nodeStates?: { picked: number; claimedMines: number }
   /** 当前渲染的资源点 hexKey（仅已探索区域；未探索资源不可见） */
   visibleNodes?: string[]
@@ -170,6 +174,15 @@ test('初始化：资源条 = shu 初始资源、第1周第1天、成都城池�
   expect(s.currentFaction).toBe('wei')
   // 资源条 = 蜀（关羽）初始资源
   expect(s.resources).toEqual(START_RESOURCES.shu)
+  // HUD 每日产出：成都 Lv1 → +10金/天；开局无占矿 → 木/石/铁 0
+  expect(s.dailyIncome).toEqual({ gold: 10, wood: 0, stone: 0, iron: 0 })
+  // HUD 流式布局：图标右沿（iconX+11）严格在文本左沿（textX）之前 → 图标不与 (+N) 文本重叠
+  expect(s.hudLayout).toBeDefined()
+  const hud = s.hudLayout!
+  expect(hud).toHaveLength(4)
+  for (const col of hud) expect(col.textX).toBeGreaterThan(col.iconX + 11)
+  // 各列自左向右排布（后一列文本左沿在前一列之后）
+  for (let i = 1; i < hud.length; i++) expect(hud[i]!.textX).toBeGreaterThan(hud[i - 1]!.textX)
   // 成都城池：蜀 Lv1，位于 (0,0)（与英雄出生点重合）
   expect(s.towns).toEqual([{ id: 't-chengdu', name: '成都', owner: 'shu', level: 1, position: { q: 0, r: 0 } }])
   // 未探索区域资源不可见：渲染的资源点 = 仅开局已探索的那部分（与 core 复算一致）
@@ -222,6 +235,14 @@ test('占矿：走入无主矿格后 claimedMines=1、资源不变（未拾宝�
   expect(s.nodeStates?.claimedMines).toBe(1)
   expect(s.nodeStates?.picked).toBe(0)
   expect(s.resources).toEqual(START_RESOURCES.shu)
+  // HUD 每日产出：成都 +10金/天 + 已占矿的 dailyBonus（按 seed 8 实际矿种算）
+  const mineType = map.nodes[hexKey(MINE)] as ResourceNodeType
+  const mineBonus = RESOURCE_NODE_DEFS[mineType].dailyBonus
+  expect(s.dailyIncome).toEqual({ gold: 10, wood: 0, stone: 0, iron: 0, ...mineBonus })
+  // 有 (+N) 时图标仍不与文本重叠（icon 右沿 < 文本左沿；该列文本带 +N 后缀仍不越界）
+  const hud = s.hudLayout!
+  expect(hud).toHaveLength(4)
+  for (const col of hud) expect(col.textX).toBeGreaterThan(col.iconX + 11)
 })
 
 test('结束回合（E 键）：四势力轮完一圈回魏、天数 +1，周不变', async ({ page }) => {
