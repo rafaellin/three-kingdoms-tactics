@@ -38,6 +38,31 @@ const NODE_ICON_KEYS: Record<string, string> = {
   chest: 'icon-gold'
 }
 
+/** 资源图标代表色（渲染层专用；Kenney 图标为纯白剪影，用 setTint 上色）：
+ *  金=亮金、木=棕、石=灰、铁=银蓝。HUD 与地图资源点共用。 */
+const RESOURCE_COLORS = {
+  gold: 0xffd166,
+  wood: 0xb07a3f,
+  stone: 0x9aa0a8,
+  iron: 0x9fb4c7
+} as const
+
+/** 资源点类型的代表色（chest 用金色；矿分别用木/石/铁色） */
+const NODE_COLORS: Record<string, number> = {
+  woodMine: RESOURCE_COLORS.wood,
+  stoneMine: RESOURCE_COLORS.stone,
+  ironMine: RESOURCE_COLORS.iron,
+  chest: RESOURCE_COLORS.gold
+}
+
+/** 资源键 → 中文名（tooltip / 日志用；与 core 的 Resources 字段一致） */
+const RESOURCE_NAMES: Record<keyof import('../core/state/GameState').Resources, string> = {
+  gold: '金',
+  wood: '木',
+  stone: '石',
+  iron: '铁'
+}
+
 /** 图标 URL（Vite 构建期自动发现 assets/icons/*.png；新增图标无需改代码） */
 const ICON_URLS = import.meta.glob('/assets/icons/*.png', { query: '?url', import: 'default', eager: true }) as Record<
   string,
@@ -85,6 +110,8 @@ export class AdventureScene extends Phaser.Scene {
   private townSprites = new Map<string, Phaser.GameObjects.Image>()
   /** 城池详情 tag（点击城池格显示） */
   private townDetailText!: Phaser.GameObjects.Text
+  /** 资源点详情 tag（悬停资源点显示：名称 + 每日产出/一次性 + 状态） */
+  private nodeDetailText!: Phaser.GameObjects.Text
   /** 结束回合按钮 */
   private endTurnButton!: Phaser.GameObjects.Text
 
@@ -221,13 +248,13 @@ export class AdventureScene extends Phaser.Scene {
     // 每项固定列：图标在 x、数值右对齐到 right，列宽给足避免数字变长时重叠。
     const hudStyle = { fontFamily: 'sans-serif', fontSize: '20px', color: '#f5f2e8' }
     const HUD_COLS = [
-      { key: 'icon-gold', x: 16, right: 68 },
-      { key: 'icon-wood', x: 116, right: 168 },
-      { key: 'icon-stone', x: 216, right: 268 },
-      { key: 'icon-iron', x: 316, right: 368 }
+      { key: 'icon-gold', x: 16, right: 68, tint: RESOURCE_COLORS.gold },
+      { key: 'icon-wood', x: 116, right: 168, tint: RESOURCE_COLORS.wood },
+      { key: 'icon-stone', x: 216, right: 268, tint: RESOURCE_COLORS.stone },
+      { key: 'icon-iron', x: 316, right: 368, tint: RESOURCE_COLORS.iron }
     ]
     for (const col of HUD_COLS) {
-      this.add.image(col.x, 24, col.key).setDepth(10).setScrollFactor(0).setScale(22 / 64)
+      this.add.image(col.x, 24, col.key).setDepth(10).setScrollFactor(0).setScale(22 / 64).setTint(col.tint)
     }
     this.hudValueTexts = HUD_COLS.map((col) =>
       this.add.text(col.right, 24, '', hudStyle).setOrigin(1, 0.5).setDepth(10).setScrollFactor(0)
@@ -239,6 +266,17 @@ export class AdventureScene extends Phaser.Scene {
       .setScrollFactor(0)
     // 城池详情 tag（默认隐藏）
     this.townDetailText = this.add
+      .text(0, 0, '', {
+        fontFamily: 'sans-serif',
+        fontSize: '18px',
+        color: '#ffffff',
+        backgroundColor: 'rgba(0,0,0,0.65)'
+      })
+      .setDepth(11)
+      .setScrollFactor(0)
+      .setVisible(false)
+    // 资源点详情 tag（默认隐藏；悬停资源点显示）
+    this.nodeDetailText = this.add
       .text(0, 0, '', {
         fontFamily: 'sans-serif',
         fontSize: '18px',
@@ -326,8 +364,10 @@ export class AdventureScene extends Phaser.Scene {
   }
 
   /**
-   * 资源点渲染：按类型用图标（木/石/铁/金宝箱）；已拾取宝箱变暗、已占矿画白框；
-   * 未探索区域的资源点不可见。
+   * 资源点渲染：
+   * - 矿（持续产出）：资源图标 + 深色六角底座（设施感）+ 已占归属色边框；
+   * - 宝箱（一次性）：金色钱袋、无底座（散落物感），已拾取变暗；
+   * - 未探索区域的资源点不可见。
    */
   private drawNodes(): void {
     this.nodeGraphics.clear()
@@ -346,6 +386,16 @@ export class AdventureScene extends Phaser.Scene {
       seen.add(k)
       const c = this.layout.hexToPixel(hex)
       const iconKey = NODE_ICON_KEYS[type] ?? 'icon-gold'
+      const def = RESOURCE_NODE_DEFS[type]
+      const isMineType = Boolean(def.dailyBonus)
+      const claimed = node.owner !== null
+      const dimmed = !isMineType && node.visited
+      // 矿：六角底座（比图标略大，深色半透明）→ 设施感；宝箱无底座
+      if (isMineType) {
+        this.fillHexScaled(this.nodeGraphics, hex, 0.62, 0x0b0f18, 0.55)
+        this.nodeGraphics.lineStyle(2, claimed ? FACTION_COLORS[node.owner as FactionId] : 0xffffff, claimed ? 1 : 0.4)
+        this.nodeGraphics.strokePoints(this.hexPoints(hex, 0.62), true)
+      }
       let sprite = this.nodeSprites.get(k)
       if (!sprite) {
         sprite = this.add.image(c.x, c.y, iconKey).setDepth(2).setScale(24 / 64)
@@ -354,16 +404,9 @@ export class AdventureScene extends Phaser.Scene {
         sprite.setTexture(iconKey)
       }
       sprite.setPosition(c.x, c.y)
-      const def = RESOURCE_NODE_DEFS[type]
-      const isMineType = Boolean(def.dailyBonus)
-      const claimed = node.owner !== null
-      const dimmed = !isMineType && node.visited
-      // 已拾取宝箱变暗；已占矿叠加白框（nodeGraphics）
+      // 图标上色（Kenney 白剪影 setTint → 资源代表色）；已拾取宝箱变暗
+      sprite.setTint(NODE_COLORS[type] ?? RESOURCE_COLORS.gold)
       sprite.setAlpha(dimmed ? 0.35 : 1)
-      if (isMineType && claimed) {
-        this.nodeGraphics.lineStyle(2, 0xffffff, 1)
-        this.nodeGraphics.strokeRect(c.x - 13, c.y - 13, 26, 26)
-      }
     }
     // 重建（换种子）后清理已不存在资源点的 sprite
     for (const k of this.nodeSprites.keys()) {
@@ -436,6 +479,23 @@ export class AdventureScene extends Phaser.Scene {
     g.fillPoints(points, true)
   }
 
+  /** 六角格的 6 角点，按比例缩放（scale=1 即原格；<1 缩到中心，用于矿底座） */
+  private hexPoints(hex: Axial, scale: number): Phaser.Math.Vector2[] {
+    const center = this.layout.hexToPixel(hex)
+    const points: Phaser.Math.Vector2[] = []
+    for (let c = 0; c < 6; c++) {
+      const p = this.layout.cornerAt(hex, c)
+      points.push(new Phaser.Math.Vector2(center.x + (p.x - center.x) * scale, center.y + (p.y - center.y) * scale))
+    }
+    return points
+  }
+
+  /** 在指定 Graphics 上画一个缩小比例的填充六角格（矿底座用） */
+  private fillHexScaled(g: Phaser.GameObjects.Graphics, hex: Axial, scale: number, color: number, alpha: number): void {
+    g.fillStyle(color, alpha)
+    g.fillPoints(this.hexPoints(hex, scale), true)
+  }
+
   // ---------- 寻路 / 状态查询 ----------
 
   /** 地形 × 迷雾 的寻路代价（只允许走进当前可见格） */
@@ -503,6 +563,52 @@ export class AdventureScene extends Phaser.Scene {
     if (curKey === (inMap ? hexKey(hex) : null)) return
     this.hoverHex = inMap ? hex : null
     this.drawOverlay()
+    // 悬停资源点 → 显示详情 tooltip（名称 + 每日产出/一次性 + 状态）
+    this.updateNodeTooltip(p, inMap ? hex : null)
+  }
+
+  /** 悬停资源点 → tooltip：`名称  每日产出 +N木（已占领）` / `名称  一次性 +30金 +5木（已拾取）` */
+  private updateNodeTooltip(pointer: Phaser.Input.Pointer, hex: Axial | null): void {
+    this.hideNodeTooltip()
+    if (!hex) return
+    const state = this.state
+    const hero = state.hero
+    const map = state.map
+    if (!hero || !map) return
+    const k = hexKey(hex)
+    const type = map.nodes?.[k]
+    if (!type) return
+    // 未探索区域的资源点不可见 → 不显示
+    if ((state.visibility[hero.faction] ?? {})[k] === 'unexplored') return
+    const def = RESOURCE_NODE_DEFS[type]
+    const node = state.nodeStates[k]
+    const isMineType = Boolean(def.dailyBonus)
+    const desc = isMineType
+      ? `每日产出 +${this.formatBonus(def.dailyBonus)}`
+      : `一次性 ${this.formatBonus(def.oneTime)}`
+    const status = isMineType
+      ? node?.owner !== null
+        ? '已占领'
+        : '无主，走近占领'
+      : node?.visited
+        ? '已拾取'
+        : '走近拾取'
+    this.nodeDetailText.setText(`${def.name}  ${desc}（${status}）`)
+    this.nodeDetailText.setPosition(pointer.x + 12, pointer.y - 8)
+    this.nodeDetailText.setVisible(true)
+  }
+
+  private hideNodeTooltip(): void {
+    this.nodeDetailText.setVisible(false)
+  }
+
+  /** `Partial<Resources>` → `金+30 木+5`（正数全列，省略零） */
+  private formatBonus(b: Partial<import('../core/state/GameState').Resources> | undefined): string {
+    if (!b) return ''
+    return (Object.entries(b) as [keyof import('../core/state/GameState').Resources, number][])
+      .filter(([, v]) => (v ?? 0) > 0)
+      .map(([k, v]) => `${RESOURCE_NAMES[k]}+${v}`)
+      .join(' ')
   }
 
   private handleClick(p: Phaser.Input.Pointer): void {
@@ -513,9 +619,11 @@ export class AdventureScene extends Phaser.Scene {
     const town = this.state.towns.find((t) => hexKey(t.position) === hexKey(hex))
     if (town) {
       this.showTownDetail(town, p)
+      this.hideNodeTooltip()
       return
     }
     this.hideTownDetail()
+    this.hideNodeTooltip()
     if (!hero || !this.mapKeys.has(hexKey(hex))) return
     if (!this.reachable.has(hexKey(hex))) return
     const path = findPath(hero.position, hex, this.makeMapCosts())
