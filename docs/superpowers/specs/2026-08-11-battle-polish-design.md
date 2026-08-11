@@ -1,0 +1,191 @@
+# 战斗系统打磨（HOMM3 战斗体验）设计
+
+> 目标：把现有战斗 MVP（13×9 全平地、点选移动/攻击、瞬移、无提示）打磨到 HOMM3 式战斗体验：
+> 矩形锯齿边战场、移动即行动、边界刀剑交战、远程三态（弓箭/断箭/近战30%）、反击、
+> 完整提示系统（当前单位标记/残影/三态光标/信息面板）、HOMM3 式血量显示、逐格移动动画、AI 冲锋。
+>
+> 规则以 HOMM3 为参考基准（已调研：射程惩罚 broken arrow、贴身禁射、反击每回合一次、无限射程 Sharpshooters 等），
+> 数值/命名按用户 2026-08-11 的逐条确认。
+
+## 1. 现状缺陷（本次要修的 7 项）
+
+1. **地图形状**：轴向布局 `x∝(q+r/2)` 下所有 q×r 全画 → 平行四边形（斜边，观感像菱形）；应为矩形、左右锯齿边。
+2. **提示缺失**：无当前行动单位标识、无移动残影、无攻击光标、无 hover 信息面板。
+3. **无法触发交战**：点敌军要求"已在射程内"，无自动接近/交战手势。
+4. **血量显示**：血条显示整队池比例（37/50），HOMM3 应显示受伤单兵（7/10）。核心结算（ceil 折算）已正确，需锁定 + 改显示。
+5. **无地形障碍物**：全平地，战场单调；应有障碍物（阻挡通行）。
+6. **移动瞬移**：`setAnimationSpeed` 为 no-op，无动画。
+7. **交互模型**：两步（先移动后攻击），与 HOMM3"一个单位一个行动"不符。
+
+## 2. 范围划分
+
+### 2.1 本批实现（MVP 打磨）
+- 矩形战场（锯齿边）、障碍物 + 连通性
+- 行动模型：一个单位一个行动（移动=行动，行动完 advance）
+- 近战交互：边界刀剑 + 目标闪烁
+- 远程规则：射程 6（可配）、弓箭满额 / 断箭半额、贴身禁射、移动后近战 30%
+- 反击：全伤、每回合每个单位一次、仅近战引发
+- 提示系统：当前单位标记、残影、三态光标、信息面板
+- 血量显示：受伤单兵比例（HOMM3 式）
+- 逐格移动动画（含 AI 异步）
+- AI 升级：够得着就冲锋/射击
+- 全量测试更新 + PRD 同步
+
+### 2.2 记入 PRD、本次不实现（用户确认 MVP 后做）
+- 特技：**连击**（攻两次：移动→攻→反击→再攻）、**连射**（远程两次）、**远射**（射程无限满额）、**抵射**（被贴身仍可远程攻击）
+- **无限反击**（特殊技能：反击不限每回合一次）
+- 伤害/数值平衡、美工（刀剑/光标美术）
+
+## 3. 规则设计（用户逐条确认）
+
+### 3.1 行动模型（确认 A）
+- 一个单位 = **一个行动**。行动后 `advance()` 到下一单位。
+- **移动即行动**：`battle/move` 成功后置 hasActed 并 advance（不再"移动后再攻击"）。
+- 攻击（近战或远程）= 行动。任何行动后 advance。
+- 所有行动仍走 CommandLog，确定性不变（core 无 Math.random/Date.now）。
+
+### 3.2 地图形状（问题 1）
+- 战场为**矩形**（行数 rows、每行宽度 cols 个六角格），左右两边**锯齿形边界**。
+- core 谓词 `inBattleGrid(state, hex)`：
+  ```
+  qMin(r) = -Math.floor(r / 2)
+  valid ⇔ 0 ≤ r < rows ∧ qMin(r) ≤ q ≤ qMin(r) + cols - 1
+  ```
+  轴向像素映射不变（`x = size·√3·(q + r/2)`）。各行动素宽度一致、相邻行首尾交替退进半格 → 矩形轮廓 + 锯齿左右边。
+- `BattleState.grid` 保持 `{ cols, rows }`（cols=行宽、rows=行数）；玩家出生 q=0（行 0 窗口 [0,cols-1]，合法）、敌方 q=cols-2。
+- 相机居中按有效六角格的像素包围盒中心（渲染层算）。
+
+### 3.3 障碍物与连通性（确认 D）
+- `BattleState.obstacles: Axial[]`（init 从配置带入；固定测试图放置 4–6 块，避开出生行）。
+- 寻路 `canStandAt` 拒绝障碍格（1×2 单位**主体 + 东邻双格**都要不是障碍——已双格校验，扩展障碍即可）。
+- **连通性不变量**：core 泛洪检查（从 (qMin(0),0) 起遍历非障碍合法格，所有合法非障碍格可达）→ 无孤岛。固定测试图障碍布局必须通过 + 单测锁定；将来随机生成也必须满足。
+- 渲染：障碍物画形状（石块/树），可达区高亮自然排除障碍格。
+
+### 3.4 近战交战交互（确认 C + 边界刀剑模型）
+- 近战部队**不能直接点击敌军**。唯一近战手势：
+  1. 悬停可达落点 → 半透明**残影**显示落点（1×2 显示两格）。
+  2. 落点与敌军相邻时，鼠标靠近**目的格与敌军之间的边界** → 边界上显示**刀剑图标**，剑尖指向该敌军，该敌军**闪烁**。
+  3. 目的格相邻多个敌军（如右 + 右上）→ 鼠标靠近右侧边界剑指向右军、靠近右上边界剑指向右上军；**以鼠标所在的边界决定攻击目标**。
+  4. 点击 = `battle/attack { unitId, targetId, to: 落点 }` → 移动到落点 + 近战攻击该敌军（一个行动）。
+- **已贴身**：若当前部队已与敌军相邻，悬停**当前格**与敌军相邻的边界同样显示刀剑；点击 = **原地攻击**（to = 当前格，零移动）。
+- 边界 hit 需**容错宽度**（边界在屏幕上只有 ~1px）：鼠标到边界线段的垂距 < 容差（约 10px，可配）即判定该边界。
+- 剑尖方向、美术后续可改（MVP 用简单图形：边界中点画一个指向敌军的剑形）。
+- **无效点击一律 no-op**：点不可达格、直接点敌军本体（无刀剑）、无边界/非弓箭悬停时点击 → 不产生任何命令。
+
+### 3.5 远程攻击规则（确认 B，射程默认 6 可配置）
+- **远程兵** = `UnitDef.range > 1`（弓兵 range 2→6）。范围判定对 1×2 目标：**身体任意一格在射程内即算**（已如此实现，用 occupiedHexes）。
+- **未移动（!hasMoved）且未被贴身（无任何敌军相邻）** 时才能射击：
+  - hover 射程内敌军 → **弓箭光标**（+ 目标闪烁）→ 点击 = **满额**远程攻击。
+  - hover 射程外敌军 → **断箭光标**（+ 目标闪烁）→ 点击 = **半额**（最终伤害 × RANGE_OUT_MULT=0.5）。
+- **已移动 或 被贴身**：不能远程；只能近战（交互同 3.4），结算时**攻击按 MELEE_ATTACK_MULT=0.3 取值**（可配）。
+- 远程攻击**不引发反击**（HOMM3）。
+- 命令 `battle/shoot { unitId, targetId }`：满额/半额按落点射程判定；标记 hasActed + advance。
+
+### 3.6 反击（用户确认：全伤、每回合一次，HOMM3 一致）
+- 近战攻击结算后：若**目标存活**、攻击者存活、目标**本回合尚未反击**、目标仍在攻击者的近战范围 → 目标**立即反击**攻击者。
+- 反击伤害 = **全额**近战伤害（无减半）。
+- **每回合每个单位最多反击一次**：`BattleUnit` 加 `retaliated: boolean`，`advance()` 换回合时重置（与 hasActed 同周期）。
+- 远程不引发反击。
+- 未来：特殊技能可无限反击（记 PRD，不实现）。
+
+### 3.7 特技（记 PRD §16，本次不实现）
+连击 / 连射 / 远射 / 抵射 / 无限反击 —— 只录入 PRD 待办，不建字段不写逻辑。
+
+### 3.8 提示系统（问题 2）
+- **当前单位标记**：金色描边 + 单位上方三角箭头（HOMM3 绿色箭头风格）。
+- **残影**：悬停可达落点 → 半透明单位形状（1×2 两格）跟随鼠标；落点为当前格时抑制残影（只留刀剑）。
+- **三态光标**：剑（近战边界，画在边界上指向敌军）、弓（远程射程内，系统光标/图标）、断箭（射程外）。
+- **目标闪烁**：刀剑/弓箭瞄准的敌军高亮闪烁（随时间 alpha 脉动）。
+- **信息面板**：hover 任意部队 → 面板：兵种名 / 数量 / 攻击 / 防御 / 伤害范围(min–max) / 速度 / 剩余血量。
+
+### 3.9 血量显示（问题 6，HOMM3 式）
+- 核心结算保持 `count = ceil(hpLeft / hp)`（13 伤/10 血 → 死 1、存活数 -1、末者剩 7 血），补单测锁定。
+- 新增纯函数 `woundedHp(unit) = hpLeft - (count - 1) * hp`（队内受伤单兵的剩余血，count=1 时 = hpLeft）。
+- 渲染：**血条显示受伤单兵比例** `woundedHp / hp`（如 7/10）；数量文本显示存活数 `count`；信息面板显示剩余血量。
+
+### 3.10 移动动画（问题 7）
+- `battle/move` / 近战 `battle/attack` 移动段：沿 `battleFindPath` **逐格步进**动画（每格短补间/跳跃）。
+- `setAnimationSpeed(ms)` 从 no-op 改为接入每格步进时长（0 = 即时完成，e2e 用）。
+- 敌方 AI 行动**异步逐格**动画（stepEnemyAi 改 async，逐个 await 行动动画）。
+- core 状态同步更新（dispatch 后立即在终态），动画只影响渲染层；e2e 状态断言不受影响。
+
+### 3.11 AI（用户确认：够得着就冲锋）
+- `planEnemyAction` 升级：
+  1. 攻击：若本回合**够得着**某敌军（已在射程内 或 可达范围内存在与该军相邻/射程内落点）→ 攻击（近战带落点 `to`；远程 `shoot`）。目标选择确定性（优先低血，同血按 id）。
+  2. 否则向最近敌军移动（现有逻辑）。
+  3. 否则跳过。
+- 与玩家侧**同源**的落点/射程计算（共享 helper `canEngageTarget(mover, target, state): Axial | null`：返回最佳近战落点，或 null 表示够不着；远程判定 `inRange`）。
+
+## 4. 常量（集中 `src/data/` 或 core 常量文件，全部可调）
+
+| 常量 | 值 | 说明 |
+|---|---|---|
+| `MELEE_ATTACK_MULT` | 0.3 | 远程兵近战时攻击取值倍率 |
+| `RANGE_OUT_MULT` | 0.5 | 射程外远程攻击伤害倍率 |
+| `RANGED_RANGE` | 6 | 弓兵默认射程（UnitDef.range，后续可配） |
+| `RETALIATION` | 全额 | 反击无减半；每回合一次（`retaliated` 标志） |
+| `EDGE_HIT_TOLERANCE` | 10px | 边界刀剑 hit 容差（渲染层） |
+
+## 5. 模块改动
+
+### core（纯 TS，零 Phaser，确定性）
+| 文件 | 改动 |
+|---|---|
+| `src/core/battle/types.ts` | `BattleUnit` 加 `retaliated: boolean`；`BattleState` 加 `obstacles: Axial[]`；`grid` 语义改为 {行宽, 行数}；新增 `woundedHp(unit)` 纯函数；`inBattleGrid(state, hex)` 谓词（或放 pathing） |
+| `src/core/battle/pathing.ts` | `inGrid`→`inBattleGrid`；`canStandAt` 校验障碍格（双格身体） |
+| `src/core/battle/battleReducer.ts` | `init` 带 obstacles；`move` 置 hasActed+advance；`attack` 支持 `to`（落点校验 + 近战，远程兵近战 30%）；新增 `shoot`（满额/半额、贴身/移动校验）；反击结算（全伤、retaliated 置位）；advance 重置 retaliated |
+| `src/core/battle/damage.ts` | 支持攻击倍率参数（远程兵近战 30%） |
+| `src/core/battle/ai.ts` | `planEnemyAction` 冲锋/射击 + 共享 `canEngageTarget` |
+| `src/core/battle/*.test.ts` | 全量更新/新增（见 §7） |
+
+### 渲染
+| 文件 | 改动 |
+|---|---|
+| `src/scenes/BattleScene.ts` | 矩形网格绘制（窗口谓词）、障碍物绘制、相机居中；残影/刀剑/弓/断箭/闪烁/信息面板；逐格移动动画（含 AI 异步）；新交互分派（move / attack with to / shoot） |
+| `src/dev/debug.ts`（或 BattleScene.getDebugState） | 暴露 hover 态：`ghostHex`、`swordTargetId`、`cursorKind`（'sword'|'bow'|'broken-arrow'|'move'|'none'）供 e2e 断言 |
+
+### 数据
+| 文件 | 改动 |
+|---|---|
+| `src/data/units.ts` | archer `range: 2 → 6` |
+| `src/data/battleTest.ts` | `BATTLE_GRID` 加 `obstacles: Axial[]`（4–6 块，避开出生行，连通性通过） |
+
+### e2e
+| 文件 | 改动 |
+|---|---|
+| `src/e2e/battle.spec.ts` | 重写：刀剑边界点击交战闭环、远程满额/半额、反击、动画即时化（setAnimationSpeed(0)）、hover 态断言 |
+
+## 6. 命令接口（core，最终形态）
+
+```
+battle/init      { player, enemy, grid: { cols, rows, obstacles } }
+battle/move      { unitId, to }            // 移动即行动；to 必须在可达集
+battle/attack    { unitId, targetId, to? } // 近战；to=落点（默认当前格）；远程兵近战 30% 攻；触发反击
+battle/shoot     { unitId, targetId }      // 远程；满额/半额；不触发反击；贴身/移动时拒绝
+battle/select    { unitId | null }
+battle/endTurn   { unitId }
+battle/surrender                          // 投降
+```
+
+## 7. 测试计划
+
+### core 单测（Vitest）
+- 矩形窗口：`inBattleGrid` 边界（含负 q 行、锯齿边角点）。
+- 障碍/连通：`canStandAt` 拒绝障碍格（1×2 双格）；连通性泛洪（固定图连通；故意孤岛图不连通）。
+- move：成功后 hasActed=true 且 currentUnitId advance；不可达/越界/障碍 no-op。
+- attack：带 `to` 合法移动+近战；`to` 不可达/不与目标相邻 no-op；近战兵直接点远处敌军（无 to）no-op；远程兵近战伤害按 30% 攻。
+- 反击：近战触发全额反击、同回合只反击一次、换回合重置、远程不触发、反击方先灭则无反击。
+- shoot：满额/半额（射程边界 ±1）；贴身拒绝；已移动拒绝；1×2 目标任意格在射程内即满额。
+- woundedHp：5×10hp 满编（hpLeft=50）吃 13 伤 → hpLeft=37、count=4、woundedHp=7（末者 7/10）。
+- AI：够得着冲锋（含落点）、够不着走近、空场跳过。
+
+### e2e（Playwright 状态断言）
+- 刀剑交互：悬停落点边界 → getDebugState 断言 cursorKind='sword'、swordTargetId；点击 → 移动+近战（position/target hp/count/反击）
+- 远程：弓（满额）/断箭（半额）分别断言目标 hp 变化；贴身禁射
+- 移动即行动：点击可达格移动后 currentUnitId 变化
+- 逐格动画：setAnimationSpeed(0) 下状态即时到位
+- 截图（人工目检）：矩形锯齿边战场、残影、刀剑/弓箭光标、信息面板、血条、障碍物
+
+## 8. 相关
+- 计划文件路径由 writing-plans 生成：`docs/superpowers/plans/2026-08-11-battle-polish.md`
+- PRD §15 战斗 MVP 文字随语义更新（"点选移动（每回合最多一次，移动后可攻击）" → "移动即行动"）；§16 追加特技/无限反击待办
