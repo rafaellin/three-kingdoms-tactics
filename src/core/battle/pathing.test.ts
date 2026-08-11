@@ -1,19 +1,25 @@
 import { describe, expect, test } from 'vitest'
 import { hexKey } from '../hex/HexGrid'
-import { battleFindPath, battleReachableArea } from './pathing'
+import type { Axial } from '../hex/HexGrid'
+import { battleFindPath, battleReachableArea, battleGridConnected, inBattleGrid } from './pathing'
 import type { BattleState, BattleUnit } from './types'
 
 function makeUnit(over: Partial<BattleUnit>): BattleUnit {
   return {
     id: 'u0', side: 'player', defId: 'militia', count: 10, position: { q: 0, r: 0 },
-    size: 1, hpLeft: 10, maxHp: 10, hasActed: false, hasMoved: false, ...over
+    size: 1, hpLeft: 10, maxHp: 10, hasActed: false, hasMoved: false, retaliated: false, ...over
   }
 }
 
-function makeState(units: BattleUnit[], grid: { cols: number; rows: number } = { cols: 20, rows: 20 }): BattleState {
+function makeState(
+  units: BattleUnit[],
+  grid: { cols: number; rows: number } = { cols: 20, rows: 20 },
+  obstacles: Axial[] = []
+): BattleState {
   return {
     grid,
     units,
+    obstacles,
     general: { player: { name: 'P', atkBonus: 0, defBonus: 0 }, enemy: { name: 'E', atkBonus: 0, defBonus: 0 } },
     turn: 1, order: units.map((u) => u.id), currentUnitId: units[0]?.id ?? null, selectedUnitId: null, phase: 'combat', log: []
   }
@@ -46,5 +52,37 @@ describe('战斗寻路（全平地，障碍 = 其他单位）', () => {
     expect(battleFindPath(s.units[0]!, { q: 2, r: 0 }, s)).not.toBeNull()
     const s2 = makeState([makeUnit({ defId: 'militia' }), makeUnit({ id: 'e0', side: 'enemy', position: { q: 2, r: 0 } })])
     expect(battleFindPath(s2.units[0]!, { q: 2, r: 0 }, s2)).toBeNull()
+  })
+})
+
+describe('矩形战场窗口 / 障碍物 / 连通性', () => {
+  test('矩形窗口：qMin(r)=-floor(r/2)，行内 q∈[qMin, qMin+cols-1]', () => {
+    const s = makeState([], { cols: 4, rows: 3 })
+    expect(inBattleGrid(s, { q: 0, r: 0 })).toBe(true)
+    expect(inBattleGrid(s, { q: 3, r: 0 })).toBe(true)
+    expect(inBattleGrid(s, { q: 4, r: 0 })).toBe(false)   // 超行宽
+    expect(inBattleGrid(s, { q: 3, r: 2 })).toBe(false)   // 锯齿左进：行2窗口 [-1,2]
+    expect(inBattleGrid(s, { q: -1, r: 2 })).toBe(true)
+    expect(inBattleGrid(s, { q: 0, r: 3 })).toBe(false)   // 行越界
+  })
+  test('障碍格不可通行', () => {
+    const s = makeState([makeUnit({ defId: 'militia' })], { cols: 13, rows: 9 }, [{ q: 2, r: 0 }])
+    const reach = battleReachableArea(s.units[0]!, s)
+    expect(reach.some((h) => hexKey(h) === '2,0')).toBe(false)
+    expect(reach.some((h) => hexKey(h) === '1,0')).toBe(true)
+  })
+  test('1×2 单位东邻是障碍则不可占', () => {
+    const s = makeState([makeUnit({ defId: 'cavalry', position: { q: 4, r: 0 }, size: 2 })], { cols: 13, rows: 9 }, [{ q: 6, r: 0 }])
+    expect(battleReachableArea(s.units[0]!, s).some((h) => hexKey(h) === '5,0')).toBe(false)
+  })
+  test('连通性：固定测试图连通（无孤岛）', () => {
+    const obs: Axial[] = [{ q: 4, r: 0 }, { q: 5, r: 0 }, { q: 4, r: 2 }, { q: 5, r: 2 }, { q: 7, r: 4 }, { q: 8, r: 4 }]
+    const s = makeState([], { cols: 13, rows: 9 }, obs)
+    expect(battleGridConnected(s)).toBe(true)
+  })
+  test('连通性：整列障碍制造孤岛 → 不连通', () => {
+    const wall: Axial[] = [{ q: 3, r: 0 }, { q: 3, r: 1 }, { q: 3, r: 2 }, { q: 3, r: 3 }, { q: 3, r: 4 }]
+    const s = makeState([], { cols: 8, rows: 5 }, wall)
+    expect(battleGridConnected(s)).toBe(false)
   })
 })

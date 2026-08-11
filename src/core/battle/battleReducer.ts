@@ -13,6 +13,7 @@ import { occupiedHexes, type BattleArmyConfig, type BattleState, type BattleUnit
 export function createInitialBattleState(): BattleState {
   return {
     grid: { cols: 0, rows: 0 },
+    obstacles: [],
     units: [],
     general: {
       player: { name: '', atkBonus: 0, defBonus: 0 },
@@ -37,7 +38,7 @@ function sortOrder(units: BattleUnit[]): string[] {
     .map((u) => u.id)
 }
 
-function init(state: BattleState, payload: { player: BattleArmyConfig; enemy: BattleArmyConfig; grid: { cols: number; rows: number } }): BattleState {
+function init(state: BattleState, payload: { player: BattleArmyConfig; enemy: BattleArmyConfig; grid: { cols: number; rows: number; obstacles?: Axial[] } }): BattleState {
   const mk = (cfg: BattleArmyConfig, qBase: number): BattleUnit[] =>
     cfg.units.map((u, i) => {
       const def = UNIT_DEFS[u.defId]
@@ -51,7 +52,8 @@ function init(state: BattleState, payload: { player: BattleArmyConfig; enemy: Ba
         hpLeft: u.count * def.hp,
         maxHp: u.count * def.hp,
         hasActed: false,
-        hasMoved: false
+        hasMoved: false,
+        retaliated: false
       }
     })
   const units = [...mk(payload.player, 0), ...mk(payload.enemy, payload.grid.cols - 2)]
@@ -59,6 +61,7 @@ function init(state: BattleState, payload: { player: BattleArmyConfig; enemy: Ba
   return {
     ...state,
     grid: payload.grid,
+    obstacles: payload.grid.obstacles ?? [],
     units,
     general: {
       player: { name: payload.player.generalName, atkBonus: payload.player.atkBonus, defBonus: payload.player.defBonus },

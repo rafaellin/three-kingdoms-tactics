@@ -4,7 +4,7 @@ import type { BattleUnit } from './types'
 
 const unit = (over: Partial<BattleUnit>): BattleUnit => ({
   id: 'u', side: 'player', defId: 'militia', count: 10, position: { q: 0, r: 0 }, size: 1,
-  hpLeft: 30, maxHp: 30, hasActed: false, hasMoved: false, ...over
+  hpLeft: 30, maxHp: 30, hasActed: false, hasMoved: false, retaliated: false, ...over
 })
 
 describe('伤害公式（HOMM3 式攻防修正）', () => {

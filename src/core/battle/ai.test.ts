@@ -5,12 +5,13 @@ import type { BattleState, BattleUnit } from './types'
 function unit(over: Partial<BattleUnit>): BattleUnit {
   return {
     id: 'u', side: 'enemy', defId: 'militia', count: 10, position: { q: 0, r: 0 },
-    size: 1, hpLeft: 10, maxHp: 10, hasActed: false, hasMoved: false, ...over
+    size: 1, hpLeft: 10, maxHp: 10, hasActed: false, hasMoved: false, retaliated: false, ...over
   }
 }
 function state(enemy: BattleUnit, foes: BattleUnit[]): BattleState {
   return {
     grid: { cols: 13, rows: 9 },
+    obstacles: [],
     units: [enemy, ...foes],
     general: { player: { name: 'P', atkBonus: 0, defBonus: 0 }, enemy: { name: 'E', atkBonus: 0, defBonus: 0 } },
     turn: 1, order: [enemy.id], currentUnitId: enemy.id, selectedUnitId: null, phase: 'combat', log: []

@@ -1,10 +1,11 @@
 /**
  * 战斗核心类型（纯数据 + 纯函数，零 Phaser）。
- * 战场为矩形六角网格（轴向坐标 q∈[0,cols-1]、r∈[0,rows-1]，全平地）。
+ * 战场为矩形六角窗口（左右锯齿边，行 r 的 q ∈ [-floor(r/2), -floor(r/2)+cols-1]），
+ * 窗口内含障碍物（不可通行、不可占）。
  * 1×2 大型单位（骑兵）占据主体格 + 东邻居格 (q+1, r)，不旋转（HOMM3 逻辑）。
  */
+import { UNIT_DEFS, type UnitDefId } from '../../data/units'
 import type { Axial } from '../hex/HexGrid'
-import type { UnitDefId } from '../../data/units'
 
 export type Side = 'player' | 'enemy'
 
@@ -24,6 +25,8 @@ export interface BattleUnit {
   hasActed: boolean
   /** 本回合是否已移动（MVP：每回合最多移动一次，移动后可再攻击） */
   hasMoved: boolean
+  /** 本回合是否已反击（每回合重置；近战引发，每回合一次） */
+  retaliated: boolean
 }
 
 export interface BattleArmyConfig {
@@ -38,6 +41,8 @@ export interface BattleArmyConfig {
 
 export interface BattleState {
   grid: { cols: number; rows: number }
+  /** 战场障碍物（不可通行、不可占）；init 从配置带入 */
+  obstacles: Axial[]
   units: BattleUnit[]
   general: Record<Side, { name: string; atkBonus: number; defBonus: number }>
   turn: number
@@ -53,4 +58,9 @@ export interface BattleState {
 /** 单位占据的 hex 集合：size=1 → 主体格；size=2 → 主体格 + 东邻 (q+1, r) */
 export function occupiedHexes(unit: Pick<BattleUnit, 'position' | 'size'>): Axial[] {
   return unit.size === 2 ? [unit.position, { q: unit.position.q + 1, r: unit.position.r }] : [unit.position]
+}
+
+/** 受伤士兵剩余血量：hpLeft - (count-1)×单兵血量 */
+export function woundedHp(unit: Pick<BattleUnit, 'hpLeft' | 'count' | 'defId'>): number {
+  return unit.hpLeft - (unit.count - 1) * UNIT_DEFS[unit.defId].hp
 }

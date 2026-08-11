@@ -3,9 +3,17 @@
  * 我方：关羽（武力90/统御70）+ 4 支；敌方：吕布（武力100/统御80）+ 3 支。
  * atkBonus = round(武力/3)，defBonus = round(统御/3)。
  */
+import type { Axial } from '../core/hex/HexGrid'
 import type { BattleArmyConfig } from '../core/battle/types'
 
 export const BATTLE_GRID = { cols: 13, rows: 9 } as const
+
+/** 固定测试图障碍：避开出生行/出生格，连通性单测锁定 */
+export const BATTLE_OBSTACLES: Axial[] = [
+  { q: 4, r: 0 }, { q: 5, r: 0 },
+  { q: 4, r: 2 }, { q: 5, r: 2 },
+  { q: 7, r: 4 }, { q: 8, r: 4 }
+]
 
 export const PLAYER_ARMY: BattleArmyConfig = {
   side: 'player',

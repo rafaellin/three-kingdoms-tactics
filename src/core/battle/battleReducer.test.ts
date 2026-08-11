@@ -12,7 +12,7 @@ const TEST_ARMIES = {
     units: [{ defId: 'archer', count: 8 }] }
 }
 
-function makeStore(opts?: { player?: BattleArmyConfig; enemy?: BattleArmyConfig; grid?: { cols: number; rows: number } }) {
+function makeStore(opts?: { player?: BattleArmyConfig; enemy?: BattleArmyConfig; grid?: { cols: number; rows: number; obstacles?: { q: number; r: number }[] } }) {
   const store = new CommandLog<BattleState>(createInitialBattleState(), battleReducer)
   store.dispatch('battle/init', {
     player: opts?.player ?? TEST_ARMIES.player,
@@ -39,6 +39,14 @@ describe('battle/init', () => {
     const s = makeStore().getState()
     expect(s.units.filter((u) => u.side === 'player').every((u) => u.position.q === 0)).toBe(true)
     expect(s.units.find((u) => u.side === 'enemy')?.position.q).toBe(s.grid.cols - 2)
+  })
+  test('init 带入障碍物；单位 retaliated 初始 false', () => {
+    const store = makeStore({
+      grid: { cols: 13, rows: 9, obstacles: [{ q: 2, r: 0 }] }
+    })
+    const s = store.getState()
+    expect(s.obstacles).toEqual([{ q: 2, r: 0 }])
+    expect(s.units.every((u) => u.retaliated === false)).toBe(true)
   })
 })
 
