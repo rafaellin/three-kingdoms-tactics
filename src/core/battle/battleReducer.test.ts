@@ -132,6 +132,20 @@ describe('battle/attack', () => {
     expect(s.units.find((u) => u.id === 'e0')).toBeUndefined()
     expect(s.phase).toBe('won')
   })
+  test('攻击伤害用目标方将军 defBonus（非攻击方）', () => {
+    // 玩家 archer(攻6) 攻敌方 militia(防4)：玩家 atkBonus=0，敌方 defBonus=10
+    // 正确：def = 4+10=14 → diff = -8 → clamp -3 → 伤 = 10×3×0.85 = 26，hp 50-26=24
+    // bug 版（用攻击方 defBonus=0）：def = 4+0=4 → diff = 2 → 伤 = 10×3×1.1 = 33，hp 50-33=17
+    const store = makeStore({
+      grid: { cols: 4, rows: 3 },
+      player: { side: 'player', generalName: '关羽', atkBonus: 0, defBonus: 0, units: [{ defId: 'archer', count: 10 }] },
+      enemy: { side: 'enemy', generalName: '吕布', atkBonus: 0, defBonus: 10, units: [{ defId: 'militia', count: 50 }] }
+    })
+    store.dispatch('battle/attack', { unitId: 'p0', targetId: 'e0' })
+    const t = store.getState().units.find((u) => u.id === 'e0')!
+    expect(t.hpLeft).toBe(24) // 26 伤害后剩 24（bug 会剩 17 → 测试挂）
+    expect(t.count).toBe(24) // ceil(24/1)
+  })
   test('近战需相邻：不相邻攻击为 no-op', () => {
     const store = makeStore()
     const s0 = store.getState()

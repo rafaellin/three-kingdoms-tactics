@@ -126,8 +126,9 @@ function attack(state: BattleState, unitId: string, targetId: string): BattleSta
   const range = UNIT_DEFS[attacker.defId].range
   const inRange = occupiedHexes(target).some((h) => hexDistance(attacker.position, h) <= range)
   if (!inRange) return state
-  const general = state.general[attacker.side]
-  const dmg = computeDamage(attacker, target, general.atkBonus, general.defBonus)
+  const atkGen = state.general[attacker.side]
+  const defGen = state.general[target.side]
+  const dmg = computeDamage(attacker, target, atkGen.atkBonus, defGen.defBonus)
   let units = state.units.map((u) => (u.id === attacker.id ? { ...u, hasActed: true } : u))
   const hpLeft = target.hpLeft - dmg
   if (hpLeft <= 0) {
