@@ -545,6 +545,9 @@ else:            战斗
 - [ ] 酒馆招募共享池
 
 ### UI
+- [x] 顶部 HUD 资源条 + 日期（流式布局、hover 明细 tooltip）
+- [x] 底部 BGM 播放控件（左下角：上一首/曲名♪/下一首 + 音量按钮 + 滑块）
+- [x] 视口分区（HUD 区 / Map 交互区 / Tools 区；地图拖拽/点击仅在 Map 区生效）
 - [ ] 底部英雄栏
 - [ ] 右侧城池列表
 - [ ] 选中武将详情
@@ -586,8 +589,8 @@ else:            战斗
 - [ ] 关卡/剧本系统
 - [ ] 多种胜利条件
 - [ ] 动画效果
-- [x] 音效/BGM（BGM 随机 playlist 循环、移动音效循环；默认 BGM 音量 10%，2026-08 完成）
-- [ ] 设置界面（BGM / 音效音量调节；dev bridge 已备 setBgmVolume/setSfxVolume 接线点）
+- [x] 音效/BGM（BGM 按场景分类：探索 / 战斗 各自动态 shuffle playlist 循环；主题曲单曲循环（主菜单用）；底部控件：曲名显示 ♪ + 上一首/下一首 + 音量按钮 + 拖动滑块；默认 BGM 音量 10%；移动脚步音效循环；2026-08 完成）
+- [ ] 设置界面（BGM / 音效音量调节——BgmManager.setVolume/getVolume 已就绪，控件与未来设置页共享同一音量状态；设置页面 UI 未做）
 - [ ] 像素美术资源替换
 - [ ] UI 美化
 
@@ -629,6 +632,7 @@ three-kingdoms-tactics/
     │   ├── TownScene.ts       # 城池
     │   └── HeroScene.ts       # 武将界面
     ├── ui/                    # HUD、菜单、弹窗（渲染层）
+    ├── audio/                 # BGM 管理器、playlist 逻辑、音效管理（渲染层）
     ├── dev/                   # 调试工具：debug 句柄、脚本化输入
     └── e2e/                   # Playwright 端到端回归
 ```
