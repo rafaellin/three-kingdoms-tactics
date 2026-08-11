@@ -4,7 +4,7 @@ import { battleReducer, createInitialBattleState } from '../core/battle/battleRe
 import { planEnemyAction } from '../core/battle/ai'
 import { battleReachableArea } from '../core/battle/pathing'
 import { occupiedHexes, woundedHp, type BattleArmyConfig, type BattleState, type BattleUnit } from '../core/battle/types'
-import { hexKey, HexLayout, type Axial } from '../core/hex/HexGrid'
+import { hexDistance, hexKey, hexNeighbor, HexLayout, type Axial, type HexDir } from '../core/hex/HexGrid'
 import { UNIT_DEFS } from '../data/units'
 import { BATTLE_GRID, BATTLE_OBSTACLES, ENEMY_ARMY, PLAYER_ARMY } from '../data/battleTest'
 import { MainMenuScene } from './MainMenuScene'
@@ -13,6 +13,7 @@ const SIDE_COLORS = { player: 0x33aa44, enemy: 0xcc3333 } as const
 const GRID_COLOR = 0x1a2333
 const GRID_LINE = 0x0b0f18
 const REACHABLE_FILL = 0x66ccff
+const EDGE_HIT_TOLERANCE = 10
 /**
  * 战斗场景（渲染层）。职责：读 BattleState 渲染 + 把点击/按钮转成 battle 命令。
  * 交互：
@@ -29,9 +30,17 @@ export class BattleScene extends Phaser.Scene {
   private overlayGraphics!: Phaser.GameObjects.Graphics
   private unitGraphics!: Phaser.GameObjects.Graphics
   private obstacleGraphics!: Phaser.GameObjects.Graphics
+  private hoverGraphics!: Phaser.GameObjects.Graphics
   private unitTexts = new Map<string, Phaser.GameObjects.Text>()
-  // @ts-expect-error 预留字段，Task 7 信息面板使用
   private infoPanel!: Phaser.GameObjects.Text
+  private blinkPhase = 0
+  private hover: {
+    ghostHex: Axial | null
+    swordHex: Axial | null
+    cursorKind: 'sword' | 'bow' | 'broken-arrow' | 'move' | 'none'
+    swordTargetId: string | null
+    blinkId: string | null
+  } = { ghostHex: null, swordHex: null, cursorKind: 'none', swordTargetId: null, blinkId: null }
   // @ts-expect-error 预留字段，Task 8 动画速度控制使用
   private animationMs = 0
   private visualPos = new Map<string, Axial>()
@@ -75,6 +84,13 @@ export class BattleScene extends Phaser.Scene {
     this.refreshViews()
   }
 
+  update(_time: number, delta: number): void {
+    this.blinkPhase += delta * 0.01
+    if (this.state.phase === 'combat' && (this.hover.ghostHex || this.hover.swordHex || this.hover.blinkId)) {
+      this.drawHoverLayer()
+    }
+  }
+
   private get state(): BattleState {
     return this.store.getState()
   }
@@ -84,6 +100,7 @@ export class BattleScene extends Phaser.Scene {
     this.obstacleGraphics = this.add.graphics().setDepth(1)
     this.unitGraphics = this.add.graphics().setDepth(2)
     this.overlayGraphics = this.add.graphics().setDepth(3)
+    this.hoverGraphics = this.add.graphics().setDepth(5)
     this.drawGrid()
     this.drawObstacles()
     // 结果 + 返回主菜单（视口固定，scrollFactor 0）
@@ -275,38 +292,206 @@ export class BattleScene extends Phaser.Scene {
   // ---------- 输入 ----------
 
   private setupInput(): void {
+    this.input.off('pointerup')
+    this.input.off('pointermove')
     this.input.on('pointerup', (p: Phaser.Input.Pointer) => {
       if (this.state.phase !== 'combat' || this.currentSide() !== 'player') return
       this.handleClick(this.layout.pixelToHex(p.worldX, p.worldY))
     })
+    this.input.on('pointermove', (p: Phaser.Input.Pointer) => {
+      this.onHover(p)
+    })
+  }
+
+  private onHover(pointer: Phaser.Input.Pointer): void {
+    const state = this.state
+    const current = state.units.find((u) => u.id === state.currentUnitId)
+    const hex = this.layout.pixelToHex(pointer.worldX, pointer.worldY)
+    const unitAt = state.units.find((u) => occupiedHexes(u).some((h) => hexKey(h) === hexKey(hex)))
+    this.updateInfoPanel(unitAt ?? null)
+    this.hover.ghostHex = null
+    this.hover.swordHex = null
+    this.hover.swordTargetId = null
+    this.hover.blinkId = null
+    this.hover.cursorKind = 'none'
+    if (!current || state.phase !== 'combat' || current.side !== 'player') {
+      this.drawHoverLayer()
+      return
+    }
+    const isRanged = UNIT_DEFS[current.defId].range > 1
+    // 远程：悬停敌军 → 弓/断箭（未移动 + 未被贴身）
+    if (isRanged && unitAt && unitAt.side !== current.side && !current.hasMoved && !this.isPinned(current, state)) {
+      const inRange = occupiedHexes(unitAt).some((h) => this.hexDist(current.position, h) <= UNIT_DEFS[current.defId].range)
+      this.hover.cursorKind = inRange ? 'bow' : 'broken-arrow'
+      this.hover.blinkId = unitAt.id
+      this.drawHoverLayer()
+      return
+    }
+    // 近战：扫描可达落点与其相邻敌军的共享边界，命中最近者
+    const reachable = battleReachableArea(current, state)
+    const mx = pointer.worldX
+    const my = pointer.worldY
+    let edgeHit: { targetId: string; dist: number; dest: Axial } | null = null
+    for (const dest of reachable) {
+      for (let d = 0; d < 6; d++) {
+        const nb = hexNeighbor(dest, d as HexDir)
+        const foe = state.units.find((u) => u.side !== current.side && occupiedHexes(u).some((h) => hexKey(h) === hexKey(nb)))
+        if (!foe) continue
+        const c1 = (6 - d) % 6
+        const c2 = (c1 + 1) % 6
+        const p1 = this.layout.cornerAt(dest, c1)
+        const p2 = this.layout.cornerAt(dest, c2)
+        const dist = this.distToSegment(mx, my, p1.x, p1.y, p2.x, p2.y)
+        if (dist <= EDGE_HIT_TOLERANCE && (!edgeHit || dist < edgeHit.dist)) {
+          edgeHit = { targetId: foe.id, dist, dest }
+        }
+      }
+    }
+    if (edgeHit) {
+      this.hover.cursorKind = 'sword'
+      this.hover.swordTargetId = edgeHit.targetId
+      this.hover.swordHex = edgeHit.dest
+      this.hover.ghostHex = hexKey(edgeHit.dest) === hexKey(current.position) ? null : edgeHit.dest
+      this.hover.blinkId = edgeHit.targetId
+    } else {
+      const ghost = reachable.find((h) => hexKey(h) === hexKey(hex)) ?? null
+      this.hover.ghostHex = ghost
+      this.hover.cursorKind = ghost ? 'move' : 'none'
+    }
+    this.drawHoverLayer()
+  }
+
+  private isPinned(unit: BattleUnit, state: BattleState): boolean {
+    return state.units.some((u) =>
+      u.id !== unit.id && u.side !== unit.side &&
+      occupiedHexes(unit).some((h) => occupiedHexes(u).some((uh) => hexDistance(h, uh) <= 1)))
+  }
+
+  private distToSegment(px: number, py: number, ax: number, ay: number, bx: number, by: number): number {
+    const dx = bx - ax
+    const dy = by - ay
+    const len2 = dx * dx + dy * dy
+    let t = len2 === 0 ? 0 : ((px - ax) * dx + (py - ay) * dy) / len2
+    t = Math.max(0, Math.min(1, t))
+    const cx = ax + t * dx
+    const cy = ay + t * dy
+    return Math.hypot(px - cx, py - cy)
+  }
+
+  private drawHoverLayer(): void {
+    this.hoverGraphics.clear()
+    const h = this.hover
+    // 残影
+    if (h.ghostHex) {
+      const current = this.state.units.find((u) => u.id === this.state.currentUnitId)
+      const size = current?.size ?? 1
+      for (const hex of occupiedHexes({ position: h.ghostHex, size })) {
+        this.fillHex(this.hoverGraphics, hex, 0xffffff, 0.35)
+      }
+    }
+    // 目标闪烁（脉动 alpha）
+    if (h.blinkId) {
+      const target = this.state.units.find((u) => u.id === h.blinkId)
+      if (target) {
+        const alpha = 0.35 + 0.35 * Math.abs(Math.sin(this.blinkPhase))
+        for (const hex of occupiedHexes(target)) this.fillHex(this.hoverGraphics, hex, 0xff0000, alpha)
+      }
+    }
+    // 刀剑：画在目的格与目标之间的边界上，剑尖指向目标
+    if (h.cursorKind === 'sword' && h.swordTargetId && h.swordHex) {
+      this.drawSword(h.swordHex, h.swordTargetId)
+    }
+    // 弓 / 断箭：目标上方画弓弧（断箭加斜线）
+    if (h.cursorKind === 'bow' || h.cursorKind === 'broken-arrow') {
+      const target = h.blinkId ? this.state.units.find((u) => u.id === h.blinkId) : null
+      if (target) {
+        const c = this.layout.hexToPixel(target.position)
+        const g = this.hoverGraphics
+        g.lineStyle(2, h.cursorKind === 'bow' ? 0xffcc33 : 0xff6644, 1)
+        g.beginPath()
+        g.arc(c.x, c.y - 20, 12, Math.PI, 0, false)
+        g.strokePath()
+        if (h.cursorKind === 'broken-arrow') {
+          g.lineBetween(c.x - 8, c.y - 8, c.x + 4, c.y + 4)
+        }
+      }
+    }
+  }
+
+  private drawSword(dest: Axial, targetId: string): void {
+    const target = this.state.units.find((u) => u.id === targetId)
+    if (!target) return
+    const dPos = this.layout.hexToPixel(dest)
+    const tPos = this.layout.hexToPixel(target.position)
+    const mid = { x: (dPos.x + tPos.x) / 2, y: (dPos.y + tPos.y) / 2 }
+    const ang = Math.atan2(tPos.y - dPos.y, tPos.x - dPos.x)
+    const g = this.hoverGraphics
+    g.save()
+    g.translateCanvas(mid.x, mid.y)
+    g.rotateCanvas(ang)
+    g.fillStyle(0xe0e4ec, 1)
+    g.fillRect(-16, -2.5, 22, 5)   // 剑身（正 x 方向为剑尖）
+    g.fillStyle(0xffcc33, 1)
+    g.fillRect(-16, -6, 4, 12)     // 护手
+    g.fillStyle(0x8a5a2b, 1)
+    g.fillRect(6, -4, 9, 8)        // 剑柄
+    g.restore()
+  }
+
+  private updateInfoPanel(unit: BattleUnit | null): void {
+    if (!unit) {
+      this.infoPanel.setVisible(false)
+      return
+    }
+    const def = UNIT_DEFS[unit.defId]
+    const gen = this.state.general[unit.side]
+    this.infoPanel.setText([
+      def.name,
+      `数量：${unit.count}`,
+      `攻击：${def.attack}（+${gen.atkBonus}）`,
+      `防御：${def.defense}（+${gen.defBonus}）`,
+      `伤害：${def.minDamage}~${def.maxDamage}`,
+      `速度：${def.speed}`,
+      `伤兵剩余：${woundedHp(unit)} 血`
+    ])
+    const p = this.input.activePointer
+    this.infoPanel.setPosition(p.x + 16, p.y + 16).setVisible(true)
   }
 
   private handleClick(hex: Axial): void {
     const state = this.state
     const current = state.units.find((u) => u.id === state.currentUnitId)
-    if (!current) return
+    if (!current || current.side !== 'player') return
     const unitAt = state.units.find((u) => occupiedHexes(u).some((h) => hexKey(h) === hexKey(hex)))
-    // 点敌方单位且射程内 → 攻击
-    if (unitAt && unitAt.side !== current.side) {
-      const range = UNIT_DEFS[current.defId].range
-      const inRange = occupiedHexes(unitAt).some((h) => this.hexDist(current.position, h) <= range)
-      if (inRange) {
-        this.store.dispatch('battle/attack', { unitId: current.id, targetId: unitAt.id })
-        this.refreshViews()
-        return
-      }
+    // 近战：刀剑边界 → 冲锋/原地攻击
+    if (this.hover.cursorKind === 'sword' && this.hover.swordTargetId && this.hover.swordHex) {
+      this.store.dispatch('battle/attack', {
+        unitId: current.id,
+        targetId: this.hover.swordTargetId,
+        to: this.hover.swordHex
+      })
+      this.refreshViews()
+      return
     }
-    // 点己方单位 → 选中
+    // 远程：弓/断箭 → 射击
+    if ((this.hover.cursorKind === 'bow' || this.hover.cursorKind === 'broken-arrow') && unitAt && unitAt.side !== current.side) {
+      this.store.dispatch('battle/shoot', { unitId: current.id, targetId: unitAt.id })
+      this.refreshViews()
+      return
+    }
+    // 点己方 → 选中
     if (unitAt && unitAt.side === 'player') {
       this.store.dispatch('battle/select', { unitId: unitAt.id })
       this.refreshViews()
       return
     }
-    // 点可达空格 → 移动
+    // 可达格 → 移动（移动即行动）
     if (battleReachableArea(current, state).some((h) => hexKey(h) === hexKey(hex))) {
       this.store.dispatch('battle/move', { unitId: current.id, to: hex })
       this.refreshViews()
+      return
     }
+    // 无效点击 → no-op
   }
 
   // ---------- helpers ----------
@@ -376,6 +561,14 @@ export class BattleScene extends Phaser.Scene {
       order: state.order,
       log: state.log,
       reachable,
+      hover: {
+        ghostHex: this.hover.ghostHex,
+        swordHex: this.hover.swordHex,
+        cursorKind: this.hover.cursorKind,
+        swordTargetId: this.hover.swordTargetId,
+        blinkId: this.hover.blinkId
+      },
+      infoPanelText: this.infoPanel && this.infoPanel.visible ? this.infoPanel.text : null,
       units: state.units.map((u) => ({
         id: u.id,
         side: u.side,
