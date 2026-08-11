@@ -98,10 +98,67 @@ function phaseOf(units: BattleUnit[]): BattleState['phase'] {
   return 'combat'
 }
 
+function select(state: BattleState, unitId: string | null): BattleState {
+  if (unitId === null) return { ...state, selectedUnitId: null }
+  const unit = state.units.find((u) => u.id === unitId)
+  if (!unit || unit.side !== 'player') return state
+  return { ...state, selectedUnitId: unit.id }
+}
+
+function move(state: BattleState, unitId: string, to: Axial): BattleState {
+  const unit = state.units.find((u) => u.id === unitId)
+  if (!unit || unit.id !== state.currentUnitId || unit.hasActed || unit.hasMoved) return state
+  if (hexKey(unit.position) === hexKey(to)) return state
+  const reachable = battleReachableArea(unit, state)
+  if (!reachable.some((h) => hexKey(h) === hexKey(to))) return state
+  if (!battleFindPath(unit, to, state)) return state
+  return {
+    ...state,
+    units: state.units.map((u) => (u.id === unitId ? { ...u, position: { ...to }, hasMoved: true } : u))
+  }
+}
+
+function attack(state: BattleState, unitId: string, targetId: string): BattleState {
+  const attacker = state.units.find((u) => u.id === unitId)
+  const target = state.units.find((u) => u.id === targetId)
+  if (!attacker || !target || attacker.id !== state.currentUnitId || attacker.hasActed) return state
+  if (attacker.side === target.side) return state
+  const range = UNIT_DEFS[attacker.defId].range
+  const inRange = occupiedHexes(target).some((h) => hexDistance(attacker.position, h) <= range)
+  if (!inRange) return state
+  const general = state.general[attacker.side]
+  const dmg = computeDamage(attacker, target, general.atkBonus, general.defBonus)
+  let units = state.units.map((u) => (u.id === attacker.id ? { ...u, hasActed: true } : u))
+  const hpLeft = target.hpLeft - dmg
+  if (hpLeft <= 0) {
+    units = units.filter((u) => u.id !== target.id)
+  } else {
+    units = units.map((u) =>
+      u.id === target.id ? { ...u, hpLeft, count: Math.max(1, Math.ceil(hpLeft / UNIT_DEFS[u.defId].hp)) } : u
+    )
+  }
+  const phase = phaseOf(units)
+  const log = [...state.log, `${attacker.id} 攻击 ${target.id} 造成 ${dmg} 伤害${hpLeft <= 0 ? '（消灭）' : ''}`]
+  if (phase !== 'combat') return { ...state, units, phase, log }
+  return advance({ ...state, units, log })
+}
+
 export const battleReducer: Reducer<BattleState> = (state, cmd: Command) => {
   switch (cmd.type) {
     case 'battle/init':
       return init(state, cmd.payload as Parameters<typeof init>[1])
+    case 'battle/select': {
+      const payload = cmd.payload as { unitId: string | null }
+      return select(state, payload.unitId)
+    }
+    case 'battle/move': {
+      const payload = cmd.payload as { unitId: string; to: Axial }
+      return move(state, payload.unitId, payload.to)
+    }
+    case 'battle/attack': {
+      const payload = cmd.payload as { unitId: string; targetId: string }
+      return attack(state, payload.unitId, payload.targetId)
+    }
     case 'battle/endTurn':
       return endTurn(state, (cmd.payload as { unitId: string }).unitId)
     case 'battle/surrender':

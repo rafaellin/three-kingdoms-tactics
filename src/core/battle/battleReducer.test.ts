@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'vitest'
 import { CommandLog } from '../events/CommandLog'
+import { hexKey } from '../hex/HexGrid'
 import { battleReducer, createInitialBattleState } from './battleReducer'
 import type { BattleArmyConfig, BattleState } from './types'
 
@@ -60,5 +61,86 @@ describe('battle/endTurn 回合推进', () => {
     const other = s0.units.find((u) => u.id !== s0.currentUnitId)!
     store.dispatch('battle/endTurn', { unitId: other.id })
     expect(store.getState().currentUnitId).toBe(s0.currentUnitId)
+  })
+})
+
+describe('battle/select', () => {
+  test('只能选中玩家单位；可取消', () => {
+    const store = makeStore()
+    const p = store.getState().units.find((u) => u.side === 'player')!
+    store.dispatch('battle/select', { unitId: p.id })
+    expect(store.getState().selectedUnitId).toBe(p.id)
+    store.dispatch('battle/select', { unitId: null })
+    expect(store.getState().selectedUnitId).toBeNull()
+  })
+  test('选中敌方单位无效', () => {
+    const store = makeStore()
+    const e = store.getState().units.find((u) => u.side === 'enemy')!
+    store.dispatch('battle/select', { unitId: e.id })
+    expect(store.getState().selectedUnitId).toBeNull()
+  })
+})
+
+describe('battle/move', () => {
+  test('移动到可达格更新位置，并置 hasMoved', () => {
+    const store = makeStore()
+    const cur = store.getState().currentUnitId! // 骑兵（speed9，出生 (0,1)）
+    store.dispatch('battle/move', { unitId: cur, to: { q: 1, r: 0 } })
+    const u = store.getState().units.find((x) => x.id === cur)!
+    expect(hexKey(u.position)).toBe('1,0')
+    expect(u.hasMoved).toBe(true)
+  })
+  test('不可达/越界/已移动 均为 no-op', () => {
+    const store = makeStore()
+    const cur = store.getState().currentUnitId! // 骑兵 (0,1)
+    store.dispatch('battle/move', { unitId: cur, to: { q: 99, r: 99 } }) // 越界 → no-op
+    expect(hexKey(store.getState().units.find((x) => x.id === cur)!.position)).toBe('0,1')
+    store.dispatch('battle/move', { unitId: cur, to: { q: 1, r: 0 } })  // 合法移动
+    store.dispatch('battle/move', { unitId: cur, to: { q: 2, r: 0 } })  // 已移动 → no-op
+    expect(hexKey(store.getState().units.find((x) => x.id === cur)!.position)).toBe('1,0')
+  })
+})
+
+describe('battle/attack', () => {
+  test('远程在射程内攻击：扣目标 hp、折算 count、攻击者行动', () => {
+    // 小图 4×3：玩家 archer (0,0)、敌方 militia (2,0)，距离 2 ≤ 射程 2
+    // archer speed5 > militia speed4 → 玩家 p0 先动（避免同速 id 平局陷阱）
+    const store = makeStore({
+      grid: { cols: 4, rows: 3 },
+      player: { side: 'player', generalName: '关羽', atkBonus: 0, defBonus: 0, units: [{ defId: 'archer', count: 10 }] },
+      enemy: { side: 'enemy', generalName: '吕布', atkBonus: 0, defBonus: 0, units: [{ defId: 'militia', count: 50 }] }
+    })
+    expect(store.getState().currentUnitId).toBe('p0')
+    store.dispatch('battle/attack', { unitId: 'p0', targetId: 'e0' })
+    const s = store.getState()
+    // 攻6 防4 差2 → 伤害 10×3×1.1 = 33；敌方 militia hp=50 → 剩 17，count = ceil(17/1) = 17
+    const t = s.units.find((u) => u.id === 'e0')!
+    expect(t.hpLeft).toBe(17)
+    expect(t.count).toBe(17)
+    expect(s.phase).toBe('combat')
+    expect(s.units.find((u) => u.id === 'p0')!.hasActed).toBe(true)
+    expect(s.currentUnitId).toBe('e0') // advance 到敌方未行动单位
+  })
+  test('灭队即判胜', () => {
+    const store = makeStore({
+      grid: { cols: 4, rows: 3 },
+      player: { side: 'player', generalName: '关羽', atkBonus: 0, defBonus: 0, units: [{ defId: 'archer', count: 10 }] },
+      enemy: { side: 'enemy', generalName: '吕布', atkBonus: 0, defBonus: 0, units: [{ defId: 'militia', count: 8 }] }
+    })
+    store.dispatch('battle/attack', { unitId: 'p0', targetId: 'e0' })
+    const s = store.getState()
+    expect(s.units.find((u) => u.id === 'e0')).toBeUndefined()
+    expect(s.phase).toBe('won')
+  })
+  test('近战需相邻：不相邻攻击为 no-op', () => {
+    const store = makeStore()
+    const s0 = store.getState()
+    const cur = s0.currentUnitId! // 骑兵 (0,1)，敌方 archer (11,0) 距离远
+    const enemyId = s0.units.find((u) => u.side === 'enemy')!.id
+    store.dispatch('battle/attack', { unitId: cur, targetId: enemyId })
+    const s = store.getState()
+    expect(s.phase).toBe('combat')
+    expect(s.units.find((u) => u.side === 'enemy')).toBeDefined()
+    expect(s.currentUnitId).toBe(cur) // 未行动 → 当前单位不变
   })
 })
