@@ -1,5 +1,6 @@
 import type Phaser from 'phaser'
 import type { AdventureScene } from '../scenes/AdventureScene'
+import type { BattleScene } from '../scenes/BattleScene'
 
 /**
  * 开发调试桥（dev-only）。生产构建应剔除。
@@ -26,27 +27,35 @@ declare global {
 }
 
 export function installDevBridge(game: Phaser.Game): DebugBridge {
-  const scene = () => game.scene.getScene('Adventure') as AdventureScene | null
+  const adventure = () => game.scene.getScene('Adventure') as AdventureScene | null
+  const battle = () => game.scene.getScene('Battle') as BattleScene | null
+
+  /** 战斗激活返回战斗；否则大地图；主菜单/未就绪返回 null */
+  const getActive = (): { getDebugState(): Record<string, unknown> } | null => {
+    if (battle()?.scene.isActive()) return battle()
+    if (adventure()?.scene.isActive()) return adventure()
+    return null
+  }
 
   const bridge: DebugBridge = {
     getState() {
-      const s = scene()
-      return s ? s.getDebugState() : { ready: false }
+      return getActive()?.getDebugState() ?? { ready: false }
     },
     setSeed(seed) {
-      scene()?.setSeed(seed)
+      adventure()?.setSeed(seed)
     },
     setAnimationSpeed(ms) {
-      scene()?.setAnimationSpeed(ms)
+      adventure()?.setAnimationSpeed(ms)
+      battle()?.setAnimationSpeed(ms)
     },
     async waitForMove() {
-      await scene()?.waitForMove()
+      await adventure()?.waitForMove()
     },
     setBgmVolume(volume) {
-      scene()?.setBgmVolume(volume)
+      adventure()?.setBgmVolume(volume)
     },
     setSfxVolume(volume) {
-      scene()?.setSfxVolume(volume)
+      adventure()?.setSfxVolume(volume)
     }
   }
   window.__game = bridge
