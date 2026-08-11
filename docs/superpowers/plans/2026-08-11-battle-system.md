@@ -1920,6 +1920,31 @@ git commit -m "docs: 战斗 MVP 完成 + PRD §15/§16 同步"
 
 ---
 
+### Task 15: AOC 控制区域（大地图 + 战斗，参考三国志11）【后续增量】
+
+> 新需求（用户 2026-08-11 提出，先记入 todo 与 PRD §16，本计划正文任务完成后实施）。
+
+**背景：** 单位/武将一旦靠近敌方单位（进入敌方**控制区域** AOC），便不能再远离移动——不能"穿过"或"擦肩而过"敌方 AOC；一旦相邻只能停止或攻击邻近单位。**例外：** 具「陷阵」技能的单位无视 AOC（但仍不能穿过敌方单位本体）。范围：**大地图英雄移动 + 战斗战场**共用同一规则。
+
+**Files:**
+- Create: `src/core/battle/aoc.ts`（AOC 判定纯函数）
+- Modify: `src/core/battle/pathing.ts`（battleReachableArea/battleFindPath 纳入 AOC）、`src/core/battle/battleReducer.ts`（move 校验）、`src/core/battle/types.ts`（BattleUnit 增 `canIgnoreAoc: boolean`）、`src/data/units.ts`（兵种技能标记）
+- 大地图：英雄移动 pathing 复用同一 AOC 判定（`src/core/` 现有 hero MovementCost 接入）
+- Test: `src/core/battle/aoc.test.ts`
+
+**Design（确定性纯函数，TDD）：**
+- AOC 定义：hex ∈ 敌方控制区 ⇔ ∃ 敌方单位 u，`hexDistance(hex, occupiedHexes(u) 任一) === 1`。
+- 规则：
+  1. 当前单位已处于敌方 AOC 且无陷阵 → 可达集 = `[当前位置]`（不能移动；仍可攻击邻近敌人）。
+  2. 否则可达集 = 非 AOC 可达格 ∪ 与 AOC 相邻的边界格（进入 AOC 即结束移动）；**路径不得经过 AOC 格**（AOC 格只能作为终点进入）。
+  3. 陷阵（`canIgnoreAoc`）→ 走普通移动规则，但仍不能进入敌方单位本体格（障碍不变）。
+- 实现：在 battle 层组合现有 `reachableArea`——AOC 格视为不可通行求 `R_clear`，再并上 `R_clear` 中与 AOC 相邻的边界格；不改动 `Pathfinding` 本体（或按需给 `reachableArea` 加可选 `isTerminal` 参数）。
+- 大地图英雄移动复用之（英雄同样带 `canIgnoreAoc` 技能标志）。
+
+**TDD 测试：** ① 与敌相邻后不能再移动（可达集仅自身）；② 路径不得穿过 AOC（擦肩而过被禁）；③ 可移动到 AOC 边界格并停住（进入即停）；④ 陷阵单位无视 AOC 正常移动；⑤ 陷阵仍不能穿过敌方单位本体。
+
+---
+
 ## Self-Review 记录
 
 - **Spec 覆盖**：主菜单（Task 9）✓；战斗核心（Task 2-7）✓；伤害公式（Task 3）✓；1×2 支持（Task 2 types + Task 4 寻路 + Task 6 攻击 + Task 10 渲染）✓；血条/数量（Task 10）✓；简易 AI（Task 7 + Task 10 驱动）✓；胜负返回（Task 5/6 phase + Task 10 结果按钮 + Task 12 e2e）✓；调试桥（Task 11）✓；存量 e2e 适配（Task 13，spec §13 隐含回归）✓；PRD 同步（Task 14）✓。
