@@ -64,6 +64,8 @@ export class BattleScene extends Phaser.Scene {
       enemy: ENEMY_ARMY,
       grid: { ...BATTLE_GRID, obstacles: BATTLE_OBSTACLES }
     })
+    this.enemyActing = false
+    this.moveWaiter = null
     this.createLayers()
     this.setupBattle()
   }
