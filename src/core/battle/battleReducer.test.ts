@@ -61,7 +61,15 @@ describe('battle/endTurn 回合推进', () => {
     store.dispatch('battle/endTurn', { unitId: ids[ids.length - 1] as string })
     const s = store.getState()
     expect(s.turn).toBe(2)
-    expect(s.units.every((u) => !u.hasActed && !u.hasMoved)).toBe(true)
+    expect(s.units.every((u) => !u.hasActed && !u.hasMoved && !u.retaliated)).toBe(true)
+  })
+  test('同速攻方先行：玩家单位排在敌方前', () => {
+    const store = makeStore({
+      grid: { cols: 4, rows: 3 },
+      player: { side: 'player', generalName: 'P', atkBonus: 0, defBonus: 0, units: [{ defId: 'militia', count: 1 }] },
+      enemy: { side: 'enemy', generalName: 'E', atkBonus: 0, defBonus: 0, units: [{ defId: 'militia', count: 1 }] }
+    })
+    expect(store.getState().order[0]).toBe('p0')
   })
   test('非当前单位 endTurn 为 no-op', () => {
     const store = makeStore()
@@ -89,22 +97,26 @@ describe('battle/select', () => {
   })
 })
 
-describe('battle/move', () => {
-  test('移动到可达格更新位置，并置 hasMoved', () => {
+describe('battle/move（移动即行动）', () => {
+  test('移动到可达格：置 hasActed+hasMoved 并 advance', () => {
     const store = makeStore()
-    const cur = store.getState().currentUnitId! // 骑兵（speed9，出生 (0,1)）
+    const cur = store.getState().currentUnitId! // 骑兵（speed9，(0,1)）
     store.dispatch('battle/move', { unitId: cur, to: { q: 1, r: 0 } })
     const u = store.getState().units.find((x) => x.id === cur)!
     expect(hexKey(u.position)).toBe('1,0')
+    expect(u.hasActed).toBe(true)
     expect(u.hasMoved).toBe(true)
+    expect(store.getState().currentUnitId).not.toBe(cur) // 行动完 advance
   })
-  test('不可达/越界/已移动 均为 no-op', () => {
+  test('不可达/越界/已行动 均为 no-op', () => {
     const store = makeStore()
-    const cur = store.getState().currentUnitId! // 骑兵 (0,1)
+    const cur = store.getState().currentUnitId!
     store.dispatch('battle/move', { unitId: cur, to: { q: 99, r: 99 } }) // 越界 → no-op
     expect(hexKey(store.getState().units.find((x) => x.id === cur)!.position)).toBe('0,1')
     store.dispatch('battle/move', { unitId: cur, to: { q: 1, r: 0 } })  // 合法移动
-    store.dispatch('battle/move', { unitId: cur, to: { q: 2, r: 0 } })  // 已移动 → no-op
+    expect(hexKey(store.getState().units.find((x) => x.id === cur)!.position)).toBe('1,0')
+    // 已行动 → advance 后不再是当前单位 → 再移动 no-op
+    store.dispatch('battle/move', { unitId: cur, to: { q: 2, r: 0 } })
     expect(hexKey(store.getState().units.find((x) => x.id === cur)!.position)).toBe('1,0')
   })
 })

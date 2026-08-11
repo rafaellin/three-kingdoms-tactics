@@ -33,6 +33,8 @@ function sortOrder(units: BattleUnit[]): string[] {
     .sort((a, b) => {
       const sp = UNIT_DEFS[b.defId].speed - UNIT_DEFS[a.defId].speed
       if (sp !== 0) return sp
+      // 同速 → 攻方（玩家）先行；仍相同按 id 稳定序
+      if (a.side !== b.side) return a.side === 'player' ? -1 : 1
       return a.id < b.id ? -1 : a.id > b.id ? 1 : 0
     })
     .map((u) => u.id)
@@ -76,13 +78,13 @@ function init(state: BattleState, payload: { player: BattleArmyConfig; enemy: Ba
   }
 }
 
-/** 找到本回合下一个未行动单位；全部行动完则 turn+1、重置、按新状态重排 */
+/** 找到本回合下一个未行动单位；全部行动完则 turn+1、重置（含 retaliated）、按新状态重排 */
 function advance(state: BattleState): BattleState {
   for (const id of state.order) {
     const u = state.units.find((x) => x.id === id)
     if (u && !u.hasActed) return { ...state, currentUnitId: id, selectedUnitId: null }
   }
-  const units = state.units.map((u) => ({ ...u, hasActed: false, hasMoved: false }))
+  const units = state.units.map((u) => ({ ...u, hasActed: false, hasMoved: false, retaliated: false }))
   const order = sortOrder(units)
   return { ...state, turn: state.turn + 1, units, order, currentUnitId: order[0] ?? null, selectedUnitId: null }
 }
@@ -108,17 +110,19 @@ function select(state: BattleState, unitId: string | null): BattleState {
   return { ...state, selectedUnitId: unit.id }
 }
 
+/** 移动即行动：置 hasActed+hasMoved 并 advance */
 function move(state: BattleState, unitId: string, to: Axial): BattleState {
   const unit = state.units.find((u) => u.id === unitId)
-  if (!unit || unit.id !== state.currentUnitId || unit.hasActed || unit.hasMoved) return state
+  if (!unit || unit.id !== state.currentUnitId || unit.hasActed) return state
   if (hexKey(unit.position) === hexKey(to)) return state
   const reachable = battleReachableArea(unit, state)
   if (!reachable.some((h) => hexKey(h) === hexKey(to))) return state
   if (!battleFindPath(unit, to, state)) return state
-  return {
-    ...state,
-    units: state.units.map((u) => (u.id === unitId ? { ...u, position: { ...to }, hasMoved: true } : u))
-  }
+  const units = state.units.map((u) =>
+    u.id === unitId ? { ...u, position: { ...to }, hasActed: true, hasMoved: true } : u
+  )
+  const log = [...state.log, `${unitId} 移动至 (${to.q},${to.r})`]
+  return advance({ ...state, units, log })
 }
 
 function attack(state: BattleState, unitId: string, targetId: string): BattleState {
