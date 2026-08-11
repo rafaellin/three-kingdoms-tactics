@@ -2,6 +2,8 @@
  * 兵种属性表（纯数据，无逻辑）。占位值待平衡（PRD §7 未给数值）。
  * 实际攻防 = 基础 + 武将武力/3（见 core/battle/damage.ts）。
  */
+export type UnitDefId = 'militia' | 'swordsman' | 'pikeman' | 'archer' | 'cavalry'
+
 export interface UnitDef {
   id: string
   name: string
@@ -20,7 +22,7 @@ export interface UnitDef {
   size: 1 | 2
 }
 
-export const UNIT_DEFS: Record<string, UnitDef> = {
+export const UNIT_DEFS: Readonly<Record<UnitDefId, UnitDef>> = {
   militia: { id: 'militia', name: '民兵', attack: 4, defense: 4, minDamage: 1, maxDamage: 3, speed: 4, hp: 1, cost: { gold: 50 }, range: 1, size: 1 },
   swordsman: { id: 'swordsman', name: '刀兵', attack: 6, defense: 8, minDamage: 3, maxDamage: 5, speed: 4, hp: 2, cost: { gold: 100 }, range: 1, size: 1 },
   pikeman: { id: 'pikeman', name: '枪兵', attack: 7, defense: 6, minDamage: 3, maxDamage: 5, speed: 4, hp: 2, cost: { gold: 100 }, range: 1, size: 1 },

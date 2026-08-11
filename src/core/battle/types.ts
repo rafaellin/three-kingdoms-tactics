@@ -4,13 +4,14 @@
  * 1×2 大型单位（骑兵）占据主体格 + 东邻居格 (q+1, r)，不旋转（HOMM3 逻辑）。
  */
 import type { Axial } from '../hex/HexGrid'
+import type { UnitDefId } from '../../data/units'
 
 export type Side = 'player' | 'enemy'
 
 export interface BattleUnit {
   id: string
   side: Side
-  defId: string
+  defId: UnitDefId
   /** 当前 stack 数量（受创后按 命×count 池折算，见 reducer） */
   count: number
   /** 主体格（轴向坐标；size=2 时为左侧格） */
@@ -32,7 +33,7 @@ export interface BattleArmyConfig {
   atkBonus: number
   /** = round(统御/3)，加到此方所有单位实际防御 */
   defBonus: number
-  units: { defId: string; count: number }[]
+  units: { defId: UnitDefId; count: number }[]
 }
 
 export interface BattleState {

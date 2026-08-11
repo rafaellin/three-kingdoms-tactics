@@ -4,17 +4,17 @@
  * damage = 基础伤害(区间中值) × count × [1 + ATK_DEF_MODIFIER × clamp(攻-防, ±ATK_DEF_CAP)]
  * ATK_DEF_MODIFIER / ATK_DEF_CAP 是平衡旋钮（用户指定可调）。
  */
-import { UNIT_DEFS } from '../../data/units'
+import { UNIT_DEFS, type UnitDefId } from '../../data/units'
 import type { BattleUnit } from './types'
 
 export const ATK_DEF_MODIFIER = 0.05
 export const ATK_DEF_CAP = 3
 
-export function computeActualAttack(defId: string, atkBonus: number): number {
+export function computeActualAttack(defId: UnitDefId, atkBonus: number): number {
   return UNIT_DEFS[defId].attack + atkBonus
 }
 
-export function computeActualDefense(defId: string, defBonus: number): number {
+export function computeActualDefense(defId: UnitDefId, defBonus: number): number {
   return UNIT_DEFS[defId].defense + defBonus
 }
 

@@ -3,7 +3,7 @@ import { UNIT_DEFS } from './units'
 
 describe('兵种属性表', () => {
   test('覆盖 MVP 五兵种', () => {
-    for (const id of ['militia', 'swordsman', 'pikeman', 'archer', 'cavalry']) {
+    for (const id of ['militia', 'swordsman', 'pikeman', 'archer', 'cavalry'] as const) {
       expect(UNIT_DEFS[id]).toBeDefined()
     }
   })
