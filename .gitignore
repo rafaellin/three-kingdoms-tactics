@@ -7,3 +7,4 @@ playwright-report/
 .DS_Store
 .claude/settings.local.json
 poc-video/
+todo.txt
