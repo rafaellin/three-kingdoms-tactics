@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test'
+import { gotoAdventure } from './helpers'
 
 interface DebugState {
   hexesRendered?: number
@@ -19,7 +20,7 @@ function readPngSize(buf: Buffer): { width: number; height: number } {
  * 模型无多模态，验证一律以程序化断言为准。
  */
 test('脚手架：渲染六角格地图，debug 状态可读，分辨率 1080p', async ({ page }) => {
-  await page.goto('/')
+  await gotoAdventure(page)
   await expect(page.locator('canvas')).toBeVisible()
 
   // 等待场景就绪（地图已生成）

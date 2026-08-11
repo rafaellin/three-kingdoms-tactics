@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test'
+import { gotoAdventure } from './helpers'
 import { generateMap } from '../core/map/MapGen'
 import { computeVision, type Visibility } from '../core/fog/Fog'
 import { findPath, reachableArea } from '../core/pathfinding/Pathfinding'
@@ -84,8 +85,6 @@ const getState = (page: import('@playwright/test').Page): Promise<DebugGameState
     return g?.getState() ?? {}
   })
 
-const waitReady = (page: import('@playwright/test').Page) =>
-  page.waitForFunction(() => (window as { __game?: { getState(): DebugGameState } }).__game?.getState()?.ready === true)
 
 const waitHeroAt = (page: import('@playwright/test').Page, pos: Axial) =>
   page.waitForFunction(
@@ -97,8 +96,7 @@ const waitHeroAt = (page: import('@playwright/test').Page, pos: Axial) =>
   )
 
 test('初始化：hero 就位 (0,0)、移动力 6、视野 = 同种子 core 复算（无阻挡 BFS 半径 3）', async ({ page }) => {
-  await page.goto('/')
-  await waitReady(page)
+  await gotoAdventure(page)
 
   const s = await getState(page)
   expect(s.hero?.position).toEqual({ q: 0, r: 0 })
@@ -110,8 +108,7 @@ test('初始化：hero 就位 (0,0)、移动力 6、视野 = 同种子 core 复�
 })
 
 test('点击可达格：A* 路径逐格移动、移动力扣除、迷雾逐步揭开、未探索格不可入', async ({ page }) => {
-  await page.goto('/')
-  await waitReady(page)
+  await gotoAdventure(page)
   await page.evaluate(() => (window as { __game?: { setAnimationSpeed(n: number): void } }).__game?.setAnimationSpeed(0))
 
   const startFog = visionFor(START, {})
@@ -148,8 +145,7 @@ test('点击可达格：A* 路径逐格移动、移动力扣除、迷雾逐步�
 })
 
 test('移动动画：默认步进耗时下 busy 期间移动，动画结束后状态一致', async ({ page }) => {
-  await page.goto('/')
-  await waitReady(page)
+  await gotoAdventure(page)
 
   const startFog = visionFor(START, {})
   const target = pickTarget(startFog)

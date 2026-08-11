@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test'
+import { gotoAdventure } from './helpers'
 import { generateMap } from '../core/map/MapGen'
 import { computeVision, type Visibility } from '../core/fog/Fog'
 import { findPath, reachableArea } from '../core/pathfinding/Pathfinding'
@@ -116,8 +117,6 @@ const hexToScreen = (h: Axial): { x: number; y: number } => {
 const getState = (page: import('@playwright/test').Page): Promise<DebugGameState> =>
   page.evaluate(() => (window as { __game?: { getState(): DebugGameState } }).__game?.getState() ?? {})
 
-const waitReady = (page: import('@playwright/test').Page) =>
-  page.waitForFunction(() => (window as { __game?: { getState(): DebugGameState } }).__game?.getState()?.ready === true)
 
 const waitHeroAt = (page: import('@playwright/test').Page, pos: Axial) =>
   page.waitForFunction(
@@ -163,8 +162,7 @@ const chestReward = () => ({
 })
 
 test('初始化：资源条 = shu 初始资源、第1周第1天、成都城池位于 (0,0)、点城池不移动', async ({ page }) => {
-  await page.goto('/')
-  await waitReady(page)
+  await gotoAdventure(page)
   await page.evaluate((seed) => (window as { __game?: { setSeed(seed: number): void } }).__game?.setSeed(seed), SEED)
   await page.evaluate(() => (window as { __game?: { setAnimationSpeed(ms: number): void } }).__game?.setAnimationSpeed(0))
 
@@ -198,8 +196,7 @@ test('初始化：资源条 = shu 初始资源、第1周第1天、成都城池�
 })
 
 test('拾取宝箱：移动到宝箱格后一次性 +30金+5木，picked=1', async ({ page }) => {
-  await page.goto('/')
-  await waitReady(page)
+  await gotoAdventure(page)
   await page.evaluate((seed) => (window as { __game?: { setSeed(seed: number): void } }).__game?.setSeed(seed), SEED)
   await page.evaluate(() => (window as { __game?: { setAnimationSpeed(ms: number): void } }).__game?.setAnimationSpeed(0))
   expect((await getState(page)).seed).toBe(SEED)
@@ -223,8 +220,7 @@ test('拾取宝箱：移动到宝箱格后一次性 +30金+5木，picked=1', asy
 })
 
 test('占矿：走入无主矿格后 claimedMines=1、资源不变（未拾宝箱）', async ({ page }) => {
-  await page.goto('/')
-  await waitReady(page)
+  await gotoAdventure(page)
   await page.evaluate((seed) => (window as { __game?: { setSeed(seed: number): void } }).__game?.setSeed(seed), SEED)
   await page.evaluate(() => (window as { __game?: { setAnimationSpeed(ms: number): void } }).__game?.setAnimationSpeed(0))
 
@@ -246,8 +242,7 @@ test('占矿：走入无主矿格后 claimedMines=1、资源不变（未拾宝�
 })
 
 test('结束回合（E 键）：四势力轮完一圈回魏、天数 +1，周不变', async ({ page }) => {
-  await page.goto('/')
-  await waitReady(page)
+  await gotoAdventure(page)
 
   const s0 = await getState(page)
   expect(s0.turn).toBe(1)
@@ -271,8 +266,7 @@ test('结束回合（E 键）：四势力轮完一圈回魏、天数 +1，周不
 })
 
 test('每日结算：拾取宝箱 + 占矿后推进到第2周，城池每日产金 + 矿每日产出', async ({ page }) => {
-  await page.goto('/')
-  await waitReady(page)
+  await gotoAdventure(page)
   await page.evaluate((seed) => (window as { __game?: { setSeed(seed: number): void } }).__game?.setSeed(seed), SEED)
   await page.evaluate(() => (window as { __game?: { setAnimationSpeed(ms: number): void } }).__game?.setAnimationSpeed(0))
 

@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test'
+import { gotoAdventure } from './helpers'
 import { generateMap } from '../core/map/MapGen'
 import { computeVision, type Visibility } from '../core/fog/Fog'
 import { reachableArea } from '../core/pathfinding/Pathfinding'
@@ -82,8 +83,6 @@ const getBgm = (page: import('@playwright/test').Page): Promise<BgmState> =>
     return g?.getState()?.bgm ?? {}
   })
 
-const waitGameReady = (page: import('@playwright/test').Page) =>
-  page.waitForFunction(() => (window as { __game?: { getState(): DebugGameState } }).__game?.getState()?.ready === true)
 
 const waitSfxReady = (page: import('@playwright/test').Page) =>
   page.waitForFunction(() => (window as { __game?: { getState(): DebugGameState } }).__game?.getState()?.sfx?.ready === true)
@@ -104,8 +103,7 @@ const waitHeroAt = (page: import('@playwright/test').Page, pos: Axial) =>
   )
 
 test('移动音效：移动时循环播放、移动结束停止；与 BGM 同时播放', async ({ page }) => {
-  await page.goto('/')
-  await waitGameReady(page)
+  await gotoAdventure(page)
   await waitSfxReady(page)
 
   // 未移动：音效就绪、默认音量 0.3、未在循环

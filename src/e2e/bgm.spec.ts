@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test'
+import { gotoAdventure } from './helpers'
 import { readdirSync, readFileSync } from 'node:fs'
 
 /** 期望曲目数：只统计 assets/bgm/mp3/ 下的音频（assets/bgm/wav/ 是原声碟，游戏不加载） */
@@ -41,8 +42,6 @@ const getBgm = (page: import('@playwright/test').Page): Promise<BgmState> =>
     return g?.getState()?.bgm ?? {}
   })
 
-const waitGameReady = (page: import('@playwright/test').Page) =>
-  page.waitForFunction(() => (window as { __game?: { getState(): DebugGameState } }).__game?.getState()?.ready === true)
 
 const waitBgmReady = (page: import('@playwright/test').Page) =>
   page.waitForFunction(() => (window as { __game?: { getState(): DebugGameState } }).__game?.getState()?.bgm?.ready === true)
@@ -54,8 +53,7 @@ const setBgmVolume = (page: import('@playwright/test').Page, v: number) =>
   page.evaluate((vol) => (window as { __game?: { setBgmVolume(v: number): void } }).__game?.setBgmVolume(vol), v)
 
 test('BGM：音频就绪 → 首次交互起播 → 默认 10% 音量 → setBgmVolume 生效', async ({ page }) => {
-  await page.goto('/')
-  await waitGameReady(page)
+  await gotoAdventure(page)
   // 未交互前：音频已就绪、未起播、默认 10% 音量、至少 1 首曲目
   await waitBgmReady(page)
   const before = await getBgm(page)

@@ -55,6 +55,7 @@ const clickUnit = async (page: Page, unitId: string) => {
 
 test('主菜单 → 开始游戏 → 进入大地图', async ({ page }) => {
   await page.goto('/')
+  await page.waitForSelector('canvas', { state: 'attached' })
   await page.mouse.click(MENU_START.x, MENU_START.y)
   await waitAdventureReady(page)
   const s = await getState(page)
@@ -65,6 +66,7 @@ test('主菜单 → 开始游戏 → 进入大地图', async ({ page }) => {
 
 test('主菜单 → 战斗测试 → 进入战斗（7 单位、含 1×2 骑兵）', async ({ page }) => {
   await page.goto('/')
+  await page.waitForSelector('canvas', { state: 'attached' })
   await page.mouse.click(MENU_BATTLE.x, MENU_BATTLE.y)
   await waitBattleReady(page)
   const s = await getState(page)
@@ -76,6 +78,7 @@ test('主菜单 → 战斗测试 → 进入战斗（7 单位、含 1×2 骑兵�
 
 test('战斗内：选中 → 移动；跳过全回合 → AI 行动 → 战败 → 返回主菜单', async ({ page }) => {
   await page.goto('/')
+  await page.waitForSelector('canvas', { state: 'attached' })
   await page.mouse.click(MENU_BATTLE.x, MENU_BATTLE.y)
   await waitBattleReady(page)
 
