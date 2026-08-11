@@ -15,10 +15,12 @@ const GRID_LINE = 0x0b0f18
 const REACHABLE_FILL = 0x66ccff
 const EDGE_HIT_TOLERANCE = 10
 /**
- * 战斗场景（渲染层）。职责：读 BattleState 渲染 + 把点击/按钮转成 battle 命令。
- * 交互：
- * - 点击己方单位 → select（高亮）；点击可达空格 → move；点击射程内敌人 → attack
- * - 当前单位「跳过行动」；敌方单位由 planEnemyAction 自动行动
+ * 战斗场景（渲染层）。职责：读 BattleState 渲染 + 把悬停/点击/按钮转成 battle 命令。
+ * 交互（hover 驱动）：
+ * - 悬停可达落点边界 → 刀剑光标（点击 = 冲锋/原地近战）；悬停敌军 → 弓/断箭光标（点击 = 远程射击）
+ * - 点击己方单位 → select（高亮）；点击可达空格 → move
+ * - 角标按钮：跳过行动 / 撤退
+ * - 敌方单位由 planEnemyAction 自动行动（异步逐格动画）
  * - 胜负 → 显示结果 + 返回主菜单
  */
 export class BattleScene extends Phaser.Scene {
@@ -73,6 +75,8 @@ export class BattleScene extends Phaser.Scene {
     this.visualPos.clear()
     this.animQueue.length = 0
     this.animActive = null
+    this.enemyActing = false
+    this.moveWaiter = null
     this.drawGrid()
     this.drawObstacles()
     this.setupBattle()
@@ -239,7 +243,7 @@ export class BattleScene extends Phaser.Scene {
     this.drawUnits()
     this.drawOverlay()
     this.updateLogAndResult()
-    void this.stepEnemyAi()
+    this.stepEnemyAi().catch((err) => console.error('stepEnemyAi failed:', err))
   }
 
   /**

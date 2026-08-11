@@ -23,7 +23,7 @@ export interface BattleUnit {
   maxHp: number
   /** 本回合是否已行动（行动 = 攻击或结束回合） */
   hasActed: boolean
-  /** 本回合是否已移动（MVP：每回合最多移动一次，移动后可再攻击） */
+  /** 本回合是否已移动（move 或 attack 均置位；用于阻止移动后远程射击等） */
   hasMoved: boolean
   /** 本回合是否已反击（每回合重置；近战引发，每回合一次） */
   retaliated: boolean
