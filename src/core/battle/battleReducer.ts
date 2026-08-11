@@ -6,7 +6,7 @@
 import { type Command, type Reducer } from '../events/CommandLog'
 import { hexDistance, hexKey, type Axial } from '../hex/HexGrid'
 import { UNIT_DEFS } from '../../data/units'
-import { computeDamage } from './damage'
+import { computeDamage, MELEE_ATTACK_MULT } from './damage'
 import { battleFindPath, battleReachableArea } from './pathing'
 import { occupiedHexes, type BattleArmyConfig, type BattleState, type BattleUnit } from './types'
 
@@ -125,30 +125,55 @@ function move(state: BattleState, unitId: string, to: Axial): BattleState {
   return advance({ ...state, units, log })
 }
 
-function attack(state: BattleState, unitId: string, targetId: string): BattleState {
+/** 对 victim 结算 dmg：扣血池 → 折算 count → 死亡则移除。返回更新后的 units */
+function dealDamage(units: BattleUnit[], victimId: string, dmg: number): BattleUnit[] {
+  const victim = units.find((u) => u.id === victimId)
+  if (!victim) return units
+  const hpLeft = victim.hpLeft - dmg
+  if (hpLeft <= 0) return units.filter((u) => u.id !== victimId)
+  return units.map((u) =>
+    u.id === victimId ? { ...u, hpLeft, count: Math.max(1, Math.ceil(hpLeft / UNIT_DEFS[u.defId].hp)) } : u
+  )
+}
+
+/** 近战攻击：to=落点（默认原地）。落点必须可达（或原地）且与目标相邻；远程兵近战按 30% 攻；触发反击（全伤、每回合一次） */
+function attack(state: BattleState, unitId: string, targetId: string, to?: Axial): BattleState {
   const attacker = state.units.find((u) => u.id === unitId)
   const target = state.units.find((u) => u.id === targetId)
   if (!attacker || !target || attacker.id !== state.currentUnitId || attacker.hasActed) return state
   if (attacker.side === target.side) return state
-  const range = UNIT_DEFS[attacker.defId].range
-  const inRange = occupiedHexes(target).some((h) => hexDistance(attacker.position, h) <= range)
-  if (!inRange) return state
+  const dest = to ?? attacker.position
+  if (hexKey(dest) !== hexKey(attacker.position)) {
+    if (!battleReachableArea(attacker, state).some((h) => hexKey(h) === hexKey(dest))) return state
+    if (!battleFindPath(attacker, dest, state)) return state
+  }
+  if (!occupiedHexes(target).some((h) => hexDistance(dest, h) <= 1)) return state
   const atkGen = state.general[attacker.side]
   const defGen = state.general[target.side]
-  const dmg = computeDamage(attacker, target, atkGen.atkBonus, defGen.defBonus)
-  let units = state.units.map((u) => (u.id === attacker.id ? { ...u, hasActed: true } : u))
-  const hpLeft = target.hpLeft - dmg
-  if (hpLeft <= 0) {
-    units = units.filter((u) => u.id !== target.id)
-  } else {
-    units = units.map((u) =>
-      u.id === target.id ? { ...u, hpLeft, count: Math.max(1, Math.ceil(hpLeft / UNIT_DEFS[u.defId].hp)) } : u
-    )
-  }
+  const atkMult = UNIT_DEFS[attacker.defId].range > 1 ? MELEE_ATTACK_MULT : 1
+  const dmg = computeDamage({ ...attacker, position: dest }, target, atkGen.atkBonus, defGen.defBonus, atkMult)
+  let units = state.units.map((u) =>
+    u.id === attacker.id ? { ...u, position: { ...dest }, hasActed: true, hasMoved: true } : u
+  )
+  units = dealDamage(units, target.id, dmg)
+  const logs = [`${attacker.id} 攻击 ${target.id} 造成 ${dmg} 伤害${units.some((u) => u.id === target.id) ? '' : '（消灭）'}`]
   const phase = phaseOf(units)
-  const log = [...state.log, `${attacker.id} 攻击 ${target.id} 造成 ${dmg} 伤害${hpLeft <= 0 ? '（消灭）' : ''}`]
-  if (phase !== 'combat') return { ...state, units, phase, log }
-  return advance({ ...state, units, log })
+  if (phase !== 'combat') return { ...state, units, phase, log: [...state.log, ...logs] }
+  let next = { ...state, units, log: [...state.log, ...logs] }
+  // 反击：目标存活、目标本回合未反击、仍在近战范围（落点相邻已保证）
+  const targetAfter = units.find((u) => u.id === target.id)
+  const attackerAfter = units.find((u) => u.id === attacker.id)
+  if (targetAfter && attackerAfter && !targetAfter.retaliated) {
+    const rMult = UNIT_DEFS[target.defId].range > 1 ? MELEE_ATTACK_MULT : 1
+    const rDmg = computeDamage(targetAfter, attackerAfter, defGen.atkBonus, atkGen.defBonus, rMult)
+    let units2 = next.units.map((u) => (u.id === target.id ? { ...u, retaliated: true } : u))
+    units2 = dealDamage(units2, attacker.id, rDmg)
+    const logs2 = [...logs, `${target.id} 反击 ${attacker.id} 造成 ${rDmg} 伤害${units2.some((u) => u.id === attacker.id) ? '' : '（消灭）'}`]
+    const phase2 = phaseOf(units2)
+    if (phase2 !== 'combat') return { ...state, units: units2, phase: phase2, log: [...state.log, ...logs2] }
+    return advance({ ...next, units: units2, log: [...state.log, ...logs2] })
+  }
+  return advance(next)
 }
 
 export const battleReducer: Reducer<BattleState> = (state, cmd: Command) => {
@@ -164,8 +189,8 @@ export const battleReducer: Reducer<BattleState> = (state, cmd: Command) => {
       return move(state, payload.unitId, payload.to)
     }
     case 'battle/attack': {
-      const payload = cmd.payload as { unitId: string; targetId: string }
-      return attack(state, payload.unitId, payload.targetId)
+      const payload = cmd.payload as { unitId: string; targetId: string; to?: Axial }
+      return attack(state, payload.unitId, payload.targetId, payload.to)
     }
     case 'battle/endTurn':
       return endTurn(state, (cmd.payload as { unitId: string }).unitId)

@@ -121,60 +121,78 @@ describe('battle/move（移动即行动）', () => {
   })
 })
 
-describe('battle/attack', () => {
-  test('远程在射程内攻击：扣目标 hp、折算 count、攻击者行动', () => {
-    // 小图 4×3：玩家 archer (0,0)、敌方 militia (2,0)，距离 2 ≤ 射程 2
-    // archer speed5 > militia speed4 → 玩家 p0 先动（避免同速 id 平局陷阱）
+describe('battle/attack（近战 v2 + 反击）', () => {
+  test('带 to 冲锋近战：移动落点 + 全额伤害 + 触发全额反击', () => {
+    // 5×3：p0 民兵20 (0,0) vs e0 刀兵20 (3,0)（q=cols-2，40 血池，hp2）
+    // 民兵攻4 刀兵防8 → 差-4 钳-3 → ×0.85 → 伤 round(20×2×0.85)=34
+    // e0 → 6hp count3；e0 反击 3×4×1.1=13.2→13 → p0 7hp count7
     const store = makeStore({
-      grid: { cols: 4, rows: 3 },
-      player: { side: 'player', generalName: '关羽', atkBonus: 0, defBonus: 0, units: [{ defId: 'archer', count: 10 }] },
-      enemy: { side: 'enemy', generalName: '吕布', atkBonus: 0, defBonus: 0, units: [{ defId: 'militia', count: 50 }] }
+      grid: { cols: 5, rows: 3 },
+      player: { side: 'player', generalName: 'P', atkBonus: 0, defBonus: 0, units: [{ defId: 'militia', count: 20 }] },
+      enemy: { side: 'enemy', generalName: 'E', atkBonus: 0, defBonus: 0, units: [{ defId: 'swordsman', count: 20 }] }
     })
-    expect(store.getState().currentUnitId).toBe('p0')
-    store.dispatch('battle/attack', { unitId: 'p0', targetId: 'e0' })
+    store.dispatch('battle/attack', { unitId: 'p0', targetId: 'e0', to: { q: 2, r: 0 } })
     const s = store.getState()
-    // 攻6 防4 差2 → 伤害 10×3×1.1 = 33；敌方 militia hp=50 → 剩 17，count = ceil(17/1) = 17
     const t = s.units.find((u) => u.id === 'e0')!
-    expect(t.hpLeft).toBe(17)
-    expect(t.count).toBe(17)
-    expect(s.phase).toBe('combat')
-    expect(s.units.find((u) => u.id === 'p0')!.hasActed).toBe(true)
-    expect(s.currentUnitId).toBe('e0') // advance 到敌方未行动单位
+    const a = s.units.find((u) => u.id === 'p0')!
+    expect(a.position).toEqual({ q: 2, r: 0 })
+    expect(t.hpLeft).toBe(6)
+    expect(t.count).toBe(3)          // ceil(6/2)
+    expect(t.retaliated).toBe(true)
+    expect(a.hpLeft).toBe(7)         // 20 - 13
+    expect(a.count).toBe(7)
+    expect(s.currentUnitId).toBe('e0') // 行动完 advance 到敌方未行动单位
   })
-  test('灭队即判胜', () => {
+  test('每回合每个单位只反击一次', () => {
+    // 同速（民兵4=刀兵4）攻方先行 → 序 [p0,p1,e0]
+    // p0 冲锋：伤34 → e0 6hp count3、反击13 → p0 7hp
+    // p1 从 (0,1) 冲锋到 (3,1)（e0 邻格）：伤 round(1×2×0.85)=2 → e0 4hp count2；e0 已反击 → 不再反击
+    const store = makeStore({
+      grid: { cols: 5, rows: 3 },
+      player: { side: 'player', generalName: 'P', atkBonus: 0, defBonus: 0,
+        units: [{ defId: 'militia', count: 20 }, { defId: 'militia', count: 1 }] },
+      enemy: { side: 'enemy', generalName: 'E', atkBonus: 0, defBonus: 0, units: [{ defId: 'swordsman', count: 20 }] }
+    })
+    store.dispatch('battle/attack', { unitId: 'p0', targetId: 'e0', to: { q: 2, r: 0 } })
+    store.dispatch('battle/attack', { unitId: 'p1', targetId: 'e0', to: { q: 3, r: 1 } })
+    const s = store.getState()
+    const t = s.units.find((u) => u.id === 'e0')!
+    const p1 = s.units.find((u) => u.id === 'p1')!
+    expect(t.hpLeft).toBe(4)
+    expect(t.count).toBe(2)
+    expect(p1.hpLeft).toBe(1)        // 无反击 → 满血
+    expect(p1.hasActed).toBe(true)
+  })
+  test('远程兵近战按 30% 攻取值；灭队即判胜', () => {
+    // 弓兵100 攻6×0.3=1.8，民兵50 防4 → 差-2.2 → ×0.89 → 伤 round(100×3×0.89)=267 → 民兵50 全灭
     const store = makeStore({
       grid: { cols: 4, rows: 3 },
-      player: { side: 'player', generalName: '关羽', atkBonus: 0, defBonus: 0, units: [{ defId: 'archer', count: 10 }] },
-      enemy: { side: 'enemy', generalName: '吕布', atkBonus: 0, defBonus: 0, units: [{ defId: 'militia', count: 8 }] }
+      player: { side: 'player', generalName: 'P', atkBonus: 0, defBonus: 0, units: [{ defId: 'archer', count: 100 }] },
+      enemy: { side: 'enemy', generalName: 'E', atkBonus: 0, defBonus: 0, units: [{ defId: 'militia', count: 50 }] }
     })
-    store.dispatch('battle/attack', { unitId: 'p0', targetId: 'e0' })
+    store.dispatch('battle/attack', { unitId: 'p0', targetId: 'e0', to: { q: 1, r: 0 } })
     const s = store.getState()
     expect(s.units.find((u) => u.id === 'e0')).toBeUndefined()
     expect(s.phase).toBe('won')
+    expect(s.log.some((l) => l.includes('267'))).toBe(true)
   })
-  test('攻击伤害用目标方将军 defBonus（非攻击方）', () => {
-    // 玩家 archer(攻6) 攻敌方 militia(防4)：玩家 atkBonus=0，敌方 defBonus=10
-    // 正确：def = 4+10=14 → diff = -8 → clamp -3 → 伤 = 10×3×0.85 = 26，hp 50-26=24
-    // bug 版（用攻击方 defBonus=0）：def = 4+0=4 → diff = 2 → 伤 = 10×3×1.1 = 33，hp 50-33=17
+  test('no-op：落点不可达 / 不与目标相邻 / 无 to 直接点远处敌军 / 打己方', () => {
     const store = makeStore({
-      grid: { cols: 4, rows: 3 },
-      player: { side: 'player', generalName: '关羽', atkBonus: 0, defBonus: 0, units: [{ defId: 'archer', count: 10 }] },
-      enemy: { side: 'enemy', generalName: '吕布', atkBonus: 0, defBonus: 10, units: [{ defId: 'militia', count: 50 }] }
+      grid: { cols: 5, rows: 3 },
+      player: { side: 'player', generalName: 'P', atkBonus: 0, defBonus: 0, units: [{ defId: 'militia', count: 20 }] },
+      enemy: { side: 'enemy', generalName: 'E', atkBonus: 0, defBonus: 0, units: [{ defId: 'swordsman', count: 20 }] }
     })
-    store.dispatch('battle/attack', { unitId: 'p0', targetId: 'e0' })
-    const t = store.getState().units.find((u) => u.id === 'e0')!
-    expect(t.hpLeft).toBe(24) // 26 伤害后剩 24（bug 会剩 17 → 测试挂）
-    expect(t.count).toBe(24) // ceil(24/1)
-  })
-  test('近战需相邻：不相邻攻击为 no-op', () => {
-    const store = makeStore()
-    const s0 = store.getState()
-    const cur = s0.currentUnitId! // 骑兵 (0,1)，敌方 archer (11,0) 距离远
-    const enemyId = s0.units.find((u) => u.side === 'enemy')!.id
-    store.dispatch('battle/attack', { unitId: cur, targetId: enemyId })
-    const s = store.getState()
-    expect(s.phase).toBe('combat')
-    expect(s.units.find((u) => u.side === 'enemy')).toBeDefined()
-    expect(s.currentUnitId).toBe(cur) // 未行动 → 当前单位不变
+    store.dispatch('battle/attack', { unitId: 'p0', targetId: 'e0', to: { q: 9, r: 9 } })   // ① 落点越界
+    store.dispatch('battle/attack', { unitId: 'p0', targetId: 'e0', to: { q: 1, r: 0 } })   // ② 落点不与目标相邻
+    store.dispatch('battle/attack', { unitId: 'p0', targetId: 'e0' })                       // ③ 无 to 原地非相邻
+    expect(store.getState().currentUnitId).toBe('p0')
+    const store2 = makeStore({
+      grid: { cols: 5, rows: 3 },
+      player: { side: 'player', generalName: 'P', atkBonus: 0, defBonus: 0,
+        units: [{ defId: 'militia', count: 20 }, { defId: 'militia', count: 5 }] },
+      enemy: { side: 'enemy', generalName: 'E', atkBonus: 0, defBonus: 0, units: [{ defId: 'swordsman', count: 20 }] }
+    })
+    store2.dispatch('battle/attack', { unitId: 'p0', targetId: 'p1', to: { q: 2, r: 0 } })  // ④ 打己方
+    expect(store2.getState().units.find((u) => u.id === 'p1')).toBeDefined()
   })
 })

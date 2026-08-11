@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest'
-import { ATK_DEF_CAP, ATK_DEF_MODIFIER, computeActualAttack, computeActualDefense, computeDamage } from './damage'
+import { ATK_DEF_CAP, ATK_DEF_MODIFIER, computeActualAttack, computeActualDefense, computeDamage, MELEE_ATTACK_MULT } from './damage'
 import type { BattleUnit } from './types'
 
 const unit = (over: Partial<BattleUnit>): BattleUnit => ({
@@ -36,5 +36,11 @@ describe('伤害公式（HOMM3 式攻防修正）', () => {
     // 常量必须导出为 number；上面的钳制测试已用 ATK_DEF_MODIFIER 断言倍率生效
     expect(typeof ATK_DEF_MODIFIER).toBe('number')
     expect(ATK_DEF_CAP).toBeGreaterThan(0)
+  })
+  test('attackMult 倍率生效（远程兵近战 30% 攻）', () => {
+    // 弓兵攻6 ×0.3 = 1.8，民兵防4 → 差 -2.2 → ×0.89 → round(10×3×0.89)=27
+    const a = unit({ defId: 'archer', count: 10 })
+    const t = unit({ side: 'enemy', defId: 'militia', hpLeft: 50, maxHp: 50 })
+    expect(computeDamage(a, t, 0, 0, MELEE_ATTACK_MULT)).toBe(27)
   })
 })

@@ -9,6 +9,7 @@ import type { BattleUnit } from './types'
 
 export const ATK_DEF_MODIFIER = 0.05
 export const ATK_DEF_CAP = 3
+export const MELEE_ATTACK_MULT = 0.3 // 远程兵近战时攻击取值倍率
 
 export function computeActualAttack(defId: UnitDefId, atkBonus: number): number {
   return UNIT_DEFS[defId].attack + atkBonus
@@ -18,8 +19,8 @@ export function computeActualDefense(defId: UnitDefId, defBonus: number): number
   return UNIT_DEFS[defId].defense + defBonus
 }
 
-export function computeDamage(attacker: BattleUnit, target: BattleUnit, atkBonus: number, defBonus: number): number {
-  const att = computeActualAttack(attacker.defId, atkBonus)
+export function computeDamage(attacker: BattleUnit, target: BattleUnit, atkBonus: number, defBonus: number, attackMult = 1): number {
+  const att = computeActualAttack(attacker.defId, atkBonus) * attackMult
   const def = computeActualDefense(target.defId, defBonus)
   const diff = Math.max(-ATK_DEF_CAP, Math.min(ATK_DEF_CAP, att - def))
   const mid = (UNIT_DEFS[attacker.defId].minDamage + UNIT_DEFS[attacker.defId].maxDamage) / 2
