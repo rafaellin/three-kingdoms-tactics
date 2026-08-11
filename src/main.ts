@@ -1,5 +1,7 @@
 import Phaser from 'phaser'
+import { MainMenuScene } from './scenes/MainMenuScene'
 import { AdventureScene } from './scenes/AdventureScene'
+import { BattleScene } from './scenes/BattleScene'
 import { installDevBridge } from './dev/debug'
 
 const game = new Phaser.Game({
@@ -12,7 +14,7 @@ const game = new Phaser.Game({
     width: 1920,
     height: 1080
   },
-  scene: [AdventureScene]
+  scene: [MainMenuScene, AdventureScene, BattleScene]
 })
 
 installDevBridge(game)
