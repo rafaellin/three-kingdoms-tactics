@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { buildPlaylist, nextTrackIndex, shuffleTracks } from './playlist'
+import { buildPlaylist, buildShuffledPlaylist, nextTrackIndex, prevTrackIndex, shuffleTracks } from './playlist'
 
 /**
  * BGM playlist 纯逻辑单测（注入确定性 rng，断言确定输入 → 输出）。
@@ -62,5 +62,37 @@ describe('nextTrackIndex（播放完一首推进到下一首，到头循环）',
 
   it('空列表安全返回 0', () => {
     expect(nextTrackIndex(0, 0)).toBe(0)
+  })
+})
+
+describe('prevTrackIndex（上一首，到头回到末尾）', () => {
+  it('普通回退 -1', () => {
+    expect(prevTrackIndex(1, 4)).toBe(0)
+    expect(prevTrackIndex(3, 4)).toBe(2)
+  })
+
+  it('到开头回到末尾（循环 playlist）', () => {
+    expect(prevTrackIndex(0, 4)).toBe(3)
+  })
+
+  it('空列表安全返回 0', () => {
+    expect(prevTrackIndex(0, 0)).toBe(0)
+  })
+})
+
+describe('buildShuffledPlaylist（全量随机打乱，无主题曲概念）', () => {
+  it('全量 shuffle：结果是对原集合的重排，不丢元素', () => {
+    const tracks = ['a', 'b', 'c', 'd', 'e']
+    const out = buildShuffledPlaylist(tracks, () => 0.5)
+    expect([...out].sort()).toEqual([...tracks].sort())
+  })
+
+  it('rng 恒为 0 时结果确定', () => {
+    expect(buildShuffledPlaylist(['a', 'b', 'c', 'd'], () => 0)).toEqual(['b', 'c', 'd', 'a'])
+  })
+
+  it('空列表 / 单曲原样返回', () => {
+    expect(buildShuffledPlaylist([], () => 0)).toEqual([])
+    expect(buildShuffledPlaylist(['a'], () => 0)).toEqual(['a'])
   })
 })

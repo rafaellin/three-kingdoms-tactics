@@ -1,3 +1,20 @@
 {
-  "themeSong": "Neon Jade"
+  "themeSong": "Neon Jade",
+  "categories": {
+    "battle": [
+      "Silk and Steel",
+      "Iron and Silk",
+      "Ba Men Jin Suo",
+      "A Thousand Miles",
+      "Farewell",
+      "Chi Bi",
+      "Ku Lao Guan",
+      "Lone Blade"
+    ],
+    "explore": [
+      "The River",
+      "Tao Yuan",
+      "Luo Yang"
+    ]
+  }
 }
