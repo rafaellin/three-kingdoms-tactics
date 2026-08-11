@@ -26,6 +26,6 @@ export const UNIT_DEFS: Readonly<Record<UnitDefId, UnitDef>> = {
   militia: { id: 'militia', name: '民兵', attack: 4, defense: 4, minDamage: 1, maxDamage: 3, speed: 4, hp: 1, cost: { gold: 50 }, range: 1, size: 1 },
   swordsman: { id: 'swordsman', name: '刀兵', attack: 6, defense: 8, minDamage: 3, maxDamage: 5, speed: 4, hp: 2, cost: { gold: 100 }, range: 1, size: 1 },
   pikeman: { id: 'pikeman', name: '枪兵', attack: 7, defense: 6, minDamage: 3, maxDamage: 5, speed: 4, hp: 2, cost: { gold: 100 }, range: 1, size: 1 },
-  archer: { id: 'archer', name: '弓兵', attack: 6, defense: 4, minDamage: 2, maxDamage: 4, speed: 5, hp: 1, cost: { gold: 120 }, range: 2, size: 1 },
+  archer: { id: 'archer', name: '弓兵', attack: 6, defense: 4, minDamage: 2, maxDamage: 4, speed: 5, hp: 1, cost: { gold: 120 }, range: 6, size: 1 },
   cavalry: { id: 'cavalry', name: '骑兵', attack: 10, defense: 7, minDamage: 5, maxDamage: 8, speed: 9, hp: 3, cost: { gold: 200, iron: 5 }, range: 1, size: 2 }
 }

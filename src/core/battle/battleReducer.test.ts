@@ -196,3 +196,89 @@ describe('battle/attack（近战 v2 + 反击）', () => {
     expect(store2.getState().units.find((u) => u.id === 'p1')).toBeDefined()
   })
 })
+
+describe('battle/shoot（远程）', () => {
+  test('射程内满额（距离3 ≤ 射程6）：伤 round(10×3×1.1)=33', () => {
+    const store = makeStore({
+      grid: { cols: 5, rows: 3 },
+      player: { side: 'player', generalName: 'P', atkBonus: 0, defBonus: 0, units: [{ defId: 'archer', count: 10 }] },
+      enemy: { side: 'enemy', generalName: 'E', atkBonus: 0, defBonus: 0, units: [{ defId: 'militia', count: 50 }] }
+    })
+    expect(store.getState().currentUnitId).toBe('p0') // archer speed5 > militia speed4
+    store.dispatch('battle/shoot', { unitId: 'p0', targetId: 'e0' })
+    const t = store.getState().units.find((u) => u.id === 'e0')!
+    expect(t.hpLeft).toBe(17)
+    expect(t.count).toBe(17)
+  })
+  test('射程外半额（距离7 > 射程6）：33×0.5=16.5→17，log 记「射程外」', () => {
+    const store = makeStore({
+      grid: { cols: 9, rows: 3 },
+      player: { side: 'player', generalName: 'P', atkBonus: 0, defBonus: 0, units: [{ defId: 'archer', count: 10 }] },
+      enemy: { side: 'enemy', generalName: 'E', atkBonus: 0, defBonus: 0, units: [{ defId: 'militia', count: 50 }] }
+    })
+    store.dispatch('battle/shoot', { unitId: 'p0', targetId: 'e0' })
+    const t = store.getState().units.find((u) => u.id === 'e0')!
+    expect(t.hpLeft).toBe(33)
+    expect(store.getState().log.some((l) => l.includes('射程外'))).toBe(true)
+  })
+  test('1×2 目标：任意身体格在射程内即满额', () => {
+    // e0 骑兵 (6,0) 占 (6,0)+(7,0)；距 (0,0) 为 6 ≤ 6 → 满额
+    // 攻6 防7 → 差-1 → 0.95；mid 3（弓兵）→ 伤 round(10×3×0.95)=29 → 90-29=61 count=ceil(61/3)=21
+    const store = makeStore({
+      grid: { cols: 8, rows: 3 },
+      player: { side: 'player', generalName: 'P', atkBonus: 0, defBonus: 0, units: [{ defId: 'archer', count: 10 }] },
+      enemy: { side: 'enemy', generalName: 'E', atkBonus: 0, defBonus: 0, units: [{ defId: 'cavalry', count: 30 }] }
+    })
+    expect(store.getState().currentUnitId).toBe('e0') // cavalry speed9 先动
+    store.dispatch('battle/endTurn', { unitId: 'e0' })
+    expect(store.getState().currentUnitId).toBe('p0')
+    store.dispatch('battle/shoot', { unitId: 'p0', targetId: 'e0' })
+    const t = store.getState().units.find((u) => u.id === 'e0')!
+    expect(t.hpLeft).toBe(61)
+    expect(t.count).toBe(21)
+  })
+  test('被贴身禁射：有敌军相邻则 shoot 为 no-op', () => {
+    // 3×3：e0 民兵 (1,0) 贴身 p0 弓手 (0,0)
+    const store = makeStore({
+      grid: { cols: 3, rows: 3 },
+      player: { side: 'player', generalName: 'P', atkBonus: 0, defBonus: 0, units: [{ defId: 'archer', count: 10 }] },
+      enemy: { side: 'enemy', generalName: 'E', atkBonus: 0, defBonus: 0, units: [{ defId: 'militia', count: 10 }] }
+    })
+    store.dispatch('battle/shoot', { unitId: 'p0', targetId: 'e0' })
+    const s = store.getState()
+    expect(s.units.find((u) => u.id === 'p0')!.hasActed).toBe(false)
+    expect(s.currentUnitId).toBe('p0')
+  })
+  test('近战兵不能 shoot（range≤1 → no-op）', () => {
+    const store = makeStore({
+      grid: { cols: 4, rows: 3 },
+      player: { side: 'player', generalName: 'P', atkBonus: 0, defBonus: 0, units: [{ defId: 'militia', count: 20 }] },
+      enemy: { side: 'enemy', generalName: 'E', atkBonus: 0, defBonus: 0, units: [{ defId: 'swordsman', count: 20 }] }
+    })
+    store.dispatch('battle/shoot', { unitId: 'p0', targetId: 'e0' })
+    expect(store.getState().currentUnitId).toBe('p0')
+  })
+  test('射击伤害用目标方 defBonus（回归）', () => {
+    // 攻6 防14 → 差-8 钳-3 → 0.85 → 伤 round(10×3×0.85)=26 → 50-26=24
+    const store = makeStore({
+      grid: { cols: 5, rows: 3 },
+      player: { side: 'player', generalName: 'P', atkBonus: 0, defBonus: 0, units: [{ defId: 'archer', count: 10 }] },
+      enemy: { side: 'enemy', generalName: 'E', atkBonus: 0, defBonus: 10, units: [{ defId: 'militia', count: 50 }] }
+    })
+    store.dispatch('battle/shoot', { unitId: 'p0', targetId: 'e0' })
+    const t = store.getState().units.find((u) => u.id === 'e0')!
+    expect(t.hpLeft).toBe(24)
+    expect(t.count).toBe(24)
+  })
+  test('灭队即判胜', () => {
+    const store = makeStore({
+      grid: { cols: 5, rows: 3 },
+      player: { side: 'player', generalName: 'P', atkBonus: 0, defBonus: 0, units: [{ defId: 'archer', count: 10 }] },
+      enemy: { side: 'enemy', generalName: 'E', atkBonus: 0, defBonus: 0, units: [{ defId: 'militia', count: 8 }] }
+    })
+    store.dispatch('battle/shoot', { unitId: 'p0', targetId: 'e0' })
+    const s = store.getState()
+    expect(s.units.find((u) => u.id === 'e0')).toBeUndefined()
+    expect(s.phase).toBe('won')
+  })
+})

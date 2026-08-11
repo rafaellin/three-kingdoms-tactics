@@ -1,12 +1,12 @@
 /**
  * 战斗 reducer：纯函数，经独立 CommandLog 驱动 BattleState。
  * 相同命令序列 + 相同初始状态 ⇒ 相同终态（确定性）。MVP 无随机。
- * 命令：battle/init | battle/select | battle/move | battle/attack | battle/endTurn | battle/surrender
+ * 命令：battle/init | battle/select | battle/move | battle/attack | battle/shoot | battle/endTurn | battle/surrender
  */
 import { type Command, type Reducer } from '../events/CommandLog'
 import { hexDistance, hexKey, type Axial } from '../hex/HexGrid'
 import { UNIT_DEFS } from '../../data/units'
-import { computeDamage, MELEE_ATTACK_MULT } from './damage'
+import { computeDamage, MELEE_ATTACK_MULT, RANGE_OUT_MULT } from './damage'
 import { battleFindPath, battleReachableArea } from './pathing'
 import { occupiedHexes, type BattleArmyConfig, type BattleState, type BattleUnit } from './types'
 
@@ -176,6 +176,32 @@ function attack(state: BattleState, unitId: string, targetId: string, to?: Axial
   return advance(next)
 }
 
+/** 远程射击：满额/半额（射程外 ×0.5）；贴身/已移动/非远程 拒绝；不触发反击 */
+function shoot(state: BattleState, unitId: string, targetId: string): BattleState {
+  const attacker = state.units.find((u) => u.id === unitId)
+  const target = state.units.find((u) => u.id === targetId)
+  if (!attacker || !target || attacker.id !== state.currentUnitId || attacker.hasActed) return state
+  if (attacker.side === target.side) return state
+  const def = UNIT_DEFS[attacker.defId]
+  if (def.range <= 1 || attacker.hasMoved) return state
+  const pinned = state.units.some((u) =>
+    u.id !== attacker.id && u.side !== attacker.side &&
+    occupiedHexes(attacker).some((h) => occupiedHexes(u).some((uh) => hexDistance(h, uh) <= 1)))
+  if (pinned) return state
+  const inRange = occupiedHexes(target).some((h) => hexDistance(attacker.position, h) <= def.range)
+  const atkGen = state.general[attacker.side]
+  const defGen = state.general[target.side]
+  const base = computeDamage(attacker, target, atkGen.atkBonus, defGen.defBonus)
+  const dmg = Math.round(base * (inRange ? 1 : RANGE_OUT_MULT))
+  let units = state.units.map((u) => (u.id === attacker.id ? { ...u, hasActed: true, hasMoved: true } : u))
+  units = dealDamage(units, target.id, dmg)
+  const dead = !units.some((u) => u.id === target.id)
+  const log = [...state.log, `${attacker.id} 射击 ${target.id} 造成 ${dmg} 伤害${inRange ? '' : '（射程外）'}${dead ? '（消灭）' : ''}`]
+  const phase = phaseOf(units)
+  if (phase !== 'combat') return { ...state, units, phase, log }
+  return advance({ ...state, units, log })
+}
+
 export const battleReducer: Reducer<BattleState> = (state, cmd: Command) => {
   switch (cmd.type) {
     case 'battle/init':
@@ -191,6 +217,10 @@ export const battleReducer: Reducer<BattleState> = (state, cmd: Command) => {
     case 'battle/attack': {
       const payload = cmd.payload as { unitId: string; targetId: string; to?: Axial }
       return attack(state, payload.unitId, payload.targetId, payload.to)
+    }
+    case 'battle/shoot': {
+      const payload = cmd.payload as { unitId: string; targetId: string }
+      return shoot(state, payload.unitId, payload.targetId)
     }
     case 'battle/endTurn':
       return endTurn(state, (cmd.payload as { unitId: string }).unitId)

@@ -16,8 +16,8 @@ describe('兵种属性表', () => {
       expect([1, 2]).toContain(def.size)
     }
   })
-  test('弓兵远程射程 2、骑兵 1×2', () => {
-    expect(UNIT_DEFS.archer?.range).toBe(2)
+  test('弓兵远程射程 6、骑兵 1×2', () => {
+    expect(UNIT_DEFS.archer?.range).toBe(6)
     expect(UNIT_DEFS.cavalry?.size).toBe(2)
   })
 })

@@ -10,6 +10,7 @@ import type { BattleUnit } from './types'
 export const ATK_DEF_MODIFIER = 0.05
 export const ATK_DEF_CAP = 3
 export const MELEE_ATTACK_MULT = 0.3 // 远程兵近战时攻击取值倍率
+export const RANGE_OUT_MULT = 0.5 // 射程外远程伤害倍率（作用于最终伤害）
 
 export function computeActualAttack(defId: UnitDefId, atkBonus: number): number {
   return UNIT_DEFS[defId].attack + atkBonus
