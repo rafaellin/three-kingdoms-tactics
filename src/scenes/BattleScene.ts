@@ -3,18 +3,16 @@ import { CommandLog } from '../core/events/CommandLog'
 import { battleReducer, createInitialBattleState } from '../core/battle/battleReducer'
 import { planEnemyAction } from '../core/battle/ai'
 import { battleReachableArea } from '../core/battle/pathing'
-import { occupiedHexes, type BattleState, type BattleUnit } from '../core/battle/types'
+import { occupiedHexes, woundedHp, type BattleArmyConfig, type BattleState, type BattleUnit } from '../core/battle/types'
 import { hexKey, HexLayout, type Axial } from '../core/hex/HexGrid'
 import { UNIT_DEFS } from '../data/units'
-import { BATTLE_GRID, ENEMY_ARMY, PLAYER_ARMY } from '../data/battleTest'
+import { BATTLE_GRID, BATTLE_OBSTACLES, ENEMY_ARMY, PLAYER_ARMY } from '../data/battleTest'
 import { MainMenuScene } from './MainMenuScene'
 
 const SIDE_COLORS = { player: 0x33aa44, enemy: 0xcc3333 } as const
 const GRID_COLOR = 0x1a2333
 const GRID_LINE = 0x0b0f18
 const REACHABLE_FILL = 0x66ccff
-const RANGE_STROKE = 0xffaa33
-
 /**
  * 战斗场景（渲染层）。职责：读 BattleState 渲染 + 把点击/按钮转成 battle 命令。
  * 交互：
@@ -30,8 +28,16 @@ export class BattleScene extends Phaser.Scene {
   private gridGraphics!: Phaser.GameObjects.Graphics
   private overlayGraphics!: Phaser.GameObjects.Graphics
   private unitGraphics!: Phaser.GameObjects.Graphics
-  private hpBarGraphics!: Phaser.GameObjects.Graphics
+  private obstacleGraphics!: Phaser.GameObjects.Graphics
   private unitTexts = new Map<string, Phaser.GameObjects.Text>()
+  // @ts-expect-error 预留字段，Task 7 信息面板使用
+  private infoPanel!: Phaser.GameObjects.Text
+  // @ts-expect-error 预留字段，Task 8 动画速度控制使用
+  private animationMs = 0
+  private visualPos = new Map<string, Axial>()
+  private animQueue: Axial[] = []
+  // @ts-expect-error 预留字段，Task 8 移动动画使用
+  private animActive: Phaser.Tweens.Tween | null = null
   private resultText!: Phaser.GameObjects.Text
   private returnButton!: Phaser.GameObjects.Text
   private logText!: Phaser.GameObjects.Text
@@ -42,12 +48,29 @@ export class BattleScene extends Phaser.Scene {
 
   create(): void {
     this.store = new CommandLog<BattleState>(createInitialBattleState(), battleReducer)
-    this.store.dispatch('battle/init', { player: PLAYER_ARMY, enemy: ENEMY_ARMY, grid: BATTLE_GRID })
+    this.store.dispatch('battle/init', {
+      player: PLAYER_ARMY,
+      enemy: ENEMY_ARMY,
+      grid: { ...BATTLE_GRID, obstacles: BATTLE_OBSTACLES }
+    })
     this.createLayers()
-    // 相机居中到网格中心
-    const g = this.state.grid
-    const c = this.layout.hexToPixel({ q: g.cols / 2, r: g.rows / 2 })
-    this.cameras.main.centerOn(c.x, c.y)
+    this.setupBattle()
+  }
+
+  /** 直接以指定阵容/网格开局（e2e 确定性交互测试） */
+  startBattle(player: BattleArmyConfig, enemy: BattleArmyConfig, grid: { cols: number; rows: number; obstacles?: Axial[] }): void {
+    this.store = new CommandLog<BattleState>(createInitialBattleState(), battleReducer)
+    this.store.dispatch('battle/init', { player, enemy, grid })
+    this.visualPos.clear()
+    this.animQueue.length = 0
+    this.animActive = null
+    this.drawGrid()
+    this.drawObstacles()
+    this.setupBattle()
+  }
+
+  private setupBattle(): void {
+    this.centerCamera()
     this.setupInput()
     this.refreshViews()
   }
@@ -58,10 +81,11 @@ export class BattleScene extends Phaser.Scene {
 
   private createLayers(): void {
     this.gridGraphics = this.add.graphics().setDepth(0)
+    this.obstacleGraphics = this.add.graphics().setDepth(1)
     this.unitGraphics = this.add.graphics().setDepth(2)
     this.overlayGraphics = this.add.graphics().setDepth(3)
-    this.hpBarGraphics = this.add.graphics().setDepth(3)
     this.drawGrid()
+    this.drawObstacles()
     // 结果 + 返回主菜单（视口固定，scrollFactor 0）
     this.resultText = this.add
       .text(960, 520, '', { fontFamily: 'sans-serif', fontSize: '48px', color: '#ffffff' })
@@ -82,6 +106,12 @@ export class BattleScene extends Phaser.Scene {
       .text(24, 24, '', { fontFamily: 'sans-serif', fontSize: '16px', color: '#c8d2e0' })
       .setDepth(12)
       .setScrollFactor(0)
+    this.infoPanel = this.add
+      .text(0, 0, '', { fontFamily: 'sans-serif', fontSize: '14px', color: '#e8eef5', backgroundColor: '#223048', fixedWidth: 260, wordWrap: { width: 250 } })
+      .setPadding(10, 8)
+      .setDepth(11)
+      .setScrollFactor(0)
+      .setVisible(false)
     this.makeCornerButton(1880, 1040, '跳过行动', () => this.endCurrentTurn())
     this.makeCornerButton(1880, 980, '撤退', () => this.surrender())
   }
@@ -90,7 +120,8 @@ export class BattleScene extends Phaser.Scene {
     this.gridGraphics.clear()
     const { cols, rows } = this.state.grid
     for (let r = 0; r < rows; r++) {
-      for (let q = 0; q < cols; q++) {
+      const qMin = -Math.floor(r / 2)
+      for (let q = qMin; q < qMin + cols; q++) {
         const hex = { q, r }
         this.fillHex(this.gridGraphics, hex, GRID_COLOR, 1)
         this.strokeHex(this.gridGraphics, hex, GRID_LINE, 1)
@@ -98,25 +129,40 @@ export class BattleScene extends Phaser.Scene {
     }
   }
 
-  /** 画单位（1×2 画两格）、数量文本、血条 */
+  private drawObstacles(): void {
+    this.obstacleGraphics.clear()
+    for (const hex of this.state.obstacles) {
+      this.fillHex(this.obstacleGraphics, hex, 0x2a3240, 1)
+      this.strokeHex(this.obstacleGraphics, hex, GRID_LINE, 2)
+    }
+  }
+
+  private centerCamera(): void {
+    const g = this.state.grid
+    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity
+    for (let r = 0; r < g.rows; r++) {
+      const qMin = -Math.floor(r / 2)
+      for (let q = qMin; q < qMin + g.cols; q++) {
+        const p = this.layout.hexToPixel({ q, r })
+        minX = Math.min(minX, p.x); maxX = Math.max(maxX, p.x)
+        minY = Math.min(minY, p.y); maxY = Math.max(maxY, p.y)
+      }
+    }
+    this.cameras.main.centerOn((minX + maxX) / 2, (minY + maxY) / 2)
+  }
+
+  /** 画单位（1×2 画两格）、数量文本 */
   private drawUnits(): void {
     this.unitGraphics.clear()
-    this.hpBarGraphics.clear()
     const seen = new Set<string>()
     for (const unit of this.state.units) {
-      for (const hex of occupiedHexes(unit)) {
+      const pos = this.visualPos.get(unit.id) ?? unit.position
+      for (const hex of occupiedHexes({ position: pos, size: unit.size })) {
         this.fillHex(this.unitGraphics, hex, SIDE_COLORS[unit.side], 0.85)
       }
-      // 血条 + 文本：跨两格时取两格中心
-      const c1 = this.layout.hexToPixel(unit.position)
-      const c2 = unit.size === 2 ? this.layout.hexToPixel(occupiedHexes(unit)[1] as Axial) : c1
+      const c1 = this.layout.hexToPixel(pos)
+      const c2 = unit.size === 2 ? this.layout.hexToPixel({ q: pos.q + 1, r: pos.r }) : c1
       const cx = (c1.x + c2.x) / 2
-      const ratio = unit.hpLeft / unit.maxHp
-      const w = unit.size === 2 ? 90 : 46
-      this.hpBarGraphics.fillStyle(0x000000, 0.6)
-      this.hpBarGraphics.fillRect(cx - w / 2, c1.y - 34, w, 6)
-      this.hpBarGraphics.fillStyle(ratio > 0.3 ? 0x33dd55 : 0xdd3333, 1)
-      this.hpBarGraphics.fillRect(cx - w / 2 + 1, c1.y - 33, Math.max(0, (w - 2) * ratio), 4)
       let t = this.unitTexts.get(unit.id)
       if (!t) {
         t = this.add
@@ -137,21 +183,24 @@ export class BattleScene extends Phaser.Scene {
     }
   }
 
-  /** 当前玩家单位：可达格高亮 + 射程内敌人描边 + 选中高亮 */
+  /** 当前单位金色描边+三角箭头；玩家当前单位的可达格高亮 + 选中高亮 */
   private drawOverlay(): void {
     this.overlayGraphics.clear()
     const state = this.state
+    if (state.phase !== 'combat') return
     const current = state.units.find((u) => u.id === state.currentUnitId)
-    if (!current || state.phase !== 'combat') return
-    if (current.side === 'player') {
+    if (current) {
+      const pos = this.visualPos.get(current.id) ?? current.position
+      for (const hex of occupiedHexes({ position: pos, size: current.size })) {
+        this.strokeHex(this.overlayGraphics, hex, 0xffcc33, 3)
+      }
+      const c = this.layout.hexToPixel(pos)
+      this.overlayGraphics.fillStyle(0xffcc33, 1)
+      this.overlayGraphics.fillTriangle(c.x, c.y - 40, c.x - 9, c.y - 27, c.x + 9, c.y - 27)
+    }
+    if (current && current.side === 'player') {
       for (const hex of battleReachableArea(current, state)) {
         this.fillHex(this.overlayGraphics, hex, REACHABLE_FILL, 0.18)
-      }
-      const range = UNIT_DEFS[current.defId].range
-      for (const foe of state.units.filter((u) => u.side !== current.side)) {
-        const inRange = occupiedHexes(foe).some((h) => this.hexDist(current.position, h) <= range)
-        if (!inRange) continue
-        for (const hex of occupiedHexes(foe)) this.strokeHex(this.overlayGraphics, hex, RANGE_STROKE, 3)
       }
     }
     if (state.selectedUnitId) {
@@ -323,6 +372,7 @@ export class BattleScene extends Phaser.Scene {
       currentUnitId: state.currentUnitId,
       selectedUnitId: state.selectedUnitId,
       grid: state.grid,
+      obstacles: state.obstacles,
       order: state.order,
       log: state.log,
       reachable,
@@ -337,6 +387,8 @@ export class BattleScene extends Phaser.Scene {
         maxHp: u.maxHp,
         hasActed: u.hasActed,
         hasMoved: u.hasMoved,
+        retaliated: u.retaliated,
+        woundedHp: woundedHp(u),
         screen: screen(u.position)
       }))
     }

@@ -1,6 +1,8 @@
 import type Phaser from 'phaser'
 import type { AdventureScene } from '../scenes/AdventureScene'
 import type { BattleScene } from '../scenes/BattleScene'
+import type { BattleArmyConfig } from '../core/battle/types'
+import type { Axial } from '../core/hex/HexGrid'
 
 /**
  * 开发调试桥（dev-only）。生产构建应剔除。
@@ -18,6 +20,8 @@ export interface DebugBridge {
   setBgmVolume(volume: number): void
   /** 设置音效音量（0~1）；未来"设置"界面接线点 */
   setSfxVolume(volume: number): void
+  /** 直接以指定阵容/网格开局（e2e 确定性交互测试） */
+  startBattle(player: BattleArmyConfig, enemy: BattleArmyConfig, grid: { cols: number; rows: number; obstacles?: Axial[] }): void
 }
 
 declare global {
@@ -56,6 +60,9 @@ export function installDevBridge(game: Phaser.Game): DebugBridge {
     },
     setSfxVolume(volume) {
       adventure()?.setSfxVolume(volume)
+    },
+    startBattle(player, enemy, grid) {
+      battle()?.startBattle(player, enemy, grid)
     }
   }
   window.__game = bridge
