@@ -41,7 +41,7 @@ import { UNIT_DEFS } from './units'
 
 describe('兵种属性表', () => {
   test('覆盖 MVP 五兵种', () => {
-    for (const id of ['militia', 'swordsman', 'pikeman', 'archer', 'cavalry']) {
+    for (const id of ['militia', 'swordsman', 'pikeman', 'archer', 'cavalry'] as const) {
       expect(UNIT_DEFS[id]).toBeDefined()
     }
   })
@@ -73,7 +73,12 @@ Expected: FAIL（`Cannot find module './units'`）
 /**
  * 兵种属性表（纯数据，无逻辑）。占位值待平衡（PRD §7 未给数值）。
  * 实际攻防 = 基础 + 武将武力/3（见 core/battle/damage.ts）。
+ * 键类型 UnitDefId 为字面量联合（与现有 RESOURCE_NODE_DEFS 的
+ * Readonly<Record<...>> 惯用法一致）：noUncheckedIndexedAccess 不作用于已知属性，
+ * 故 `UNIT_DEFS[defId]` 不需非空断言，且能编译期防拼错。
  */
+export type UnitDefId = 'militia' | 'swordsman' | 'pikeman' | 'archer' | 'cavalry'
+
 export interface UnitDef {
   id: string
   name: string
@@ -92,7 +97,7 @@ export interface UnitDef {
   size: 1 | 2
 }
 
-export const UNIT_DEFS: Record<string, UnitDef> = {
+export const UNIT_DEFS: Readonly<Record<UnitDefId, UnitDef>> = {
   militia: { id: 'militia', name: '民兵', attack: 4, defense: 4, minDamage: 1, maxDamage: 3, speed: 4, hp: 1, cost: { gold: 50 }, range: 1, size: 1 },
   swordsman: { id: 'swordsman', name: '刀兵', attack: 6, defense: 8, minDamage: 3, maxDamage: 5, speed: 4, hp: 2, cost: { gold: 100 }, range: 1, size: 1 },
   pikeman: { id: 'pikeman', name: '枪兵', attack: 7, defense: 6, minDamage: 3, maxDamage: 5, speed: 4, hp: 2, cost: { gold: 100 }, range: 1, size: 1 },
@@ -126,8 +131,8 @@ git commit -m "feat(battle): 兵种属性表（攻防伤速命费/射程/尺寸�
 - Produces:
 ```ts
 export type Side = 'player' | 'enemy'
-export interface BattleUnit { id: string; side: Side; defId: string; count: number; position: Axial; size: 1 | 2; hpLeft: number; maxHp: number; hasActed: boolean; hasMoved: boolean }
-export interface BattleArmyConfig { side: Side; generalName: string; atkBonus: number; defBonus: number; units: { defId: string; count: number }[] }
+export interface BattleUnit { id: string; side: Side; defId: UnitDefId; count: number; position: Axial; size: 1 | 2; hpLeft: number; maxHp: number; hasActed: boolean; hasMoved: boolean }
+export interface BattleArmyConfig { side: Side; generalName: string; atkBonus: number; defBonus: number; units: { defId: UnitDefId; count: number }[] }
 export interface BattleState { grid: { cols: number; rows: number }; units: BattleUnit[]; general: Record<Side, { name: string; atkBonus: number; defBonus: number }>; turn: number; order: string[]; currentUnitId: string | null; selectedUnitId: string | null; phase: 'combat' | 'won' | 'lost'; log: string[] }
 export function occupiedHexes(unit: Pick<BattleUnit, 'position' | 'size'>): Axial[]
 ```
@@ -167,13 +172,14 @@ Expected: FAIL（`Cannot find module './types'`）
  * 1×2 大型单位（骑兵）占据主体格 + 东邻居格 (q+1, r)，不旋转（HOMM3 逻辑）。
  */
 import type { Axial } from '../hex/HexGrid'
+import type { UnitDefId } from '../../data/units'
 
 export type Side = 'player' | 'enemy'
 
 export interface BattleUnit {
   id: string
   side: Side
-  defId: string
+  defId: UnitDefId
   /** 当前 stack 数量（受创后按 命×count 池折算，见 reducer） */
   count: number
   /** 主体格（轴向坐标；size=2 时为左侧格） */
@@ -195,7 +201,7 @@ export interface BattleArmyConfig {
   atkBonus: number
   /** = round(统御/3)，加到此方所有单位实际防御 */
   defBonus: number
-  units: { defId: string; count: number }[]
+  units: { defId: UnitDefId; count: number }[]
 }
 
 export interface BattleState {
@@ -244,8 +250,8 @@ git commit -m "feat(battle): 战斗核心类型 + 1×2 占据格 helper"
 ```ts
 export const ATK_DEF_MODIFIER = 0.05   // ★ 平衡旋钮（用户指定可调）
 export const ATK_DEF_CAP = 3           // 攻防差钳制 → 倍率 0.85 ~ 1.15
-export function computeActualAttack(defId: string, atkBonus: number): number
-export function computeActualDefense(defId: string, defBonus: number): number
+export function computeActualAttack(defId: UnitDefId, atkBonus: number): number
+export function computeActualDefense(defId: UnitDefId, defBonus: number): number
 export function computeDamage(attacker: BattleUnit, target: BattleUnit, atkBonus: number, defBonus: number): number
 ```
 
@@ -310,17 +316,17 @@ Expected: FAIL（`Cannot find module './damage'`）
  * damage = 基础伤害(区间中值) × count × [1 + ATK_DEF_MODIFIER × clamp(攻-防, ±ATK_DEF_CAP)]
  * ATK_DEF_MODIFIER / ATK_DEF_CAP 是平衡旋钮（用户指定可调）。
  */
-import { UNIT_DEFS } from '../../data/units'
+import { UNIT_DEFS, type UnitDefId } from '../../data/units'
 import type { BattleUnit } from './types'
 
 export const ATK_DEF_MODIFIER = 0.05
 export const ATK_DEF_CAP = 3
 
-export function computeActualAttack(defId: string, atkBonus: number): number {
+export function computeActualAttack(defId: UnitDefId, atkBonus: number): number {
   return UNIT_DEFS[defId].attack + atkBonus
 }
 
-export function computeActualDefense(defId: string, defBonus: number): number {
+export function computeActualDefense(defId: UnitDefId, defBonus: number): number {
   return UNIT_DEFS[defId].defense + defBonus
 }
 
@@ -1950,4 +1956,4 @@ git commit -m "docs: 战斗 MVP 完成 + PRD §15/§16 同步"
 - **Spec 覆盖**：主菜单（Task 9）✓；战斗核心（Task 2-7）✓；伤害公式（Task 3）✓；1×2 支持（Task 2 types + Task 4 寻路 + Task 6 攻击 + Task 10 渲染）✓；血条/数量（Task 10）✓；简易 AI（Task 7 + Task 10 驱动）✓；胜负返回（Task 5/6 phase + Task 10 结果按钮 + Task 12 e2e）✓；调试桥（Task 11）✓；存量 e2e 适配（Task 13，spec §13 隐含回归）✓；PRD 同步（Task 14）✓。
 - **类型一致性**：`BattleUnit` 字段 `id/side/defId/count/position/size/hpLeft/maxHp/hasActed/hasMoved` 在 types/寻路/reducer/AI/渲染/e2e 中一致；`occupiedHexes` 统一入口；`computeDamage(attacker,target,atkBonus,defBonus)` 签名一致；`ATK_DEF_MODIFIER`/`ATK_DEF_CAP` 常量名一致；命令 payload 字段名 `unitId/targetId/to` 在 reducer/场景/e2e 中一致；`HexLayout` 与 `hexKey`/`hexDistance`/`cornerAt` 均从 `../core/hex/HexGrid` 导入（已核对源码：`HexLayout` 类在该文件，含 `hexToPixel`/`pixelToHex`/`cornerAt`；`Pathfinding` 导出 `reachableArea(start, movement, costs)` 与 `findPath(start, goal, costs)`，与实现一致）。
 - **占位扫描**：无 TBD/TODO；每个代码步骤含完整可粘贴代码。
-- **已修正的草稿缺陷**：① Task 2 首版误写带 `.sort()` 的错误测试——已删；② Task 3 伤害测试曾把 atkBonus/defBonus 传成 `34-4,34-4`（攻防差 0，测试会挂）——改为 `30,27`；③ Task 5 `makeStore` 曾漏传 `grid`——已补 `TEST_GRID`；④ Task 6 移动测试曾断言骑兵在 `(0,3)`——实际 `init` 按 `r=i` 布置，骑兵在 `(0,1)`，已改；⑤ Task 6 攻击测试曾用 13 列图（敌方射程外）且 archer vs archer 同速会触发 id 平局（`e0` 先动导致 no-op）——改用 4×3 小图 + militia 目标（speed 4 < 5），并新增「灭队判胜」用例；⑥ Task 10 曾 import 未用的 `hexNeighbor/HexDir`——已删；⑦ AI 死循环风险——`planEnemyAction` 排除自身格 + `stepEnemyAi` 对无效行动强制 endTurn；⑧ 启动即主菜单会卡死存量 e2e——新增 Task 13 适配；⑨ Task 4 可达格测试把起点放角点 (0,0)（20×20 裁剪后仅 15 格 ≠ 61）——起点改网格中心 (10,10)；⑩ Task 5 reducer import 的 `type Side` 无人引用（tsconfig `noUnusedLocals` 开启，Task 8 typecheck 必挂）——已移除。
+- **已修正的草稿缺陷**：① Task 2 首版误写带 `.sort()` 的错误测试——已删；② Task 3 伤害测试曾把 atkBonus/defBonus 传成 `34-4,34-4`（攻防差 0，测试会挂）——改为 `30,27`；③ Task 5 `makeStore` 曾漏传 `grid`——已补 `TEST_GRID`；④ Task 6 移动测试曾断言骑兵在 `(0,3)`——实际 `init` 按 `r=i` 布置，骑兵在 `(0,1)`，已改；⑤ Task 6 攻击测试曾用 13 列图（敌方射程外）且 archer vs archer 同速会触发 id 平局（`e0` 先动导致 no-op）——改用 4×3 小图 + militia 目标（speed 4 < 5），并新增「灭队判胜」用例；⑥ Task 10 曾 import 未用的 `hexNeighbor/HexDir`——已删；⑦ AI 死循环风险——`planEnemyAction` 排除自身格 + `stepEnemyAi` 对无效行动强制 endTurn；⑧ 启动即主菜单会卡死存量 e2e——新增 Task 13 适配；⑨ Task 4 可达格测试把起点放角点 (0,0)（20×20 裁剪后仅 15 格 ≠ 61）——起点改网格中心 (10,10)；⑩ Task 5 reducer import 的 `type Side` 无人引用（tsconfig `noUnusedLocals` 开启，Task 8 typecheck 必挂）——已移除；⑪ `noUncheckedIndexedAccess` 下 `UNIT_DEFS[defId]`（`Record<string, UnitDef>`）会报「possibly undefined」——根因修复：新增 `UnitDefId` 字面量联合键（`Readonly<Record<UnitDefId, UnitDef>>`，与现有 `RESOURCE_NODE_DEFS` 惯用法一致），`BattleUnit.defId`/`BattleArmyConfig.units[].defId`/`computeActualAttack/Defense` 参数全改 `UnitDefId`，`UNIT_DEFS[defId]` 无需非空断言；units.test.ts 的 id 数组加 `as const`。
