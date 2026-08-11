@@ -54,6 +54,7 @@ export function installDevBridge(game: Phaser.Game): DebugBridge {
     },
     async waitForMove() {
       await adventure()?.waitForMove()
+      await battle()?.waitForMove()
     },
     setBgmVolume(volume) {
       adventure()?.setBgmVolume(volume)

@@ -2,7 +2,7 @@ import Phaser from 'phaser'
 import { CommandLog } from '../core/events/CommandLog'
 import { battleReducer, createInitialBattleState } from '../core/battle/battleReducer'
 import { planEnemyAction } from '../core/battle/ai'
-import { battleReachableArea } from '../core/battle/pathing'
+import { battleFindPath, battleReachableArea } from '../core/battle/pathing'
 import { occupiedHexes, woundedHp, type BattleArmyConfig, type BattleState, type BattleUnit } from '../core/battle/types'
 import { hexDistance, hexKey, hexNeighbor, HexLayout, type Axial, type HexDir } from '../core/hex/HexGrid'
 import { UNIT_DEFS } from '../data/units'
@@ -41,12 +41,12 @@ export class BattleScene extends Phaser.Scene {
     swordTargetId: string | null
     blinkId: string | null
   } = { ghostHex: null, swordHex: null, cursorKind: 'none', swordTargetId: null, blinkId: null }
-  // @ts-expect-error 预留字段，Task 8 动画速度控制使用
   private animationMs = 0
   private visualPos = new Map<string, Axial>()
-  private animQueue: Axial[] = []
-  // @ts-expect-error 预留字段，Task 8 移动动画使用
-  private animActive: Phaser.Tweens.Tween | null = null
+  private animQueue: { unitId: string; path: Axial[]; resolve: () => void }[] = []
+  private animActive: { unitId: string; path: Axial[]; idx: number; acc: number; resolve: () => void } | null = null
+  private moveWaiter: (() => void) | null = null
+  private enemyActing = false
   private resultText!: Phaser.GameObjects.Text
   private returnButton!: Phaser.GameObjects.Text
   private logText!: Phaser.GameObjects.Text
@@ -86,6 +86,7 @@ export class BattleScene extends Phaser.Scene {
 
   update(_time: number, delta: number): void {
     this.blinkPhase += delta * 0.01
+    this.updateAnimation(delta)
     if (this.state.phase === 'combat' && (this.hover.ghostHex || this.hover.swordHex || this.hover.blinkId)) {
       this.drawHoverLayer()
     }
@@ -238,40 +239,59 @@ export class BattleScene extends Phaser.Scene {
     this.drawUnits()
     this.drawOverlay()
     this.updateLogAndResult()
-    this.stepEnemyAi()
+    void this.stepEnemyAi()
   }
 
   /**
    * 若当前是敌方单位，自动行动直到轮到我方或战斗结束。
    * 防御：行动若无效（如移动被拒）则强制 endTurn，杜绝死循环。
+   * 异步版本：逐个 await 移动动画，让玩家看到 AI 逐格移动。
    */
-  private stepEnemyAi(): void {
-    let guard = 0
-    while (this.state.phase === 'combat' && this.currentSide() === 'enemy' && guard++ < 50) {
-      const action = planEnemyAction(this.state)
-      const curId = this.state.currentUnitId as string
-      const before = this.state.units.find((u) => u.id === curId) as BattleUnit
-      if (action.type === 'move') {
-        this.store.dispatch('battle/move', { unitId: curId, to: action.to })
-        const moved = this.state.units.find((u) => u.id === curId) as BattleUnit
-        // 移动成功则保持当前单位（可继续攻击）；失败则强制结束回合
-        if (hexKey(moved.position) === hexKey(before.position)) {
+  private async stepEnemyAi(): Promise<void> {
+    if (this.enemyActing || this.state.phase !== 'combat' || this.currentSide() !== 'enemy') return
+    this.enemyActing = true
+    try {
+      let guard = 0
+      while (this.state.phase === 'combat' && this.currentSide() === 'enemy' && guard++ < 50) {
+        const action = planEnemyAction(this.state)
+        const curId = this.state.currentUnitId as string
+        const before = this.state.units.find((u) => u.id === curId) as BattleUnit
+        if (action.type === 'move') {
+          const path = battleFindPath(before, action.to, this.state) ?? [action.to]
+          this.store.dispatch('battle/move', { unitId: curId, to: action.to })
+          const moved = this.state.units.find((u) => u.id === curId) as BattleUnit
+          if (hexKey(moved.position) === hexKey(before.position)) {
+            this.store.dispatch('battle/endTurn', { unitId: curId })
+          } else {
+            await this.animateMove(curId, path)
+          }
+        } else if (action.type === 'attack') {
+          const path = hexKey(action.to) === hexKey(before.position)
+            ? []
+            : (battleFindPath(before, action.to, this.state) ?? [action.to])
+          this.store.dispatch('battle/attack', { unitId: curId, targetId: action.targetId, to: action.to })
+          const afterUnit = this.state.units.find((u) => u.id === curId)
+          if (this.state.phase === 'combat' && this.state.currentUnitId === curId) {
+            this.store.dispatch('battle/endTurn', { unitId: curId })
+          }
+          if (afterUnit && hexKey(afterUnit.position) !== hexKey(before.position) && path.length > 0) {
+            await this.animateMove(curId, path)
+          }
+        } else if (action.type === 'shoot') {
+          this.store.dispatch('battle/shoot', { unitId: curId, targetId: action.targetId })
+          if (this.state.phase === 'combat' && this.state.currentUnitId === curId) {
+            this.store.dispatch('battle/endTurn', { unitId: curId })
+          }
+        } else {
           this.store.dispatch('battle/endTurn', { unitId: curId })
         }
-      } else {
-        this.store.dispatch(action.type === 'attack' ? 'battle/attack' : 'battle/endTurn', {
-          unitId: curId,
-          ...(action.type === 'attack' ? { targetId: action.targetId } : {})
-        })
-        // 成功的攻击/endTurn 必然 advance（currentUnitId 变化）；未变化说明被拒 → 强制结束
-        if (this.state.phase === 'combat' && this.state.currentUnitId === curId) {
-          this.store.dispatch('battle/endTurn', { unitId: curId })
-        }
+        this.drawUnits()
+        this.drawOverlay()
+        this.updateLogAndResult()
       }
+    } finally {
+      this.enemyActing = false
     }
-    this.drawUnits()
-    this.drawOverlay()
-    this.updateLogAndResult()
   }
 
   private currentSide(): BattleUnit['side'] | null {
@@ -459,39 +479,36 @@ export class BattleScene extends Phaser.Scene {
   }
 
   private handleClick(hex: Axial): void {
+    if (this.animActive || this.animQueue.length > 0) return
     const state = this.state
     const current = state.units.find((u) => u.id === state.currentUnitId)
     if (!current || current.side !== 'player') return
     const unitAt = state.units.find((u) => occupiedHexes(u).some((h) => hexKey(h) === hexKey(hex)))
-    // 近战：刀剑边界 → 冲锋/原地攻击
     if (this.hover.cursorKind === 'sword' && this.hover.swordTargetId && this.hover.swordHex) {
-      this.store.dispatch('battle/attack', {
-        unitId: current.id,
-        targetId: this.hover.swordTargetId,
-        to: this.hover.swordHex
-      })
+      const to = this.hover.swordHex
+      const path = hexKey(to) === hexKey(current.position) ? [] : (battleFindPath(current, to, this.state) ?? [to])
+      this.store.dispatch('battle/attack', { unitId: current.id, targetId: this.hover.swordTargetId, to })
+      if (path.length > 0) void this.animateMove(current.id, path)
       this.refreshViews()
       return
     }
-    // 远程：弓/断箭 → 射击
     if ((this.hover.cursorKind === 'bow' || this.hover.cursorKind === 'broken-arrow') && unitAt && unitAt.side !== current.side) {
       this.store.dispatch('battle/shoot', { unitId: current.id, targetId: unitAt.id })
       this.refreshViews()
       return
     }
-    // 点己方 → 选中
     if (unitAt && unitAt.side === 'player') {
       this.store.dispatch('battle/select', { unitId: unitAt.id })
       this.refreshViews()
       return
     }
-    // 可达格 → 移动（移动即行动）
     if (battleReachableArea(current, state).some((h) => hexKey(h) === hexKey(hex))) {
+      const path = battleFindPath(current, hex, this.state) ?? [hex]
       this.store.dispatch('battle/move', { unitId: current.id, to: hex })
+      void this.animateMove(current.id, path)
       this.refreshViews()
       return
     }
-    // 无效点击 → no-op
   }
 
   // ---------- helpers ----------
@@ -531,8 +548,66 @@ export class BattleScene extends Phaser.Scene {
     btn.on('pointerdown', onClick)
   }
 
-  /** 战斗移动为瞬移；兼容 dev 桥（e2e 用） */
-  setAnimationSpeed(_ms: number): void {}
+  /** 逐格移动动画耗时（ms）；0 = 瞬间完成（e2e 用） */
+  setAnimationSpeed(ms: number): void {
+    this.animationMs = ms
+  }
+
+  /** 移动动画结束后 resolve；无动画立即 resolve */
+  waitForMove(): Promise<void> {
+    if (!this.animActive && this.animQueue.length === 0) return Promise.resolve()
+    return new Promise((resolve) => {
+      this.moveWaiter = resolve
+    })
+  }
+
+  // ---------- 移动动画 ----------
+
+  private animateMove(unitId: string, path: Axial[]): Promise<void> {
+    if (this.animationMs <= 0 || path.length === 0) return Promise.resolve()
+    this.visualPos.set(unitId, path[0] as Axial)
+    return new Promise((resolve) => {
+      this.animQueue.push({ unitId, path, resolve })
+    })
+  }
+
+  private startNextAnim(): void {
+    const item = this.animQueue.shift()
+    if (!item) return
+    this.animActive = { unitId: item.unitId, path: item.path, idx: 0, acc: 0, resolve: item.resolve }
+    this.visualPos.set(item.unitId, item.path[0] as Axial)
+  }
+
+  private updateAnimation(delta: number): void {
+    if (this.animActive) {
+      this.animActive.acc += delta
+      const stepMs = Math.max(1, this.animationMs)
+      if (this.animActive.acc >= stepMs) {
+        this.animActive.acc -= stepMs
+        this.animActive.idx++
+        if (this.animActive.idx >= this.animActive.path.length) {
+          const done = this.animActive
+          this.visualPos.delete(done.unitId)
+          this.animActive = null
+          done.resolve()
+          this.startNextAnim()
+        } else {
+          this.visualPos.set(this.animActive.unitId, this.animActive.path[this.animActive.idx] as Axial)
+        }
+      }
+      this.drawUnits()
+    } else {
+      this.startNextAnim()
+    }
+    this.drainWaiters()
+  }
+
+  private drainWaiters(): void {
+    if (this.animActive || this.animQueue.length > 0) return
+    const w = this.moveWaiter
+    this.moveWaiter = null
+    w?.()
+  }
 
   // ---------- dev / e2e ----------
 
