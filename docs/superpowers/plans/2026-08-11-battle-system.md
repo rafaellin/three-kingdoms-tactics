@@ -389,8 +389,9 @@ function makeState(units: BattleUnit[], grid: { cols: number; rows: number } = {
 
 describe('战斗寻路（全平地，障碍 = 其他单位）', () => {
   test('移动力 = 兵种 speed（无遮挡平地）', () => {
-    // 20×20 足够大，无边界裁剪；speed4 → 六角范围内 1+6+12+18+24 = 61 格
-    const s = makeState([makeUnit({ defId: 'militia' })])
+    // 起点放网格中心 (10,10)，避免角点把可达集裁剪掉；
+    // speed4 → 六角球内 1+6+12+18+24 = 61 格全部落在 20×20 界内
+    const s = makeState([makeUnit({ defId: 'militia', position: { q: 10, r: 10 } })])
     expect(battleReachableArea(s.units[0]!, s)).toHaveLength(61)
   })
   test('他单位占据格不可走（含 1×2 双格）', () => {
@@ -589,7 +590,7 @@ import { hexDistance, hexKey, type Axial } from '../hex/HexGrid'
 import { UNIT_DEFS } from '../../data/units'
 import { computeDamage } from './damage'
 import { battleFindPath, battleReachableArea } from './pathing'
-import { occupiedHexes, type BattleArmyConfig, type BattleState, type BattleUnit, type Side } from './types'
+import { occupiedHexes, type BattleArmyConfig, type BattleState, type BattleUnit } from './types'
 
 export function createInitialBattleState(): BattleState {
   return {
@@ -1924,4 +1925,4 @@ git commit -m "docs: 战斗 MVP 完成 + PRD §15/§16 同步"
 - **Spec 覆盖**：主菜单（Task 9）✓；战斗核心（Task 2-7）✓；伤害公式（Task 3）✓；1×2 支持（Task 2 types + Task 4 寻路 + Task 6 攻击 + Task 10 渲染）✓；血条/数量（Task 10）✓；简易 AI（Task 7 + Task 10 驱动）✓；胜负返回（Task 5/6 phase + Task 10 结果按钮 + Task 12 e2e）✓；调试桥（Task 11）✓；存量 e2e 适配（Task 13，spec §13 隐含回归）✓；PRD 同步（Task 14）✓。
 - **类型一致性**：`BattleUnit` 字段 `id/side/defId/count/position/size/hpLeft/maxHp/hasActed/hasMoved` 在 types/寻路/reducer/AI/渲染/e2e 中一致；`occupiedHexes` 统一入口；`computeDamage(attacker,target,atkBonus,defBonus)` 签名一致；`ATK_DEF_MODIFIER`/`ATK_DEF_CAP` 常量名一致；命令 payload 字段名 `unitId/targetId/to` 在 reducer/场景/e2e 中一致；`HexLayout` 与 `hexKey`/`hexDistance`/`cornerAt` 均从 `../core/hex/HexGrid` 导入（已核对源码：`HexLayout` 类在该文件，含 `hexToPixel`/`pixelToHex`/`cornerAt`；`Pathfinding` 导出 `reachableArea(start, movement, costs)` 与 `findPath(start, goal, costs)`，与实现一致）。
 - **占位扫描**：无 TBD/TODO；每个代码步骤含完整可粘贴代码。
-- **已修正的草稿缺陷**：① Task 2 首版误写带 `.sort()` 的错误测试——已删；② Task 3 伤害测试曾把 atkBonus/defBonus 传成 `34-4,34-4`（攻防差 0，测试会挂）——改为 `30,27`；③ Task 5 `makeStore` 曾漏传 `grid`——已补 `TEST_GRID`；④ Task 6 移动测试曾断言骑兵在 `(0,3)`——实际 `init` 按 `r=i` 布置，骑兵在 `(0,1)`，已改；⑤ Task 6 攻击测试曾用 13 列图（敌方射程外）且 archer vs archer 同速会触发 id 平局（`e0` 先动导致 no-op）——改用 4×3 小图 + militia 目标（speed 4 < 5），并新增「灭队判胜」用例；⑥ Task 10 曾 import 未用的 `hexNeighbor/HexDir`——已删；⑦ AI 死循环风险——`planEnemyAction` 排除自身格 + `stepEnemyAi` 对无效行动强制 endTurn；⑧ 启动即主菜单会卡死存量 e2e——新增 Task 13 适配。
+- **已修正的草稿缺陷**：① Task 2 首版误写带 `.sort()` 的错误测试——已删；② Task 3 伤害测试曾把 atkBonus/defBonus 传成 `34-4,34-4`（攻防差 0，测试会挂）——改为 `30,27`；③ Task 5 `makeStore` 曾漏传 `grid`——已补 `TEST_GRID`；④ Task 6 移动测试曾断言骑兵在 `(0,3)`——实际 `init` 按 `r=i` 布置，骑兵在 `(0,1)`，已改；⑤ Task 6 攻击测试曾用 13 列图（敌方射程外）且 archer vs archer 同速会触发 id 平局（`e0` 先动导致 no-op）——改用 4×3 小图 + militia 目标（speed 4 < 5），并新增「灭队判胜」用例；⑥ Task 10 曾 import 未用的 `hexNeighbor/HexDir`——已删；⑦ AI 死循环风险——`planEnemyAction` 排除自身格 + `stepEnemyAi` 对无效行动强制 endTurn；⑧ 启动即主菜单会卡死存量 e2e——新增 Task 13 适配；⑨ Task 4 可达格测试把起点放角点 (0,0)（20×20 裁剪后仅 15 格 ≠ 61）——起点改网格中心 (10,10)；⑩ Task 5 reducer import 的 `type Side` 无人引用（tsconfig `noUnusedLocals` 开启，Task 8 typecheck 必挂）——已移除。
