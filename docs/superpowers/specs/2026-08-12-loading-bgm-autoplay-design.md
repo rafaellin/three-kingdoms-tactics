@@ -66,7 +66,7 @@ BGM 为**游戏级共享单例**，跨场景持续播放不中断；切场景只
 - **`switchToCategory(cat)`**：记 `pendingCategory`；`if (ready && unlocked)` 立即 `startCategory(cat)`，否则待 `unlock()`/加载完成时补执行。
 - **`onTrackChange` 改多监听**：`addTrackListener(cb)` / `removeTrackListener(cb)`（`Set<() => void>`），替换原单槽 `setTrackChangeCallback`。控件构造时注册、`destroy()` 时注销。
 - `playCurrent()` 里 `this.scene.sound` 全部改为 `this.game.sound`（全局共享管理器，场景无关）。
-- `stopCurrent()` 仅在 `startCategory`/`dispose` 内调用；跨场景不主动 stop（音乐持续）。
+- 跨场景不主动 stop（音乐持续）；`stopCurrent()` 只在切分类、换曲（`playCurrent`/`nextTrack`/`prevTrack`）与 `dispose()` 时调用。
 
 ### 4.3 bgmConfig.json
 
@@ -91,7 +91,7 @@ BGM 为**游戏级共享单例**，跨场景持续播放不中断；切场景只
 
 ### 4.5 AdventureScene 接线（`src/scenes/AdventureScene.ts`）
 
-- 删除 `new BgmManager(this)` + `this.bgm.load()`；`this.bgm` 改为 `getBgmManager(this)` 返回值（或直接局部）。
+- 删除 `new BgmManager(this)` + `this.bgm.load()`；保留 `private bgm: BgmManager` 字段，`create()` 里赋 `this.bgm = getBgmManager(this)`（`setBgmVolume`/`getDebugState` 调用点改动最小）。
 - `create()`：`bgm.switchToCategory('explore')`。
 - 删除内联控件字段与方法（`bgmPrevBtn/bgmLabel/bgmNextBtn/bgmVolumeBtn/bgmSlider/bgmSliderVisible/bgmSliderDragging`、`refreshBgmLabel/toggleBgmSlider/showBgmSlider/hideBgmSlider/drawBgmSlider/updateSliderFromPointer/repositionBottomControls` 中的 BGM 部分），替换为共享 `BgmControls` 组件（见 §4.7）。
 - `getDebugState()` 的 `bgm` 改从共享单例读取。
@@ -128,12 +128,12 @@ BGM 为**游戏级共享单例**，跨场景持续播放不中断；切场景只
   - menu 阶段：`currentCategory === 'menu'`、`currentTrack === 'Neon Jade'`、`playing === true`（主题曲自动播放，无需点击）。
   - adventure 阶段：`currentCategory === 'explore' && playing === true`（自动，不再需要点地图）。
 - `sfx.spec.ts`、`camera.spec.ts`：适配新导航流程（都走 `gotoAdventure`）。
-- 新增 `battle-bgm.spec.ts`（或并入 bgm.spec）：进入 battle → 断言 `currentCategory === 'battle'`、控件存在、上一首/下一首/音量按钮可交互、音量滑块拖动改 `getState().bgm.volume`。
+- bgm.spec.ts 中新增 battle 用例：进入 battle → 断言 `currentCategory === 'battle'`、控件存在、上一首/下一首/音量按钮可交互、音量滑块拖动改 `getState().bgm.volume`。
 
 ### 4.9 SfxManager 小改（`src/audio/SfxManager.ts`）
 
 - 构造时改为「检查 keys 已在 `game.cache.audio` → `ready = true`」，不再注册 `scene.load.audio`。
-- `load()` 保留为兼容但立即 resolve（AdventureScene 调用点可保留或移除）。
+- `load()` 保留为兼容但立即 resolve；删除 AdventureScene 中的 `void this.sfx.load()` 调用。
 - 其余（`playLooped/stopLooped/setVolume`）不变；仍 per-scene 实例，`shutdown` 时 `stopLooped()` 清理。
 
 ### 4.10 文档同步
