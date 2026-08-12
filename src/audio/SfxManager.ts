@@ -41,34 +41,25 @@ export class SfxManager {
   private ready = false
 
   constructor(private readonly scene: Phaser.Scene) {
-    for (const [path, url] of Object.entries(SFX_URLS)) {
+    for (const [path] of Object.entries(SFX_URLS)) {
       const key = SfxManager.baseKey(path)
       this.keys.add(key)
-      this.scene.load.audio(key, url)
     }
+    // 音频由 LoadingScene 预载进全局缓存 → 构造即可用（无需再加载）
+    this.ready = this.keys.size === 0 || Array.from(this.keys).every((k) => this.scene.game.cache.audio.has(k))
     // 场景关闭时停止循环音效
     this.scene.events.once('shutdown', () => this.stopLooped())
+  }
+
+  /** 兼容旧调用：音频已由 LoadingScene 预载，无需再加载 */
+  load(): Promise<void> {
+    return Promise.resolve()
   }
 
   /** 路径 → 缓存 key：取文件名（去扩展名），如 '/assets/sound/hero move.wav' → 'hero move' */
   private static baseKey(path: string): string {
     const file = path.split('/').pop() ?? path
     return file.replace(/\.[^.]+$/, '')
-  }
-
-  /** 开始异步加载音效；resolve 时已可播放 */
-  load(): Promise<void> {
-    return new Promise((resolve) => {
-      if (this.keys.size === 0) {
-        resolve()
-        return
-      }
-      this.scene.load.once('complete', () => {
-        this.ready = true
-        resolve()
-      })
-      this.scene.load.start()
-    })
   }
 
   /** 循环播放一个音效（如移动脚步）；未就绪或已有循环音效时忽略 */

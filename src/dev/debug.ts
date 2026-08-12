@@ -5,6 +5,7 @@ import type { MainMenuScene } from '../scenes/MainMenuScene'
 import type { LoadingScene } from '../scenes/LoadingScene'
 import type { BattleArmyConfig } from '../core/battle/types'
 import type { Axial } from '../core/hex/HexGrid'
+import { getBgmManager } from '../audio/BgmManager'
 
 /**
  * 开发调试桥（dev-only）。生产构建应剔除。
@@ -63,7 +64,8 @@ export function installDevBridge(game: Phaser.Game): DebugBridge {
       await battle()?.waitForMove()
     },
     setBgmVolume(volume) {
-      adventure()?.setBgmVolume(volume)
+      const scene = (adventure() ?? battle() ?? menu() ?? loading())!
+      getBgmManager(scene).setVolume(volume)
     },
     setSfxVolume(volume) {
       adventure()?.setSfxVolume(volume)

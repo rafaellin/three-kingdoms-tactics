@@ -8,6 +8,7 @@ import { hexDistance, hexKey, hexNeighbor, HexLayout, type Axial, type HexDir } 
 import { UNIT_DEFS } from '../data/units'
 import { BATTLE_GRID, BATTLE_OBSTACLES, ENEMY_ARMY, PLAYER_ARMY } from '../data/battleTest'
 import { MainMenuScene } from './MainMenuScene'
+import { getBgmManager } from '../audio/BgmManager'
 
 const SIDE_COLORS = { player: 0x33aa44, enemy: 0xcc3333 } as const
 const GRID_COLOR = 0x1a2333
@@ -66,6 +67,7 @@ export class BattleScene extends Phaser.Scene {
     })
     this.enemyActing = false
     this.moveWaiter = null
+    getBgmManager(this).switchToCategory('battle')
     this.createLayers()
     this.setupBattle()
   }
@@ -633,6 +635,7 @@ export class BattleScene extends Phaser.Scene {
     return {
       ready: true,
       scene: 'battle',
+      bgm: getBgmManager(this).getState(),
       phase: state.phase,
       turn: state.turn,
       currentUnitId: state.currentUnitId,

@@ -1,5 +1,6 @@
 import Phaser from 'phaser'
 import { MainMenuScene } from './MainMenuScene'
+import { getBgmManager, type BgmManager } from '../audio/BgmManager'
 
 /** 图标资源（key = 文件名去扩展名，与旧 AdventureScene.preload 一致） */
 const ICON_URLS = import.meta.glob('/assets/icons/*.png', {
@@ -77,15 +78,44 @@ export class LoadingScene extends Phaser.Scene {
   }
 
   create(): void {
-    // Task 2 将在此加入主题曲自动播放 / OK 按钮逻辑
-    this.scene.start(MainMenuScene.KEY)
+    const bgm = getBgmManager(this)
+    if (!this.sound.locked) {
+      // 已有用户手势 → 音频可直接播：直接起播主题曲并进入主菜单
+      bgm.unlock()
+      bgm.switchToCategory('menu')
+      this.scene.start(MainMenuScene.KEY)
+    } else {
+      // 音频被浏览器自动播放策略锁定：装解锁监听 + 显示 OK 按钮，单击解锁并起播主题曲
+      bgm.unlock()
+      this.showOkButton(bgm)
+    }
+  }
+
+  private showOkButton(bgm: BgmManager): void {
+    const { width, height } = this.scale
+    this.okButton = this.add
+      .text(width / 2, height * 0.6, '点击进入', {
+        fontFamily: 'sans-serif',
+        fontSize: '28px',
+        color: '#ffffff',
+        backgroundColor: '#33415c'
+      })
+      .setOrigin(0.5)
+      .setPadding(24, 12)
+      .setDepth(10)
+      .setInteractive({ useHandCursor: true })
+    this.okButton.on('pointerdown', () => {
+      bgm.switchToCategory('menu')
+      this.scene.start(MainMenuScene.KEY)
+    })
   }
 
   getDebugState(): Record<string, unknown> {
     return {
       ready: true,
       scene: 'loading',
-      okButton: this.okButton ? { x: this.okButton.x, y: this.okButton.y } : null
+      okButton: this.okButton ? { x: this.okButton.x, y: this.okButton.y } : null,
+      bgm: getBgmManager(this).getState()
     }
   }
 

@@ -1,6 +1,7 @@
 import Phaser from 'phaser'
 import { AdventureScene } from './AdventureScene'
 import { BattleScene } from './BattleScene'
+import { getBgmManager } from '../audio/BgmManager'
 
 /**
  * 主菜单（渲染层）：开始游戏 → 大地图；战斗测试 → 战斗场景。
@@ -15,6 +16,10 @@ export class MainMenuScene extends Phaser.Scene {
   }
 
   create(): void {
+    const bgm = getBgmManager(this)
+    if (bgm.getState().currentCategory !== 'menu') {
+      bgm.switchToCategory('menu')
+    }
     const { width, height } = this.scale
     this.cameras.main.setBackgroundColor('#0f1622')
     const title = this.add
@@ -54,6 +59,11 @@ export class MainMenuScene extends Phaser.Scene {
   }
 
   getDebugState(): Record<string, unknown> {
-    return { ready: true, scene: 'menu', menu: { buttonsEnabled: this.buttonsEnabled } }
+    return {
+      ready: true,
+      scene: 'menu',
+      menu: { buttonsEnabled: this.buttonsEnabled },
+      bgm: getBgmManager(this).getState()
+    }
   }
 }

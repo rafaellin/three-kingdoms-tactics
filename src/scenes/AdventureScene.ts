@@ -15,7 +15,7 @@ import { findPath, reachableArea } from '../core/pathfinding/Pathfinding'
 import { MapMovementCost } from '../core/pathfinding/MapMovementCost'
 import { getTerrain } from '../data/terrain'
 import { RESOURCE_NODE_DEFS } from '../data/resourceNode'
-import { BgmManager } from '../audio/BgmManager'
+import { BgmManager, getBgmManager } from '../audio/BgmManager'
 import { SfxManager } from '../audio/SfxManager'
 import {
   HERO_FACTION,
@@ -68,12 +68,6 @@ const RESOURCE_NAMES: Record<keyof import('../core/state/GameState').Resources, 
   iron: '铁'
 }
 
-/** 图标 URL（Vite 构建期自动发现 assets/icons/*.png；新增图标无需改代码） */
-const ICON_URLS = import.meta.glob('/assets/icons/*.png', { query: '?url', import: 'default', eager: true }) as Record<
-  string,
-  string
->
-
 /**
  * 大地图场景（渲染层）。
  * 职责：读 core 状态并渲染、把输入转成 core 动作（单向依赖：渲染可 import core，core 不可 import 渲染）。
@@ -96,6 +90,7 @@ export class AdventureScene extends Phaser.Scene {
   private store!: CommandLog<GameState>
   /** BGM 背景音乐（渲染层；首次交互后随机起播，默认 10% 音量） */
   private bgm: BgmManager | null = null
+  private readonly trackChangeHandler = (): void => this.refreshBgmLabel()
   /** 音效（渲染层；移动时循环播放脚步，移动结束停止） */
   private sfx: SfxManager | null = null
   /** 固定 UI 相机：渲染 HUD / 工具栏 / BGM 控件，叠加在主相机之上（zoom 恒为 1、不滚动）。
@@ -192,35 +187,24 @@ export class AdventureScene extends Phaser.Scene {
     super(AdventureScene.KEY)
   }
 
-  /** 预加载资源图标（Kenney CC0，assets/icons/）；key = 文件名去扩展名 */
-  preload(): void {
-    for (const [path, url] of Object.entries(ICON_URLS)) {
-      const file = path.split('/').pop()
-      if (!file) continue
-      const key = file.replace(/\.png$/, '')
-      this.load.image(key, url)
-    }
-  }
-
   create(): void {
     // BGM 管理器先创建（createLayers 中 BGM 控件依赖它）
-    this.bgm = new BgmManager(this)
+    this.bgm = getBgmManager(this)
     this.createLayers()
     // 控件在 createLayers 中 inline 创建；此处补设切歌回调
-    this.bgm.setTrackChangeCallback(() => this.refreshBgmLabel())
+    this.bgm.addTrackListener(this.trackChangeHandler)
     this.buildStore()
     this.refreshViews()
     this.setupInput()
     // 地图中心（世界原点）居中到屏幕中心。视口 1920×1080 → scroll(-960,-540)
     this.cameras.main.centerOn(0, 0)
-    // 音频异步加载；加载完成后切到探索 BGM playlist
-    void this.bgm.load().then(() => this.bgm?.switchToCategory('explore'))
+    this.bgm.switchToCategory('explore')
     this.sfx = new SfxManager(this)
-    void this.sfx.load()
     // E 键结束回合（与右下角按钮等效）
     this.input.keyboard?.on('keydown-E', () => this.endTurn())
     // 窗口大小变化时重新排布底部控件
     this.scale.on('resize', () => this.repositionBottomControls())
+    this.events.once('shutdown', () => this.bgm?.removeTrackListener(this.trackChangeHandler))
   }
 
   /** 结束回合：dispatch game/advanceTurn，推进到下一势力（跨周自动结算） */
