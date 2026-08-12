@@ -81,7 +81,7 @@ const ICON_URLS = import.meta.glob('/assets/icons/*.png', { query: '?url', impor
  * 渲染层只持有「动画中的临时位置」与「悬停高亮」这类纯视觉状态。
  *
  * 交互：
- * - 拖拽平移相机 / 滚轮缩放
+ * - 拖拽平移相机 / 滚轮缩放（仅 Map 区；HUD/工具栏由独立固定 UI 相机渲染，不随地图缩放）
  * - 悬停格子 → A* 路径高亮（仅限当前可达的可见格）
  * - 点击可达的可见格 → 逐格移动动画，每步 dispatch unit/move，走完后迷雾逐步揭开、
  *   若还有移动力可继续走（不可走出可见范围——由 core 校验保证）
@@ -98,6 +98,9 @@ export class AdventureScene extends Phaser.Scene {
   private bgm: BgmManager | null = null
   /** 音效（渲染层；移动时循环播放脚步，移动结束停止） */
   private sfx: SfxManager | null = null
+  /** 固定 UI 相机：渲染 HUD / 工具栏 / BGM 控件，叠加在主相机之上（zoom 恒为 1、不滚动）。
+   *  主相机只渲染大地图，滚轮缩放只作用主相机 → HUD/控件不随地图缩放。 */
+  private uiCam!: Phaser.Cameras.Scene2D.Camera
   /** 移动脚步音效的缓存 key（= assets/sound/hero move.wav 的文件名去扩展名） */
   private readonly moveSfxKey = 'hero move'
   private mapGraphics!: Phaser.GameObjects.Graphics
@@ -154,6 +157,18 @@ export class AdventureScene extends Phaser.Scene {
   /** 屏幕 Y 坐标是否在地图交互区内 */
   private isInMapZone(screenY: number): boolean {
     return screenY >= AdventureScene.HUD_H && screenY < this.cameras.main.height - AdventureScene.TOOLS_H
+  }
+
+  /** 标记对象只由主相机（大地图）渲染：UI 相机忽略 → 不会在 UI 层重复绘制（仅渲染，不影响输入） */
+  private mapOnly<T extends Phaser.GameObjects.GameObject>(obj: T): T {
+    this.uiCam.ignore(obj)
+    return obj
+  }
+
+  /** 标记对象只由 UI 相机渲染：主相机忽略 → 不随大地图缩放（仅渲染，不影响输入） */
+  private uiOnly<T extends Phaser.GameObjects.GameObject>(obj: T): T {
+    this.cameras.main.ignore(obj)
+    return obj
   }
 
   /** 逐格移动动画耗时（ms）；0 = 瞬间完成（e2e 用） */
@@ -409,12 +424,16 @@ export class AdventureScene extends Phaser.Scene {
   // ---------- 渲染 ----------
 
   private createLayers(): void {
-    this.mapGraphics = this.add.graphics().setDepth(0)
-    this.fogGraphics = this.add.graphics().setDepth(1)
-    this.nodeGraphics = this.add.graphics().setDepth(2)
-    this.townGraphics = this.add.graphics().setDepth(2)
-    this.overlayGraphics = this.add.graphics().setDepth(3)
-    this.heroSprite = this.add.graphics().setDepth(4)
+    // 固定 UI 相机：叠加在主相机之上（数组靠后 → 后渲染 → 置顶）。
+    // 主相机只渲染大地图；HUD/工具栏由 UI 相机渲染，滚轮缩放不再波及它们。
+    // 注：setScrollFactor(0) 只豁免相机的滚动平移、不免除缩放，故必须走双相机。
+    this.uiCam = this.cameras.add(0, 0, this.scale.width, this.scale.height)
+    this.mapGraphics = this.mapOnly(this.add.graphics().setDepth(0))
+    this.fogGraphics = this.mapOnly(this.add.graphics().setDepth(1))
+    this.nodeGraphics = this.mapOnly(this.add.graphics().setDepth(2))
+    this.townGraphics = this.mapOnly(this.add.graphics().setDepth(2))
+    this.overlayGraphics = this.mapOnly(this.add.graphics().setDepth(3))
+    this.heroSprite = this.mapOnly(this.add.graphics().setDepth(4))
     // hero 精灵绘制在局部原点（0,0），位置由 syncHeroSprite 按核心坐标设置
     this.heroSprite.fillStyle(0xffd166, 1)
     this.heroSprite.fillCircle(0, 0, 10)
@@ -431,75 +450,87 @@ export class AdventureScene extends Phaser.Scene {
       { key: 'icon-iron', resource: 'iron', tint: RESOURCE_COLORS.iron }
     ]
     this.hudResourceCols = HUD_COLS.map((col) => {
-      const icon = this.add
-        .image(0, 24, col.key)
-        .setDepth(10)
-        .setScrollFactor(0)
-        .setScale(22 / 64)
-        .setTint(col.tint)
+      const icon = this.uiOnly(
+        this.add
+          .image(0, 24, col.key)
+          .setDepth(10)
+          .setScrollFactor(0)
+          .setScale(22 / 64)
+          .setTint(col.tint)
+      )
       icon.setInteractive({ useHandCursor: true })
       icon.on('pointerover', (p: Phaser.Input.Pointer) => this.showHudTooltip(col.resource, p))
       icon.on('pointerout', () => this.hideHudTooltip())
-      const text = this.add.text(0, 24, '', hudStyle).setOrigin(0, 0.5).setDepth(10).setScrollFactor(0)
+      const text = this.uiOnly(this.add.text(0, 24, '', hudStyle).setOrigin(0, 0.5).setDepth(10).setScrollFactor(0))
       text.setInteractive({ useHandCursor: true })
       text.on('pointerover', (p: Phaser.Input.Pointer) => this.showHudTooltip(col.resource, p))
       text.on('pointerout', () => this.hideHudTooltip())
       return { resource: col.resource, icon, text }
     })
     // HUD 悬停提示（默认隐藏；hover 资源图标/数值时显示产出来源明细）
-    this.hudTooltip = this.add
-      .text(0, 0, '', {
-        fontFamily: 'sans-serif',
-        fontSize: '16px',
-        color: '#ffffff',
-        backgroundColor: 'rgba(0,0,0,0.65)'
-      })
-      .setDepth(11)
-      .setScrollFactor(0)
-      .setVisible(false)
+    this.hudTooltip = this.uiOnly(
+      this.add
+        .text(0, 0, '', {
+          fontFamily: 'sans-serif',
+          fontSize: '16px',
+          color: '#ffffff',
+          backgroundColor: 'rgba(0,0,0,0.65)'
+        })
+        .setDepth(11)
+        .setScrollFactor(0)
+        .setVisible(false)
+    )
     // 供 hover 回调查找资源的产出来源（每帧 updateHud 刷新）
     this.hudIncomeDetail = { gold: [], wood: [], stone: [], iron: [] }
-    this.hudDateText = this.add
-      .text(404, 24, '', hudStyle)
-      .setOrigin(0, 0.5)
-      .setDepth(10)
-      .setScrollFactor(0)
+    this.hudDateText = this.uiOnly(
+      this.add
+        .text(404, 24, '', hudStyle)
+        .setOrigin(0, 0.5)
+        .setDepth(10)
+        .setScrollFactor(0)
+    )
     // 城池详情 tag（默认隐藏）
-    this.townDetailText = this.add
-      .text(0, 0, '', {
-        fontFamily: 'sans-serif',
-        fontSize: '18px',
-        color: '#ffffff',
-        backgroundColor: 'rgba(0,0,0,0.65)'
-      })
-      .setDepth(11)
-      .setScrollFactor(0)
-      .setVisible(false)
+    this.townDetailText = this.uiOnly(
+      this.add
+        .text(0, 0, '', {
+          fontFamily: 'sans-serif',
+          fontSize: '18px',
+          color: '#ffffff',
+          backgroundColor: 'rgba(0,0,0,0.65)'
+        })
+        .setDepth(11)
+        .setScrollFactor(0)
+        .setVisible(false)
+    )
     // 资源点详情 tag（默认隐藏；悬停资源点显示）
-    this.nodeDetailText = this.add
-      .text(0, 0, '', {
-        fontFamily: 'sans-serif',
-        fontSize: '18px',
-        color: '#ffffff',
-        backgroundColor: 'rgba(0,0,0,0.65)'
-      })
-      .setDepth(11)
-      .setScrollFactor(0)
-      .setVisible(false)
+    this.nodeDetailText = this.uiOnly(
+      this.add
+        .text(0, 0, '', {
+          fontFamily: 'sans-serif',
+          fontSize: '18px',
+          color: '#ffffff',
+          backgroundColor: 'rgba(0,0,0,0.65)'
+        })
+        .setDepth(11)
+        .setScrollFactor(0)
+        .setVisible(false)
+    )
     // 结束回合按钮（右下角，视口固定）
     {
       const cam = this.cameras.main
-      this.endTurnButton = this.add
-        .text(cam.width - 140, cam.height - 56, '结束回合 [E]', {
-          fontFamily: 'sans-serif',
-          fontSize: '20px',
-          color: '#ffffff',
-          backgroundColor: '#33415c'
-        })
-        .setDepth(12)
-        .setScrollFactor(0)
-        .setPadding(14, 8)
-        .setInteractive({ useHandCursor: true })
+      this.endTurnButton = this.uiOnly(
+        this.add
+          .text(cam.width - 140, cam.height - 56, '结束回合 [E]', {
+            fontFamily: 'sans-serif',
+            fontSize: '20px',
+            color: '#ffffff',
+            backgroundColor: '#33415c'
+          })
+          .setDepth(12)
+          .setScrollFactor(0)
+          .setPadding(14, 8)
+          .setInteractive({ useHandCursor: true })
+      )
       this.endTurnButton.on('pointerdown', () => this.endTurn())
     }
     // BGM 播放控件（左下角，参照 endTurnButton 的样式）
@@ -508,10 +539,10 @@ export class AdventureScene extends Phaser.Scene {
       const btnStyle = { fontFamily: 'sans-serif', fontSize: '20px', color: '#ffffff', backgroundColor: '#33415c' }
       const labelStyle = { fontFamily: 'sans-serif', fontSize: '18px', color: '#ffffff', backgroundColor: '#1a1f2e' }
 
-      this.bgmPrevBtn = this.add.text(16, y, '<', btnStyle).setDepth(12).setScrollFactor(0).setPadding(14, 8).setInteractive({ useHandCursor: true })
-      this.bgmLabel = this.add.text(this.bgmPrevBtn.x + this.bgmPrevBtn.width + 6, y, '', labelStyle).setDepth(12).setScrollFactor(0).setPadding(14, 8)
-      this.bgmNextBtn = this.add.text(this.bgmLabel.x + this.bgmLabel.width + 6, y, '>', btnStyle).setDepth(12).setScrollFactor(0).setPadding(14, 8).setInteractive({ useHandCursor: true })
-      this.bgmVolumeBtn = this.add.text(this.bgmNextBtn.x + this.bgmNextBtn.width + 6, y, '\u{1F50A}', btnStyle).setDepth(12).setScrollFactor(0).setPadding(14, 8).setInteractive({ useHandCursor: true })
+      this.bgmPrevBtn = this.uiOnly(this.add.text(16, y, '<', btnStyle).setDepth(12).setScrollFactor(0).setPadding(14, 8).setInteractive({ useHandCursor: true }))
+      this.bgmLabel = this.uiOnly(this.add.text(this.bgmPrevBtn.x + this.bgmPrevBtn.width + 6, y, '', labelStyle).setDepth(12).setScrollFactor(0).setPadding(14, 8))
+      this.bgmNextBtn = this.uiOnly(this.add.text(this.bgmLabel.x + this.bgmLabel.width + 6, y, '>', btnStyle).setDepth(12).setScrollFactor(0).setPadding(14, 8).setInteractive({ useHandCursor: true }))
+      this.bgmVolumeBtn = this.uiOnly(this.add.text(this.bgmNextBtn.x + this.bgmNextBtn.width + 6, y, '\u{1F50A}', btnStyle).setDepth(12).setScrollFactor(0).setPadding(14, 8).setInteractive({ useHandCursor: true }))
 
       this.bgmPrevBtn.on('pointerdown', () => { this.bgm?.prevTrack(); this.refreshBgmLabel() })
       this.bgmNextBtn.on('pointerdown', () => { this.bgm?.nextTrack(); this.refreshBgmLabel() })
@@ -519,7 +550,7 @@ export class AdventureScene extends Phaser.Scene {
 
       // 音量滑块：音量按钮右侧，垂直居中于按钮（单 Graphics 绘制全部：轨道 + 填充 + 手柄）
       const sliderY = y + 12
-      this.bgmSlider = this.add.graphics().setPosition(0, sliderY).setDepth(13).setScrollFactor(0).setVisible(false)
+      this.bgmSlider = this.uiOnly(this.add.graphics().setPosition(0, sliderY).setDepth(13).setScrollFactor(0).setVisible(false))
     }
   }
 
@@ -569,7 +600,7 @@ export class AdventureScene extends Phaser.Scene {
       const c = this.layout.hexToPixel(town.position)
       let sprite = this.townSprites.get(town.id)
       if (!sprite) {
-        sprite = this.add.image(c.x, c.y, 'icon-town').setDepth(2).setScale(34 / 64)
+        sprite = this.mapOnly(this.add.image(c.x, c.y, 'icon-town').setDepth(2).setScale(34 / 64))
         this.townSprites.set(town.id, sprite)
       }
       sprite.setPosition(c.x, c.y)
@@ -622,7 +653,7 @@ export class AdventureScene extends Phaser.Scene {
       }
       let sprite = this.nodeSprites.get(k)
       if (!sprite) {
-        sprite = this.add.image(c.x, c.y, iconKey).setDepth(2).setScale(24 / 64)
+        sprite = this.mapOnly(this.add.image(c.x, c.y, iconKey).setDepth(2).setScale(24 / 64))
         this.nodeSprites.set(k, sprite)
       } else if (sprite.texture.key !== iconKey) {
         sprite.setTexture(iconKey)
@@ -822,6 +853,8 @@ export class AdventureScene extends Phaser.Scene {
       this.dragging = false
     })
     this.input.on('wheel', (pointer: Phaser.Input.Pointer) => {
+      // 仅在 Map 区滚轮缩放地图；HUD / 工具栏区滚轮不触发（与拖拽/点击同一分区规则）
+      if (!this.isInMapZone(pointer.y)) return
       const zoom = Phaser.Math.Clamp(cam.zoom - (pointer.deltaY ?? 0) * 0.001, 0.4, 2)
       cam.setZoom(zoom)
     })
@@ -983,6 +1016,8 @@ export class AdventureScene extends Phaser.Scene {
         y: Math.round(this.cameras.main.scrollY),
         zoom: Math.round(this.cameras.main.zoom * 100) / 100
       },
+      // UI 相机 zoom：恒为 1 → HUD/工具栏不随地图缩放（e2e 回归断言）
+      uiCameraZoom: Math.round(this.uiCam.zoom * 100) / 100,
       turn: state.turn,
       week: weekOf(state.turn),
       currentFaction: state.currentFaction,
