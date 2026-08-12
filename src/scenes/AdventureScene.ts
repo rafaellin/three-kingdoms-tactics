@@ -16,6 +16,7 @@ import { MapMovementCost } from '../core/pathfinding/MapMovementCost'
 import { getTerrain } from '../data/terrain'
 import { RESOURCE_NODE_DEFS } from '../data/resourceNode'
 import { BgmManager, getBgmManager } from '../audio/BgmManager'
+import { BgmControls } from '../ui/BgmControls'
 import { SfxManager } from '../audio/SfxManager'
 import {
   HERO_FACTION,
@@ -90,7 +91,7 @@ export class AdventureScene extends Phaser.Scene {
   private store!: CommandLog<GameState>
   /** BGM 背景音乐（渲染层；首次交互后随机起播，默认 10% 音量） */
   private bgm: BgmManager | null = null
-  private readonly trackChangeHandler = (): void => this.refreshBgmLabel()
+  private bgmControls: BgmControls | null = null
   /** 音效（渲染层；移动时循环播放脚步，移动结束停止） */
   private sfx: SfxManager | null = null
   /** 固定 UI 相机：渲染 HUD / 工具栏 / BGM 控件，叠加在主相机之上（zoom 恒为 1、不滚动）。
@@ -121,24 +122,6 @@ export class AdventureScene extends Phaser.Scene {
   private nodeDetailText!: Phaser.GameObjects.Text
   /** 结束回合按钮 */
   private endTurnButton!: Phaser.GameObjects.Text
-  /** BGM 播放控件：上一首 */
-  private bgmPrevBtn!: Phaser.GameObjects.Text
-  /** BGM 播放控件：曲目名 */
-  private bgmLabel!: Phaser.GameObjects.Text
-  /** BGM 播放控件：下一首 */
-  private bgmNextBtn!: Phaser.GameObjects.Text
-  /** BGM 播放控件：音量按钮 */
-  private bgmVolumeBtn!: Phaser.GameObjects.Text
-  /** BGM 音量滑块（单 Graphics：轨道 + 填充 + 手柄指示器） */
-  private bgmSlider!: Phaser.GameObjects.Graphics
-  /** 音量滑块是否可见 */
-  private bgmSliderVisible = false
-  /** 是否正在拖拽滑块 */
-  private bgmSliderDragging = false
-  /** 滑块总宽度（px） */
-  private static readonly SLIDER_W = 120
-  /** 滑块轨道高度（px） */
-  private static readonly SLIDER_H = 8
 
   /**
    * 视口分区（从上到下）：HUD → Map → Tools。
@@ -191,8 +174,6 @@ export class AdventureScene extends Phaser.Scene {
     // BGM 管理器先创建（createLayers 中 BGM 控件依赖它）
     this.bgm = getBgmManager(this)
     this.createLayers()
-    // 控件在 createLayers 中 inline 创建；此处补设切歌回调
-    this.bgm.addTrackListener(this.trackChangeHandler)
     this.buildStore()
     this.refreshViews()
     this.setupInput()
@@ -204,7 +185,7 @@ export class AdventureScene extends Phaser.Scene {
     this.input.keyboard?.on('keydown-E', () => this.endTurn())
     // 窗口大小变化时重新排布底部控件
     this.scale.on('resize', () => this.repositionBottomControls())
-    this.events.once('shutdown', () => this.bgm?.removeTrackListener(this.trackChangeHandler))
+    this.events.once('shutdown', () => this.bgmControls?.destroy())
   }
 
   /** 结束回合：dispatch game/advanceTurn，推进到下一势力（跨周自动结算） */
@@ -268,134 +249,11 @@ export class AdventureScene extends Phaser.Scene {
     this.sfx?.setVolume(v)
   }
 
-  /** 刷新 BGM 播放控件标签（切歌 / 播放/停止时调用） */
-  private refreshBgmLabel(): void {
-    if (!this.bgm || !this.bgmLabel) return
-    const track = this.bgm.getCurrentTrack()
-    const playing = this.bgm.getState().playing
-    // 音符 + 空格 + 曲名
-    this.bgmLabel.setText(track && playing ? `\u{266A} ${track}` : '')
-    // 流式重排：prev → label → next → volume
-    this.bgmLabel.setX(this.bgmPrevBtn.x + this.bgmPrevBtn.width + 6)
-    this.bgmNextBtn.setX(this.bgmLabel.x + this.bgmLabel.width + 6)
-    this.bgmVolumeBtn.setX(this.bgmNextBtn.x + this.bgmNextBtn.width + 6)
-  }
-
-  // ---------- 音量滑块 ----------
-
-  /** 音量图标：按当前音量选 emoji（🔇 零 / 🔈 低 / 🔉 中 / 🔊 高） */
-  private updateVolumeIcon(): void {
-    const v = this.bgm?.getVolume() ?? 0
-    if (v <= 0) this.bgmVolumeBtn.setText('\u{1F507}')       // 🔇
-    else if (v <= 0.33) this.bgmVolumeBtn.setText('\u{1F508}') // 🔈
-    else if (v <= 0.66) this.bgmVolumeBtn.setText('\u{1F509}') // 🔉
-    else this.bgmVolumeBtn.setText('\u{1F50A}')                // 🔊
-  }
-
-  /** 切换音量滑块显隐 */
-  private toggleBgmSlider(): void {
-    this.bgmSliderVisible = !this.bgmSliderVisible
-    if (this.bgmSliderVisible) {
-      this.showBgmSlider()
-    } else {
-      this.hideBgmSlider()
-    }
-  }
-
-  /** 显示滑块并绘制当前音量 */
-  private showBgmSlider(): void {
-    // 滑块定位在音量按钮右侧，垂直居中
-    const sliderX = this.bgmVolumeBtn.x + this.bgmVolumeBtn.width + 8
-    const sliderY = this.bgmVolumeBtn.y + 12
-    this.bgmSlider.setPosition(sliderX, sliderY).setVisible(true)
-    // 交互：pointerdown 开始拖拽/点击 → pointermove 更新 → pointerup 结束
-    const hitArea = new Phaser.Geom.Rectangle(0, -8, AdventureScene.SLIDER_W, AdventureScene.SLIDER_H + 16)
-    this.bgmSlider.setInteractive({ hitArea, hitAreaCallback: Phaser.Geom.Rectangle.Contains, useHandCursor: true })
-    this.bgmSlider.on('pointerdown', this.bgmSliderDownHandler)
-    this.input.on('pointermove', this.bgmSliderMoveHandler)
-    this.input.on('pointerup', this.bgmSliderUpHandler)
-    this.input.on('pointerupoutside', this.bgmSliderUpHandler)
-    this.drawBgmSlider()
-  }
-
-  /** 隐藏滑块并解绑交互 */
-  private hideBgmSlider(): void {
-    this.bgmSlider.setVisible(false)
-    this.bgmSliderDragging = false
-    this.bgmSlider.removeInteractive()
-    this.bgmSlider.off('pointerdown', this.bgmSliderDownHandler)
-    this.input.off('pointermove', this.bgmSliderMoveHandler)
-    this.input.off('pointerup', this.bgmSliderUpHandler)
-    this.input.off('pointerupoutside', this.bgmSliderUpHandler)
-  }
-
-  /** pointerdown 在滑块上：立即更新音量 + 开始拖拽 */
-  private readonly bgmSliderDownHandler = (pointer: Phaser.Input.Pointer): void => {
-    this.bgmSliderDragging = true
-    this.updateSliderFromPointer(pointer)
-  }
-
-  private readonly bgmSliderUpHandler = (): void => { this.bgmSliderDragging = false }
-
-  /** pointermove：拖拽中则跟随指针更新音量 */
-  private readonly bgmSliderMoveHandler = (pointer: Phaser.Input.Pointer): void => {
-    if (!this.bgmSliderVisible || !this.bgmSliderDragging) return
-    this.updateSliderFromPointer(pointer)
-  }
-
-  /**
-   * 由指针计算滑块本地位置 → clamp → setVolume → 重绘。
-   * scrollFactor(0) 对象的 .x 为屏幕坐标，pointer.x 也是屏幕坐标，直接相减即可。
-   */
-  private updateSliderFromPointer(pointer: Phaser.Input.Pointer): void {
-    if (!this.bgm) return
-    const localX = pointer.x - this.bgmSlider.x
-    const vol = Phaser.Math.Clamp(localX / AdventureScene.SLIDER_W, 0, 1)
-    this.bgm.setVolume(vol)
-    this.drawBgmSlider()
-    this.updateVolumeIcon()
-  }
-
-  /** 重绘滑块：轨道背景 + 已选填充 + 手柄圆点 */
-  private drawBgmSlider(): void {
-    const vol = this.bgm?.getVolume() ?? 0
-    const W = AdventureScene.SLIDER_W
-    const H = AdventureScene.SLIDER_H
-    const fillW = Math.max(H, vol * W)
-
-    const g = this.bgmSlider
-    g.clear()
-    // 轨道背景
-    g.fillStyle(0x1a1f2e, 1)
-    g.fillRoundedRect(0, 0, W, H, H / 2)
-    // 已选填充
-    g.fillStyle(0x5a7ab0, 1)
-    g.fillRoundedRect(0, 0, fillW, H, H / 2)
-    // 手柄圆点
-    const hx = fillW
-    const hy = H / 2
-    g.fillStyle(0xffffff, 1)
-    g.fillCircle(hx, hy, 7)
-    g.lineStyle(1.5, 0x5a7ab0, 1)
-    g.strokeCircle(hx, hy, 7)
-  }
-
-  /** 窗口 resize 时重新排布底部控件（结束回合按钮 + BGM 控件） */
+  /** 窗口 resize 时重新排布结束回合按钮（BGM 控件由 BgmControls 自行处理） */
   private repositionBottomControls(): void {
     const cam = this.cameras.main
     const y = cam.height - 56
-    // 结束回合按钮：右下角
     this.endTurnButton.setPosition(cam.width - 140, y)
-    // BGM 控件：左下角
-    this.bgmPrevBtn.setY(y)
-    this.bgmLabel.setY(y)
-    this.bgmNextBtn.setY(y)
-    this.bgmVolumeBtn.setY(y)
-    // 滑块跟随音量按钮（右侧对齐，垂直居中）
-    const sliderX = this.bgmVolumeBtn.x + this.bgmVolumeBtn.width + 8
-    const sliderY = y + 12
-    this.bgmSlider.setPosition(sliderX, sliderY)
-    if (this.bgmSliderVisible) this.drawBgmSlider()
   }
 
   /** 等待移动动画结束（供 e2e 轮询） */
@@ -517,25 +375,8 @@ export class AdventureScene extends Phaser.Scene {
       )
       this.endTurnButton.on('pointerdown', () => this.endTurn())
     }
-    // BGM 播放控件（左下角，参照 endTurnButton 的样式）
-    {
-      const y = this.cameras.main.height - 56
-      const btnStyle = { fontFamily: 'sans-serif', fontSize: '20px', color: '#ffffff', backgroundColor: '#33415c' }
-      const labelStyle = { fontFamily: 'sans-serif', fontSize: '18px', color: '#ffffff', backgroundColor: '#1a1f2e' }
-
-      this.bgmPrevBtn = this.uiOnly(this.add.text(16, y, '<', btnStyle).setDepth(12).setScrollFactor(0).setPadding(14, 8).setInteractive({ useHandCursor: true }))
-      this.bgmLabel = this.uiOnly(this.add.text(this.bgmPrevBtn.x + this.bgmPrevBtn.width + 6, y, '', labelStyle).setDepth(12).setScrollFactor(0).setPadding(14, 8))
-      this.bgmNextBtn = this.uiOnly(this.add.text(this.bgmLabel.x + this.bgmLabel.width + 6, y, '>', btnStyle).setDepth(12).setScrollFactor(0).setPadding(14, 8).setInteractive({ useHandCursor: true }))
-      this.bgmVolumeBtn = this.uiOnly(this.add.text(this.bgmNextBtn.x + this.bgmNextBtn.width + 6, y, '\u{1F50A}', btnStyle).setDepth(12).setScrollFactor(0).setPadding(14, 8).setInteractive({ useHandCursor: true }))
-
-      this.bgmPrevBtn.on('pointerdown', () => { this.bgm?.prevTrack(); this.refreshBgmLabel() })
-      this.bgmNextBtn.on('pointerdown', () => { this.bgm?.nextTrack(); this.refreshBgmLabel() })
-      this.bgmVolumeBtn.on('pointerdown', () => this.toggleBgmSlider())
-
-      // 音量滑块：音量按钮右侧，垂直居中于按钮（单 Graphics 绘制全部：轨道 + 填充 + 手柄）
-      const sliderY = y + 12
-      this.bgmSlider = this.uiOnly(this.add.graphics().setPosition(0, sliderY).setDepth(13).setScrollFactor(0).setVisible(false))
-    }
+    // BGM 播放控件（左下角）：共享组件，对象归入 UI 相机（不随大地图缩放）
+    this.bgmControls = new BgmControls(this, this.bgm!, { onCreateObject: (obj) => this.uiOnly(obj) })
   }
 
   /** 读 core 状态重绘地形（setup/重建后调用一次） */
@@ -1042,6 +883,7 @@ export class AdventureScene extends Phaser.Scene {
       visibility: counts,
       busy: this.busy,
       bgm: this.bgm ? this.bgm.getState() : null,
+      bgmControls: this.bgmControls?.getDebugState() ?? null,
       sfx: this.sfx ? this.sfx.getState() : null
     }
   }

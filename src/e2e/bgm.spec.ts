@@ -69,10 +69,31 @@ test('BGM：开始游戏 → 探索 playlist 自动播放（无需点击）→ s
   expect((await getBgm(page)).volume).toBe(0)
 })
 
-test('BGM：战斗测试 → battle 分类自动播放', async ({ page }) => {
+test('BGM：战斗测试 → battle 分类 + 左下角控件交互（音量滑块/上一首）', async ({ page }) => {
   await gotoBattle(page)
   await waitBgmPlaying(page)
-  const bgm = await getBgm(page)
-  expect(bgm.currentCategory).toBe('battle')
-  expect(bgm.playlist?.length).toBe(BGM_CONFIG.categories.battle.length)
+  const getControls = () =>
+    page.evaluate(() => {
+      const g = (window as { __game?: { getState(): DebugGameState & { bgmControls?: { present?: boolean; prev?: { x: number; y: number }; next?: { x: number; y: number }; volume?: { x: number; y: number }; slider?: { x: number; y: number }; sliderVisible?: boolean } } } }).__game
+      return g?.getState()?.bgmControls ?? {}
+    })
+  const c = await getControls()
+  expect(c.present).toBe(true)
+  expect((await getBgm(page)).currentCategory).toBe('battle')
+
+  // 点音量按钮 → 滑块出现 → 点滑块中部 → 音量约 50%
+  // 点击按钮中央而非左上角：Text 默认 origin(0,0)，x/y 为左上角；按钮含 padding 14×8、fontSize 20px → 中心 ≈ (x+24, y+18)
+  await page.mouse.click(c.volume!.x + 24, c.volume!.y + 18)
+  await page.waitForTimeout(50)
+  expect((await getControls()).sliderVisible).toBe(true)
+  await page.mouse.click(c.slider!.x + 60, c.slider!.y)
+  await page.waitForTimeout(50)
+  const vol = (await getBgm(page)).volume as number
+  expect(vol).toBeGreaterThan(0.3)
+  expect(vol).toBeLessThan(0.7)
+
+  // 点上一首 → 仍为 battle 分类（playlist ≥ 2 时切换曲目）
+  await page.mouse.click(c.prev!.x + 24, c.prev!.y + 18)
+  await page.waitForTimeout(50)
+  expect((await getBgm(page)).currentCategory).toBe('battle')
 })

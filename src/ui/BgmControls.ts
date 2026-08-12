@@ -1,99 +1,161 @@
-import type Phaser from 'phaser'
+import Phaser from 'phaser'
 import type { BgmManager } from '../audio/BgmManager'
 
+/** 创建控件时对每个 Phaser 对象执行的回调（Adventure 传 uiOnly 归入 UI 相机；Battle 不传） */
+export interface BgmControlsHooks {
+  onCreateObject?: <T extends Phaser.GameObjects.GameObject>(obj: T) => T
+}
+
 /**
- * BGM 播放控制条（可复用 UI 组件）。
- *
- * 布局：`[<]  曲目名  [>]`，视口固定左下角。
- * 使用方式：
- *   const controls = new BgmControls(scene, bgm)
- *   场景销毁时调用 controls.destroy()
+ * BGM 播放控件（渲染层共享组件）：上一首 / 曲名 / 下一首 / 音量按钮 + 音量滑块。
+ * 左下角固定，scrollFactor(0) 不随相机缩放。
+ * destroy() 注销 BGM 曲目监听与 resize 监听（Phaser 对象随场景 shutdown 自动销毁）。
  */
-
-const CTRL_STYLE: Phaser.Types.GameObjects.Text.TextStyle = {
-  fontFamily: 'sans-serif',
-  fontSize: '20px',
-  color: '#ffffff',
-  backgroundColor: '#33415c'
-}
-
-const LABEL_STYLE: Phaser.Types.GameObjects.Text.TextStyle = {
-  fontFamily: 'sans-serif',
-  fontSize: '18px',
-  color: '#ffffff',
-  backgroundColor: '#1a1f2e'
-}
-
-/** 控件条 y 坐标（视口底部对齐 end turn 按钮） */
-const CTRL_Y = 1080 - 56
-
 export class BgmControls {
+  private static readonly SLIDER_W = 120
+  private static readonly SLIDER_H = 8
+
   private readonly prevBtn: Phaser.GameObjects.Text
-  private readonly trackLabel: Phaser.GameObjects.Text
+  private readonly label: Phaser.GameObjects.Text
   private readonly nextBtn: Phaser.GameObjects.Text
+  private readonly volumeBtn: Phaser.GameObjects.Text
+  private readonly slider: Phaser.GameObjects.Graphics
+  private sliderVisible = false
+  private sliderDragging = false
+  private readonly onTrackChanged = (): void => this.refresh()
 
   constructor(
-    scene: Phaser.Scene,
-    private readonly bgm: BgmManager
+    private readonly scene: Phaser.Scene,
+    private readonly bgm: BgmManager,
+    hooks?: BgmControlsHooks
   ) {
-    // 上一首按钮
-    this.prevBtn = scene.add
-      .text(16, CTRL_Y, '<', CTRL_STYLE)
-      .setOrigin(0, 0.5)
-      .setDepth(12)
-      .setScrollFactor(0)
-      .setPadding(14, 8)
-      .setInteractive({ useHandCursor: true })
+    const wrap = <T extends Phaser.GameObjects.GameObject>(obj: T): T =>
+      hooks?.onCreateObject ? hooks.onCreateObject(obj) : obj
+    const y = scene.cameras.main.height - 56
+    const btnStyle = { fontFamily: 'sans-serif', fontSize: '20px', color: '#ffffff', backgroundColor: '#33415c' }
+    const labelStyle = { fontFamily: 'sans-serif', fontSize: '18px', color: '#ffffff', backgroundColor: '#1a1f2e' }
 
-    this.prevBtn.on('pointerdown', () => {
-      bgm.prevTrack()
-      this.refresh()
-    })
+    this.prevBtn = wrap(scene.add.text(16, y, '<', btnStyle).setDepth(12).setScrollFactor(0).setPadding(14, 8).setInteractive({ useHandCursor: true }))
+    this.label = wrap(scene.add.text(this.prevBtn.x + this.prevBtn.width + 6, y, '', labelStyle).setDepth(12).setScrollFactor(0).setPadding(14, 8))
+    this.nextBtn = wrap(scene.add.text(this.label.x + this.label.width + 6, y, '>', btnStyle).setDepth(12).setScrollFactor(0).setPadding(14, 8).setInteractive({ useHandCursor: true }))
+    this.volumeBtn = wrap(scene.add.text(this.nextBtn.x + this.nextBtn.width + 6, y, '\u{1F50A}', btnStyle).setDepth(12).setScrollFactor(0).setPadding(14, 8).setInteractive({ useHandCursor: true }))
+    this.slider = wrap(scene.add.graphics().setPosition(0, y + 12).setDepth(13).setScrollFactor(0).setVisible(false))
 
-    // 当前曲目名（紧跟 prev 按钮右侧）
-    this.trackLabel = scene.add
-      .text(this.prevBtn.x + this.prevBtn.width + 6, CTRL_Y, '', LABEL_STYLE)
-      .setOrigin(0, 0.5)
-      .setDepth(12)
-      .setScrollFactor(0)
-      .setPadding(14, 8)
+    this.prevBtn.on('pointerdown', () => { this.bgm.prevTrack(); this.refresh() })
+    this.nextBtn.on('pointerdown', () => { this.bgm.nextTrack(); this.refresh() })
+    this.volumeBtn.on('pointerdown', () => this.toggleSlider())
 
-    // 下一首按钮（紧跟 label 右侧）
-    this.nextBtn = scene.add
-      .text(this.trackLabel.x + this.trackLabel.width + 6, CTRL_Y, '>', CTRL_STYLE)
-      .setOrigin(0, 0.5)
-      .setDepth(12)
-      .setScrollFactor(0)
-      .setPadding(14, 8)
-      .setInteractive({ useHandCursor: true })
-
-    this.nextBtn.on('pointerdown', () => {
-      bgm.nextTrack()
-      this.refresh()
-    })
-
-    // 初始刷新（显示当前曲目或空）
+    this.bgm.addTrackListener(this.onTrackChanged)
+    this.scene.scale.on('resize', this.onResize)
     this.refresh()
   }
 
-  /** 更新曲目标签并重排按钮位置（流式布局） */
+  /** 注销监听（场景 shutdown 时调用）；Phaser 对象由场景销毁 */
+  destroy(): void {
+    this.bgm.removeTrackListener(this.onTrackChanged)
+    this.scene.scale.off('resize', this.onResize)
+  }
+
+  private readonly onResize = (): void => {
+    const y = this.scene.cameras.main.height - 56
+    this.prevBtn.setY(y)
+    this.label.setY(y)
+    this.nextBtn.setY(y)
+    this.volumeBtn.setY(y)
+    this.slider.setPosition(this.volumeBtn.x + this.volumeBtn.width + 8, y + 12)
+    if (this.sliderVisible) this.drawSlider()
+  }
+
+  /** 刷新曲名 / 音量图标 / 滑块位置（切歌、播放状态、音量变化时调用） */
   refresh(): void {
     const track = this.bgm.getCurrentTrack()
     const playing = this.bgm.getState().playing
-    // 曲名太长时截断显示
-    const label = track && playing ? track : ''
-    this.trackLabel.setText(label)
-
-    // 流式重排：prev → label → next
-    const prevRight = this.prevBtn.x + this.prevBtn.width + 6
-    this.trackLabel.setX(prevRight)
-    this.nextBtn.setX(this.trackLabel.x + this.trackLabel.width + 6)
+    this.label.setText(track && playing ? `\u{266A} ${track}` : '')
+    this.label.setX(this.prevBtn.x + this.prevBtn.width + 6)
+    this.nextBtn.setX(this.label.x + this.label.width + 6)
+    this.volumeBtn.setX(this.nextBtn.x + this.nextBtn.width + 6)
+    const v = this.bgm.getVolume()
+    if (v <= 0) this.volumeBtn.setText('\u{1F507}')       // 🔇
+    else if (v <= 0.33) this.volumeBtn.setText('\u{1F508}') // 🔈
+    else if (v <= 0.66) this.volumeBtn.setText('\u{1F509}') // 🔉
+    else this.volumeBtn.setText('\u{1F50A}')                // 🔊
+    this.slider.setPosition(this.volumeBtn.x + this.volumeBtn.width + 8, this.volumeBtn.y + 12)
+    this.drawSlider()
   }
 
-  /** 销毁所有 UI 元素 */
-  destroy(): void {
-    this.prevBtn.destroy()
-    this.trackLabel.destroy()
-    this.nextBtn.destroy()
+  private toggleSlider(): void {
+    this.sliderVisible = !this.sliderVisible
+    if (this.sliderVisible) {
+      this.slider.setVisible(true)
+      const hitArea = new Phaser.Geom.Rectangle(0, -8, BgmControls.SLIDER_W, BgmControls.SLIDER_H + 16)
+      this.slider.setInteractive({ hitArea, hitAreaCallback: Phaser.Geom.Rectangle.Contains, useHandCursor: true })
+      this.slider.on('pointerdown', this.sliderDownHandler)
+      this.scene.input.on('pointermove', this.sliderMoveHandler)
+      this.scene.input.on('pointerup', this.sliderUpHandler)
+      this.scene.input.on('pointerupoutside', this.sliderUpHandler)
+      this.drawSlider()
+    } else {
+      this.hideSlider()
+    }
+  }
+
+  private hideSlider(): void {
+    this.slider.setVisible(false)
+    this.sliderDragging = false
+    this.slider.removeInteractive()
+    this.slider.off('pointerdown', this.sliderDownHandler)
+    this.scene.input.off('pointermove', this.sliderMoveHandler)
+    this.scene.input.off('pointerup', this.sliderUpHandler)
+    this.scene.input.off('pointerupoutside', this.sliderUpHandler)
+  }
+
+  private readonly sliderDownHandler = (pointer: Phaser.Input.Pointer): void => {
+    this.sliderDragging = true
+    this.updateSliderFromPointer(pointer)
+  }
+
+  private readonly sliderUpHandler = (): void => { this.sliderDragging = false }
+
+  private readonly sliderMoveHandler = (pointer: Phaser.Input.Pointer): void => {
+    if (!this.sliderVisible || !this.sliderDragging) return
+    this.updateSliderFromPointer(pointer)
+  }
+
+  /** 由指针计算滑块本地位置 → clamp → setVolume → 刷新（scrollFactor(0) 对象 .x 即屏幕坐标） */
+  private updateSliderFromPointer(pointer: Phaser.Input.Pointer): void {
+    const localX = pointer.x - this.slider.x
+    const vol = Phaser.Math.Clamp(localX / BgmControls.SLIDER_W, 0, 1)
+    this.bgm.setVolume(vol)
+    this.refresh()
+  }
+
+  /** 重绘滑块：轨道背景 + 已选填充 + 手柄圆点 */
+  private drawSlider(): void {
+    const vol = this.bgm.getVolume()
+    const W = BgmControls.SLIDER_W
+    const H = BgmControls.SLIDER_H
+    const fillW = Math.max(H, vol * W)
+    const g = this.slider
+    g.clear()
+    g.fillStyle(0x1a1f2e, 1)
+    g.fillRoundedRect(0, 0, W, H, H / 2)
+    g.fillStyle(0x5a7ab0, 1)
+    g.fillRoundedRect(0, 0, fillW, H, H / 2)
+    g.fillStyle(0xffffff, 1)
+    g.fillCircle(fillW, H / 2, 7)
+    g.lineStyle(1.5, 0x5a7ab0, 1)
+    g.strokeCircle(fillW, H / 2, 7)
+  }
+
+  /** 供 dev bridge / e2e 断言控件存在与位置 */
+  getDebugState(): Record<string, unknown> {
+    return {
+      present: true,
+      prev: { x: this.prevBtn.x, y: this.prevBtn.y },
+      next: { x: this.nextBtn.x, y: this.nextBtn.y },
+      volume: { x: this.volumeBtn.x, y: this.volumeBtn.y },
+      slider: { x: this.slider.x, y: this.slider.y },
+      sliderVisible: this.sliderVisible
+    }
   }
 }

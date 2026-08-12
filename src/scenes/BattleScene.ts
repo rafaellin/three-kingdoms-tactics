@@ -9,6 +9,7 @@ import { UNIT_DEFS } from '../data/units'
 import { BATTLE_GRID, BATTLE_OBSTACLES, ENEMY_ARMY, PLAYER_ARMY } from '../data/battleTest'
 import { MainMenuScene } from './MainMenuScene'
 import { getBgmManager } from '../audio/BgmManager'
+import { BgmControls } from '../ui/BgmControls'
 
 const SIDE_COLORS = { player: 0x33aa44, enemy: 0xcc3333 } as const
 const GRID_COLOR = 0x1a2333
@@ -50,6 +51,7 @@ export class BattleScene extends Phaser.Scene {
   private animActive: { unitId: string; path: Axial[]; idx: number; acc: number; resolve: () => void } | null = null
   private moveWaiter: (() => void) | null = null
   private enemyActing = false
+  private bgmControls: BgmControls | null = null
   private resultText!: Phaser.GameObjects.Text
   private returnButton!: Phaser.GameObjects.Text
   private logText!: Phaser.GameObjects.Text
@@ -70,6 +72,8 @@ export class BattleScene extends Phaser.Scene {
     getBgmManager(this).switchToCategory('battle')
     this.createLayers()
     this.setupBattle()
+    this.bgmControls = new BgmControls(this, getBgmManager(this))
+    this.events.once('shutdown', () => this.bgmControls?.destroy())
   }
 
   /** 直接以指定阵容/网格开局（e2e 确定性交互测试） */
@@ -636,6 +640,7 @@ export class BattleScene extends Phaser.Scene {
       ready: true,
       scene: 'battle',
       bgm: getBgmManager(this).getState(),
+      bgmControls: this.bgmControls?.getDebugState() ?? null,
       phase: state.phase,
       turn: state.turn,
       currentUnitId: state.currentUnitId,
