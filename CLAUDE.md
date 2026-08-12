@@ -61,22 +61,26 @@ pnpm lint         # 代码检查
 
 > 音频属渲染层（`src/audio/`）：不进 core / 事件日志 / 确定性回放，选曲/播放用 Math.random 无妨。
 
-**加载（Vite 构建期自动发现）**
+**加载（Vite 构建期自动发现 + LoadingScene 一次性预载）**
 - 音频放 `assets/bgm/mp3/`（背景音乐，**游戏只加载这里**）、`assets/sound/`（音效）；`assets/bgm/wav/` 是留给玩家的原声碟（**不加载**）；浏览器可播格式 wav/mp3/ogg/m4a（`.pkf` 等伴生文件自动忽略）。
-- 用 `import.meta.glob('/assets/**/*.{wav,mp3,ogg,m4a}', { query: '?url', import: 'default', eager: true })` 自动发现，**新增音频文件无需改代码**；需 `src/vite-env.d.ts`（`/// <reference types="vite/client" />`）提供类型。
-- Loader 是 **scene 级**（`scene.load`，Game 实例上没有 `load`）：`scene.load.audio(key, url)` 注册 → `scene.load.start()` 异步加载（不阻塞开局）→ `scene.load.once('complete', …)` 完成回调。
+- 用 `import.meta.glob` 自动发现（`query: '?url', import: 'default', eager: true`），**新增音频文件无需改代码**；需 `src/vite-env.d.ts`（`/// <reference types="vite/client" />`）提供类型。
+- **音频由 `LoadingScene`（第一个场景）一次性预载**进 Phaser 全局缓存（`scene.load.audio(key, url)` → `scene.load.start()`），加载完成后各场景直接读 `game.cache.audio` 不再自行解码；`SfxManager.load()` 已是 no-op。
 
 **播放（Phaser 声音系统）**
 - `scene.sound` / `game.sound` 是**共享的全局声音管理器**（WebAudio / HTML5Audio / NoAudio 三种实现），场景内 `this.sound` 即全局。
 - `sound.add(key, config)` 创建**独立声音实例**（每实例自带 volume/loop 等），`play()` 播放；**多个声音可同时播放（BGM + 音效并发）**，WebAudio 混音。
 - `SoundConfig`：`{ volume: 0~1, loop, rate, mute, seek, delay, pan, … }`。
 - 全局：`sound.volume`、`sound.mute`、`sound.locked`（浏览器是否锁定音频）、`sound.unlock()`（三种实现均公开可调）。
-- **自动播放策略**：WebAudio 需首次用户手势内触发。Phaser 会在首次 input 事件自动解锁；稳妥做法是在首次 pointerdown/keydown 里主动 `sound.unlock()` + 起播。
+- **自动播放策略**：WebAudio 需首次用户手势内触发。`BgmManager.unlock()` 调用 `game.sound.unlock()`（幂等）并安装 document body 首次手势监听；若加载完成时 `sound.locked` 为 true，`LoadingScene` 显示「点击进入」按钮，单击后解锁并起播主题曲进入主菜单。
 - **坑**：`BaseSound` 类型上没有 `setVolume`（只有具体实现 WebAudioSound / HTML5AudioSound 有）；运行时 `sound.add()` 返回的实例必为二者之一，用 `src/audio/sound.ts` 的 `setSoundVolume()` 收窄调用。
 
 **约定**
-- BGM：`src/audio/BgmManager.ts`，默认音量 10%（`DEFAULT_BGM_VOLUME = 0.1`，宁小勿吵），首次交互后把全部曲目排成 playlist 顺序播放、循环整个 playlist；**主题曲固定第一首**（配置在 `src/data/bgmConfig.json`，`themeSong` = 音频文件名去扩展名，如 `"Neon Jade"`；找不到该曲目则无主题曲、全随机）。洗牌/推进/主题曲优先纯逻辑在 `src/audio/playlist.ts`。
-- 移动音效：`src/audio/SfxManager.ts`，`animateMove` 开始时 `playLooped('hero move')`、结束（finally）`stopLooped()`，默认音量 0.3。
+- BGM：`src/audio/BgmManager.ts`，游戏级共享单例（`getBgmManager(scene)` 获取，模块级实例；不再 `new BgmManager(scene)`），默认音量 10%（`DEFAULT_BGM_VOLUME = 0.1`，宁小勿吵）。
+  - 配置 `src/data/bgmConfig.json`：`categories.menu/explore/battle` 三分类，各自 playlist 统一洗牌 → 顺序播放 → 循环；**menu 分类为单曲（`["Neon Jade"]`）即主题曲无缝 loop**；不再使用 `themeSong` 字段。
+  - 曲目切换监听：`addTrackListener/removeTrackListener`（供 `BgmControls` UI 刷新；旧 `setTrackChangeCallback` 已移除）。
+  - 洗牌/推进逻辑在 `src/audio/playlist.ts`（纯函数，可单测）；`buildPlaylist(tracks, theme, rng)`（themeSong 优先版）已废弃但保留（有单测）。
+- 共享控件：`src/ui/BgmControls.ts`（上一首/曲名♪/下一首/音量按钮+滑块），Adventure（UI 相机 uiOnly）与 Battle 左下角复用；`destroy()` 注销 BGM 监听。
+- 移动音效：`src/audio/SfxManager.ts`，`animateMove` 开始时 `playLooped('hero move')`、结束（finally）`stopLooped()`，默认音量 0.3；音频由 LoadingScene 预载，构造时直接检查 `game.cache.audio`，`load()` 为兼容 no-op。
 - 音量控制走各自 `setVolume`；未来"设置"界面（见 PRD todo）接线；dev bridge 已暴露 `setBgmVolume` / `setSfxVolume` 与 `getState().bgm / .sfx` 供 e2e / 调试。
 
 ## 调试 / 回归工作流
