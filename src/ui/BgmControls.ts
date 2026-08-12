@@ -39,6 +39,7 @@ export class BgmControls {
     this.label = wrap(scene.add.text(this.prevBtn.x + this.prevBtn.width + 6, y, '', labelStyle).setDepth(12).setScrollFactor(0).setPadding(14, 8))
     this.nextBtn = wrap(scene.add.text(this.label.x + this.label.width + 6, y, '>', btnStyle).setDepth(12).setScrollFactor(0).setPadding(14, 8).setInteractive({ useHandCursor: true }))
     this.volumeBtn = wrap(scene.add.text(this.nextBtn.x + this.nextBtn.width + 6, y, '\u{1F50A}', btnStyle).setDepth(12).setScrollFactor(0).setPadding(14, 8).setInteractive({ useHandCursor: true }))
+    // x=0 是临时占位，refresh() 中立即修正为 volumeBtn 右侧
     this.slider = wrap(scene.add.graphics().setPosition(0, y + 12).setDepth(13).setScrollFactor(0).setVisible(false))
 
     this.prevBtn.on('pointerdown', () => { this.bgm.prevTrack(); this.refresh() })

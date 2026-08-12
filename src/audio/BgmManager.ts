@@ -2,6 +2,7 @@ import type Phaser from 'phaser'
 import { setSoundVolume } from './sound'
 import { buildShuffledPlaylist, nextTrackIndex, prevTrackIndex } from './playlist'
 import BGM_CONFIG from '../data/bgmConfig.json'
+import { BGM_URLS, baseKey } from './assetKeys'
 
 /**
  * 背景音乐管理器（渲染层，游戏级共享单例）。
@@ -24,13 +25,6 @@ export type BgmCategory = 'menu' | 'explore' | 'battle'
 
 /** 默认 BGM 音量（0~1）：10%。 */
 export const DEFAULT_BGM_VOLUME = 0.1
-
-/** 只扫 assets/bgm/mp3/（assets/bgm/wav/ 是原声碟，不加载）；.pkf 等伴生文件自动忽略 */
-const BGM_URLS = import.meta.glob('/assets/bgm/mp3/*.{wav,mp3,ogg,m4a}', {
-  query: '?url',
-  import: 'default',
-  eager: true
-}) as Record<string, string>
 
 /** 对外暴露的 BGM 状态（dev bridge / e2e 断言用） */
 export interface BgmState {
@@ -66,7 +60,7 @@ export class BgmManager {
   private readonly trackListeners = new Set<() => void>()
 
   constructor(private readonly game: Phaser.Game) {
-    this.keys = Object.keys(BGM_URLS).map(BgmManager.baseKey)
+    this.keys = Object.keys(BGM_URLS).map(baseKey)
     // LoadingScene 预载完成 → 全局缓存全部就绪
     this.ready = this.keys.length === 0 || this.keys.every((k) => this.game.cache.audio.has(k))
   }
@@ -183,11 +177,6 @@ export class BgmManager {
     }
   }
 
-  /** 路径 → 缓存 key：取文件名（去扩展名），如 '/assets/bgm/mp3/Neon Jade.mp3' → 'Neon Jade' */
-  private static baseKey(path: string): string {
-    const file = path.split('/').pop() ?? path
-    return file.replace(/\.[^.]+$/, '')
-  }
 }
 
 let instance: BgmManager | null = null

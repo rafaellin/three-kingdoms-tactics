@@ -1,5 +1,6 @@
 import type Phaser from 'phaser'
 import { setSoundVolume } from './sound'
+import { SFX_URLS, baseKey } from './assetKeys'
 
 /**
  * 音效管理器（渲染层）。
@@ -15,13 +16,6 @@ import { setSoundVolume } from './sound'
 
 /** 默认音效音量（0~1）；未来"设置"界面调整 */
 export const DEFAULT_SFX_VOLUME = 0.3
-
-/** 浏览器可播放的音频扩展名（.pkf 等伴生文件自动忽略） */
-const SFX_URLS: Record<string, string> = import.meta.glob('/assets/sound/*.{wav,mp3,ogg,m4a}', {
-  query: '?url',
-  import: 'default',
-  eager: true
-})
 
 /** 对外暴露的音效状态（dev bridge / e2e 断言用） */
 export interface SfxState {
@@ -42,7 +36,7 @@ export class SfxManager {
 
   constructor(private readonly scene: Phaser.Scene) {
     for (const [path] of Object.entries(SFX_URLS)) {
-      const key = SfxManager.baseKey(path)
+      const key = baseKey(path)
       this.keys.add(key)
     }
     // 音频由 LoadingScene 预载进全局缓存 → 构造即可用（无需再加载）
@@ -54,12 +48,6 @@ export class SfxManager {
   /** 兼容旧调用：音频已由 LoadingScene 预载，无需再加载 */
   load(): Promise<void> {
     return Promise.resolve()
-  }
-
-  /** 路径 → 缓存 key：取文件名（去扩展名），如 '/assets/sound/hero move.wav' → 'hero move' */
-  private static baseKey(path: string): string {
-    const file = path.split('/').pop() ?? path
-    return file.replace(/\.[^.]+$/, '')
   }
 
   /** 循环播放一个音效（如移动脚步）；未就绪或已有循环音效时忽略 */

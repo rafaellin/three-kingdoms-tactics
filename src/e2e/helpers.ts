@@ -38,8 +38,10 @@ export async function gotoBooted(page: Page): Promise<void> {
     const g = (window as { __game?: { getState(): DebugState } }).__game
     return g?.getState()?.menu?.buttonsEnabled === true
   })
-  // readState 调用 flush CDP 桥接，确保后续 click + waitForFunction 不会因
-  // raf 轮询与 Phaser 场景切换的竞态而卡死
+  // readState 通过 page.evaluate → CDP Runtime.evaluate 强制一次同步往返，
+  // 将 Phaser 场景内 setInteractive / 场景切换等副作用排空（Phaser 的 input enable
+  // 与场景生命周期在内部排队到下一帧微任务），确保后续 page.mouse.click 操作在
+  // 目标元素已就绪的 DOM/input 状态下执行，消除竞态。
   await readState(page)
 }
 

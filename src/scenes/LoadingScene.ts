@@ -1,32 +1,15 @@
 import Phaser from 'phaser'
 import { MainMenuScene } from './MainMenuScene'
 import { getBgmManager, type BgmManager } from '../audio/BgmManager'
-
-/** 图标资源（key = 文件名去扩展名，与旧 AdventureScene.preload 一致） */
-const ICON_URLS = import.meta.glob('/assets/icons/*.png', {
-  query: '?url',
-  import: 'default',
-  eager: true
-}) as Record<string, string>
-
-/** BGM（只扫 assets/bgm/mp3/；wav/ 原声碟不加载） */
-const BGM_URLS = import.meta.glob('/assets/bgm/mp3/*.{wav,mp3,ogg,m4a}', {
-  query: '?url',
-  import: 'default',
-  eager: true
-}) as Record<string, string>
-
-/** 音效 */
-const SFX_URLS = import.meta.glob('/assets/sound/*.{wav,mp3,ogg,m4a}', {
-  query: '?url',
-  import: 'default',
-  eager: true
-}) as Record<string, string>
+import { BGM_URLS, SFX_URLS, ICON_URLS, baseKey } from '../audio/assetKeys'
 
 /**
  * 加载页（渲染层）：第一个场景，一次性预载 icon / BGM / SFX 进 Phaser 全局缓存，
- * 之后各场景直接读缓存不再重复解码。加载完成后自动进入主菜单。
- * （Task 2 将在此加入主题曲自动播放 / OK 按钮逻辑。）
+ * 之后各场景直接读缓存不再重复解码。
+ *
+ * 加载完成后：
+ * - 若音频未被浏览器锁定 → 直接起播主题曲并进入主菜单；
+ * - 若音频被锁定 → 显示「点击进入」按钮，首次点击手势内解锁音频并起播主题曲。
  */
 export class LoadingScene extends Phaser.Scene {
   static readonly KEY = 'Loading'
@@ -54,13 +37,13 @@ export class LoadingScene extends Phaser.Scene {
       .setOrigin(0.5)
 
     for (const [path, url] of Object.entries(ICON_URLS)) {
-      this.load.image(LoadingScene.baseKey(path), url)
+      this.load.image(baseKey(path), url)
     }
     for (const [path, url] of Object.entries(BGM_URLS)) {
-      this.load.audio(LoadingScene.baseKey(path), url)
+      this.load.audio(baseKey(path), url)
     }
     for (const [path, url] of Object.entries(SFX_URLS)) {
-      this.load.audio(LoadingScene.baseKey(path), url)
+      this.load.audio(baseKey(path), url)
     }
 
     this.load.on('progress', (v: number) => {
@@ -80,7 +63,10 @@ export class LoadingScene extends Phaser.Scene {
   create(): void {
     const bgm = getBgmManager(this)
     if (!this.sound.locked) {
-      // 已有用户手势 → 音频可直接播：直接起播主题曲并进入主菜单
+      // 已有用户手势 → 音频可直接播：直接起播主题曲并进入主菜单。
+      // bgm.unlock() 先于 switchToCategory，确保 BgmManager.unlocked 已置 true，
+      // 这样即使 sound.locked 仅在本次手势刚清（时序上先读后写），
+      // switchToCategory 也走的是已解锁分支，不会把起播推迟到下一次手势。
       bgm.unlock()
       bgm.switchToCategory('menu')
       this.scene.start(MainMenuScene.KEY)
@@ -119,9 +105,4 @@ export class LoadingScene extends Phaser.Scene {
     }
   }
 
-  /** 路径 → 缓存 key：取文件名（去扩展名），如 '/assets/icons/town.png' → 'town' */
-  private static baseKey(path: string): string {
-    const file = path.split('/').pop() ?? path
-    return file.replace(/\.[^.]+$/, '')
-  }
 }

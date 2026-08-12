@@ -64,7 +64,8 @@ export function installDevBridge(game: Phaser.Game): DebugBridge {
       await battle()?.waitForMove()
     },
     setBgmVolume(volume) {
-      const scene = (adventure() ?? battle() ?? menu() ?? loading())!
+      const scene = adventure() ?? battle() ?? menu() ?? loading()
+      if (!scene) return
       getBgmManager(scene).setVolume(volume)
     },
     setSfxVolume(volume) {

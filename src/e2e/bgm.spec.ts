@@ -79,7 +79,9 @@ test('BGM：战斗测试 → battle 分类 + 左下角控件交互（音量滑�
     })
   const c = await getControls()
   expect(c.present).toBe(true)
-  expect((await getBgm(page)).currentCategory).toBe('battle')
+  const bgmState = await getBgm(page)
+  expect(bgmState.currentCategory).toBe('battle')
+  expect(bgmState.playlist?.length).toBe(BGM_CONFIG.categories.battle.length)
 
   // 点音量按钮 → 滑块出现 → 点滑块中部 → 音量约 50%
   // 点击按钮中央而非左上角：Text 默认 origin(0,0)，x/y 为左上角；按钮含 padding 14×8、fontSize 20px → 中心 ≈ (x+24, y+18)
