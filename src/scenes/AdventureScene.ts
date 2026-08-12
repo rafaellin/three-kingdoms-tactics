@@ -1008,6 +1008,7 @@ export class AdventureScene extends Phaser.Scene {
     for (const v of Object.values(fog)) counts[v]++
     return {
       ready: !!state.map,
+      scene: 'adventure',
       hexesRendered: state.map?.hexes.length ?? 0,
       seed: this.seed,
       resolution: { width: this.scale.width, height: this.scale.height },

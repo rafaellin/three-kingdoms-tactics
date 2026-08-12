@@ -1,10 +1,10 @@
 import { expect, test, type Page } from '@playwright/test'
+import { gotoBattle } from './helpers'
 
 /**
  * 战斗 e2e：主菜单入口 + startBattle 确定性交互（刀剑冲锋/反击、远程满额/半额、移动即行动、信息面板、胜负循环）。
  * 模型无多模态：断言一律程序化（window.__game.getState()）；截图仅供人工目检。
  */
-const MENU_BATTLE = { x: 960, y: 734 }
 const SKIP = { x: 1880, y: 1040 }
 const RETURN = { x: 960, y: 580 }
 
@@ -64,9 +64,7 @@ const setAnimationSpeed = (page: Page, ms: number) =>
   page.evaluate((v) => (window as { __game?: { setAnimationSpeed(n: number): void } }).__game?.setAnimationSpeed(v), ms)
 
 test('主菜单 → 战斗测试：矩形战场 + 障碍物 + 7 单位', async ({ page }) => {
-  await page.goto('/')
-  await page.waitForSelector('canvas', { state: 'attached' })
-  await page.mouse.click(MENU_BATTLE.x, MENU_BATTLE.y)
+  await gotoBattle(page)
   await waitBattleReady(page)
   const s = await getState(page)
   expect(s.grid).toEqual(expect.objectContaining({ cols: 13, rows: 9 }))
@@ -77,9 +75,7 @@ test('主菜单 → 战斗测试：矩形战场 + 障碍物 + 7 单位', async (
 })
 
 test('近战：边界刀剑 → 点击冲锋 + 全伤反击', async ({ page }) => {
-  await page.goto('/')
-  await page.waitForSelector('canvas', { state: 'attached' })
-  await page.mouse.click(MENU_BATTLE.x, MENU_BATTLE.y)
+  await gotoBattle(page)
   await waitBattleReady(page)
   await setAnimationSpeed(page, 0)
   await startBattle(page,
@@ -109,9 +105,7 @@ test('近战：边界刀剑 → 点击冲锋 + 全伤反击', async ({ page }) =
 })
 
 test('远程：弓（满额）/ 断箭（半额）', async ({ page }) => {
-  await page.goto('/')
-  await page.waitForSelector('canvas', { state: 'attached' })
-  await page.mouse.click(MENU_BATTLE.x, MENU_BATTLE.y)
+  await gotoBattle(page)
   await waitBattleReady(page)
   await setAnimationSpeed(page, 0)
   await startBattle(page,
@@ -143,9 +137,7 @@ test('远程：弓（满额）/ 断箭（半额）', async ({ page }) => {
 })
 
 test('移动即行动：移动后 hasActed 且轮到下一单位（AI 不介入）', async ({ page }) => {
-  await page.goto('/')
-  await page.waitForSelector('canvas', { state: 'attached' })
-  await page.mouse.click(MENU_BATTLE.x, MENU_BATTLE.y)
+  await gotoBattle(page)
   await waitBattleReady(page)
   await setAnimationSpeed(page, 0)
   await startBattle(page,
@@ -165,9 +157,7 @@ test('移动即行动：移动后 hasActed 且轮到下一单位（AI 不介入�
 })
 
 test('信息面板：hover 部队 → 兵种/数量/伤兵剩余血', async ({ page }) => {
-  await page.goto('/')
-  await page.waitForSelector('canvas', { state: 'attached' })
-  await page.mouse.click(MENU_BATTLE.x, MENU_BATTLE.y)
+  await gotoBattle(page)
   await waitBattleReady(page)
   await setAnimationSpeed(page, 0)
   await startBattle(page,
@@ -186,9 +176,7 @@ test('信息面板：hover 部队 → 兵种/数量/伤兵剩余血', async ({ p
 })
 
 test('默认战斗：反复跳过 → AI 冲锋/射击 → 战败 → 返回主菜单', async ({ page }) => {
-  await page.goto('/')
-  await page.waitForSelector('canvas', { state: 'attached' })
-  await page.mouse.click(MENU_BATTLE.x, MENU_BATTLE.y)
+  await gotoBattle(page)
   await waitBattleReady(page)
   let guard = 0
   let s: DebugGameState = await getState(page)
@@ -200,7 +188,8 @@ test('默认战斗：反复跳过 → AI 冲锋/射击 → 战败 → 返回主�
   expect(s.phase).toBe('lost')
   await page.screenshot({ path: 'screenshots/battle-result-lost.png' })
   await page.mouse.click(RETURN.x, RETURN.y)
-  await page.waitForFunction(
-    () => (window as { __game?: { getState(): DebugGameState } }).__game?.getState()?.ready === false
-  )
+  await page.waitForFunction(() => {
+    const s = (window as { __game?: { getState(): DebugGameState } }).__game?.getState()
+    return s?.scene === 'menu'
+  })
 })

@@ -1,6 +1,8 @@
 import type Phaser from 'phaser'
 import type { AdventureScene } from '../scenes/AdventureScene'
 import type { BattleScene } from '../scenes/BattleScene'
+import type { MainMenuScene } from '../scenes/MainMenuScene'
+import type { LoadingScene } from '../scenes/LoadingScene'
 import type { BattleArmyConfig } from '../core/battle/types'
 import type { Axial } from '../core/hex/HexGrid'
 
@@ -33,11 +35,15 @@ declare global {
 export function installDevBridge(game: Phaser.Game): DebugBridge {
   const adventure = () => game.scene.getScene('Adventure') as AdventureScene | null
   const battle = () => game.scene.getScene('Battle') as BattleScene | null
+  const menu = () => game.scene.getScene('MainMenu') as MainMenuScene | null
+  const loading = () => game.scene.getScene('Loading') as LoadingScene | null
 
-  /** 战斗激活返回战斗；否则大地图；主菜单/未就绪返回 null */
+  /** 按活动场景返回其 getDebugState；Loading/MainMenu 也有状态（loading 进度、菜单按钮启用） */
   const getActive = (): { getDebugState(): Record<string, unknown> } | null => {
     if (battle()?.scene.isActive()) return battle()
     if (adventure()?.scene.isActive()) return adventure()
+    if (menu()?.scene.isActive()) return menu()
+    if (loading()?.scene.isActive()) return loading()
     return null
   }
 
