@@ -3,6 +3,7 @@ import { CommandLog } from '../core/events/CommandLog'
 import { battleReducer, createInitialBattleState } from '../core/battle/battleReducer'
 import { planEnemyAction } from '../core/battle/ai'
 import { battleFindPath, battleReachableArea, inBattleGrid } from '../core/battle/pathing'
+import { canRetaliate } from '../core/battle/battleReducer'
 import { occupiedHexes, woundedHp, type BattleArmyConfig, type BattleState, type BattleUnit } from '../core/battle/types'
 import { hexDistance, hexKey, hexNeighbor, HexLayout, type Axial, type HexDir } from '../core/hex/HexGrid'
 import { UNIT_DEFS } from '../data/units'
@@ -203,11 +204,11 @@ export class BattleScene extends Phaser.Scene {
     this.cameras.main.centerOn((minX + maxX) / 2, (minY + maxY) / 2)
   }
 
-  /** 画单位（1×2 画两格）、数量文本 */
+  /** 画单位（1×2 画两格）、数量文本；含反击打灭单位的幽灵（反击播完前保留显示） */
   private drawUnits(): void {
     this.unitGraphics.clear()
     const seen = new Set<string>()
-    for (const unit of this.state.units) {
+    const draw = (unit: Pick<BattleUnit, 'id' | 'side' | 'defId' | 'count' | 'size' | 'position'>): void => {
       const pos = this.visualPos.get(unit.id) ?? unit.position
       const def = UNIT_DEFS[unit.defId]
       const footprint = occupiedHexes({ position: pos, size: unit.size })
@@ -246,6 +247,7 @@ export class BattleScene extends Phaser.Scene {
       count.setText(String(unit.count))
       seen.add(unit.id)
     }
+    for (const unit of this.state.units) draw(unit)
     for (const [id, t] of this.unitLabels) {
       if (!seen.has(id)) {
         t.destroy()
@@ -345,10 +347,7 @@ export class BattleScene extends Phaser.Scene {
           if (path.length > 0) await this.animateMove(curId, path) // 先冲锋动画
           this.sfx?.playOnce('melee attack') // 敌方近战音效
           this.store.dispatch('battle/attack', { unitId: curId, targetId: action.targetId, to: action.to })
-          if (this.state.phase === 'combat' && this.state.currentUnitId === curId) {
-            this.store.dispatch('battle/endTurn', { unitId: curId })
-          }
-          await this.resolveMelee(hpBefore, posBefore, curId, action.to) // 主攻闪目标；反击停顿后闪反击方+音效
+          await this.resolveMelee(hpBefore, posBefore, curId, action.targetId, action.to, before.size) // 主攻闪目标；反击分段
         } else if (action.type === 'shoot') {
           const hpBefore = new Map(this.state.units.map((u) => [u.id, u.hpLeft] as const))
           const posBefore = new Map(this.state.units.map((u) => [u.id, { pos: u.position, size: u.size }] as const))
@@ -612,7 +611,7 @@ export class BattleScene extends Phaser.Scene {
       if (path.length > 0) await this.animateMove(current.id, path) // 先冲锋动画，落刀再结算
       this.sfx?.playOnce('melee attack') // 近战（含远程兵近战）落刀音效
       this.store.dispatch('battle/attack', { unitId: current.id, targetId, to })
-      await this.resolveMelee(hpBefore, posBefore, current.id, to) // 主攻闪目标；反击停顿后闪反击方+音效
+      await this.resolveMelee(hpBefore, posBefore, current.id, targetId, to, current.size) // 主攻闪目标；反击分段
       this.refreshViews()
       return
     }
@@ -687,25 +686,32 @@ export class BattleScene extends Phaser.Scene {
    * 近战攻击结算（含反击）：先闪主攻目标；若攻击方被反击掉血，停顿后闪反击方 + 音效。
    * 主攻音效由调用方在 dispatch 前播放。
    */
+  /**
+   * 近战结算（分段）：主攻 `battle/attack` 已由调用方 dispatch。
+   * 这里：闪主攻目标 → 若可反击则停顿后 dispatch `battle/retaliate`（反击+推进）并闪反击方，
+   * 否则 dispatch `battle/advance` 推进。动画与数据分段一致，不超前计算。
+   */
   private async resolveMelee(
     hpBefore: Map<string, number>,
     posBefore: Map<string, { pos: Axial; size: 1 | 2 }>,
     attackerId: string,
-    attackerDest: Axial
+    targetId: string,
+    attackerDest: Axial,
+    attackerSize: 1 | 2
   ): Promise<void> {
     // 攻击结算后立即刷新：移动单位显示在落点，反击停顿期间不会"瞬移回原位"
     this.drawUnits()
     // 主攻：闪目标（排除攻击者自身）
     this.flashDamageDealt(hpBefore, posBefore, 350, new Set([attackerId]))
-    // 反击：攻击者掉血（或被打灭）→ 停顿 → 闪反击方 + 音效
-    const after = this.state.units.find((u) => u.id === attackerId)
-    const hurt = after ? after.hpLeft < (hpBefore.get(attackerId) ?? 0) : true
-    if (hurt) {
+    // 反击分段：目标存活且能反击 → 停顿后 dispatch retaliate（此刻才结算反击伤害）
+    if (this.state.phase === 'combat' && canRetaliate(this.state, targetId, attackerId)) {
       await this.sleep(this.actionGapMs)
       this.sfx?.playOnce('melee attack')
-      // 反击闪在攻击者【冲锋后落点】（而非移动前位置）
-      const size = after?.size ?? posBefore.get(attackerId)?.size ?? 1
-      this.playHitFlash(attackerDest, size)
+      this.store.dispatch('battle/retaliate', { retaliatorId: targetId, victimId: attackerId })
+      // 反击闪在攻击者【冲锋后落点】（被打灭也用落点）
+      this.playHitFlash(attackerDest, attackerSize)
+    } else if (this.state.phase === 'combat') {
+      this.store.dispatch('battle/advance')
     }
   }
 

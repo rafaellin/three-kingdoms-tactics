@@ -137,7 +137,11 @@ function dealDamage(units: BattleUnit[], victimId: string, dmg: number): BattleU
   )
 }
 
-/** 近战攻击：to=落点（默认原地）。落点必须可达（或原地）且与目标相邻；远程兵近战按 30% 攻；触发反击（全伤、每回合一次） */
+/**
+ * 近战攻击（主攻段）：to=落点（默认原地）。落点必须可达（或原地）且与目标相邻；远程兵近战按 30% 攻。
+ * 只结算主攻伤害，**不 advance、不结算反击**——反击/推进由 `battle/retaliate` / `battle/advance` 分步处理，
+ * 保证动画与数据结算一致（便于后续加士气/幸运连击暴击）。
+ */
 function attack(state: BattleState, unitId: string, targetId: string, to?: Axial): BattleState {
   const attacker = state.units.find((u) => u.id === unitId)
   const target = state.units.find((u) => u.id === targetId)
@@ -161,22 +165,38 @@ function attack(state: BattleState, unitId: string, targetId: string, to?: Axial
   units = dealDamage(units, target.id, dmg)
   const logs = [`${attacker.id} 攻击 ${target.id} 造成 ${dmg} 伤害${units.some((u) => u.id === target.id) ? '' : '（消灭）'}`]
   const phase = phaseOf(units)
+  return { ...state, units, phase, log: [...state.log, ...logs] }
+}
+
+/** 目标是否能反击攻击者（分段结算的判定）：目标存活、未反击、异侧、按体积相邻 */
+export function canRetaliate(state: BattleState, retaliatorId: string, victimId: string): boolean {
+  const retaliator = state.units.find((u) => u.id === retaliatorId)
+  const victim = state.units.find((u) => u.id === victimId)
+  if (!retaliator || !victim || retaliator.retaliated || retaliator.side === victim.side) return false
+  return occupiedHexes(retaliator).some((h) => occupiedHexes(victim).some((vh) => hexDistance(h, vh) <= 1))
+}
+
+/** 反击段：retaliator 反击 victim（全伤、每回合一次）；结算后 advance */
+function retaliate(state: BattleState, retaliatorId: string, victimId: string): BattleState {
+  const retaliator = state.units.find((u) => u.id === retaliatorId)
+  const victim = state.units.find((u) => u.id === victimId)
+  if (!retaliator || !victim || retaliator.retaliated || retaliator.side === victim.side) return state
+  if (!occupiedHexes(retaliator).some((h) => occupiedHexes(victim).some((vh) => hexDistance(h, vh) <= 1))) return state
+  const defGen = state.general[victim.side]
+  const atkGen = state.general[retaliator.side]
+  const rMult = UNIT_DEFS[retaliator.defId].range > 1 ? MELEE_ATTACK_MULT : 1
+  const rDmg = computeDamage(retaliator, victim, atkGen.atkBonus, defGen.defBonus, rMult)
+  let units = state.units.map((u) => (u.id === retaliator.id ? { ...u, retaliated: true } : u))
+  units = dealDamage(units, victim.id, rDmg)
+  const logs = [`${retaliator.id} 反击 ${victim.id} 造成 ${rDmg} 伤害${units.some((u) => u.id === victim.id) ? '' : '（消灭）'}`]
+  const phase = phaseOf(units)
   if (phase !== 'combat') return { ...state, units, phase, log: [...state.log, ...logs] }
-  let next = { ...state, units, log: [...state.log, ...logs] }
-  // 反击：目标存活、目标本回合未反击、仍在近战范围（落点相邻已保证）
-  const targetAfter = units.find((u) => u.id === target.id)
-  const attackerAfter = units.find((u) => u.id === attacker.id)
-  if (targetAfter && attackerAfter && !targetAfter.retaliated) {
-    const rMult = UNIT_DEFS[target.defId].range > 1 ? MELEE_ATTACK_MULT : 1
-    const rDmg = computeDamage(targetAfter, attackerAfter, defGen.atkBonus, atkGen.defBonus, rMult)
-    let units2 = next.units.map((u) => (u.id === target.id ? { ...u, retaliated: true } : u))
-    units2 = dealDamage(units2, attacker.id, rDmg)
-    const logs2 = [...logs, `${target.id} 反击 ${attacker.id} 造成 ${rDmg} 伤害${units2.some((u) => u.id === attacker.id) ? '' : '（消灭）'}`]
-    const phase2 = phaseOf(units2)
-    if (phase2 !== 'combat') return { ...state, units: units2, phase: phase2, log: [...state.log, ...logs2] }
-    return advance({ ...next, units: units2, log: [...state.log, ...logs2] })
-  }
-  return advance(next)
+  return advance({ ...state, units, log: [...state.log, ...logs] })
+}
+
+/** 推进到下一个未行动单位（分段结算时主攻后无反击则调用） */
+function advanceTurn(state: BattleState): BattleState {
+  return advance(state)
 }
 
 /** 远程射击：满额/半额（射程外 ×0.5）；贴身/已移动/非远程 拒绝；不触发反击 */
@@ -227,6 +247,12 @@ export const battleReducer: Reducer<BattleState> = (state, cmd: Command) => {
     }
     case 'battle/endTurn':
       return endTurn(state, (cmd.payload as { unitId: string }).unitId)
+    case 'battle/retaliate': {
+      const payload = cmd.payload as { retaliatorId: string; victimId: string }
+      return retaliate(state, payload.retaliatorId, payload.victimId)
+    }
+    case 'battle/advance':
+      return advanceTurn(state)
     case 'battle/surrender':
       return { ...state, phase: 'lost', log: [...state.log, '投降'] }
     default:

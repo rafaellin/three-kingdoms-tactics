@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'vitest'
 import { CommandLog } from '../events/CommandLog'
 import { hexKey } from '../hex/HexGrid'
-import { battleReducer, createInitialBattleState } from './battleReducer'
+import { battleReducer, canRetaliate, createInitialBattleState } from './battleReducer'
 import type { BattleArmyConfig, BattleState } from './types'
 
 const TEST_GRID = { cols: 13, rows: 9 }
@@ -131,7 +131,8 @@ describe('battle/attack（近战 v2 + 反击）', () => {
       player: { side: 'player', generalName: 'P', atkBonus: 0, defBonus: 0, units: [{ defId: 'militia', count: 20 }] },
       enemy: { side: 'enemy', generalName: 'E', atkBonus: 0, defBonus: 0, units: [{ defId: 'swordsman', count: 20 }] }
     })
-    store.dispatch('battle/attack', { unitId: 'p0', targetId: 'e0', to: { q: 2, r: 0 } })
+    store.dispatch('battle/attack', { unitId: 'p0', targetId: 'e0', to: { q: 2, r: 0 } }) // 主攻段
+    store.dispatch('battle/retaliate', { retaliatorId: 'e0', victimId: 'p0' })            // 反击段（分段结算）
     const s = store.getState()
     const t = s.units.find((u) => u.id === 'e0')!
     const a = s.units.find((u) => u.id === 'p0')!
@@ -141,7 +142,7 @@ describe('battle/attack（近战 v2 + 反击）', () => {
     expect(t.retaliated).toBe(true)
     expect(a.hpLeft).toBe(116)       // 200 - 84
     expect(a.count).toBe(12)
-    expect(s.currentUnitId).toBe('e0') // 行动完 advance 到敌方未行动单位
+    expect(s.currentUnitId).toBe('e0') // 反击段 advance 到敌方未行动单位
   })
   test('每回合每个单位只反击一次', () => {
     // 同速（民兵4=刀兵4）攻方先行 → 序 [p0,p1,e0]
@@ -153,8 +154,10 @@ describe('battle/attack（近战 v2 + 反击）', () => {
         units: [{ defId: 'militia', count: 20 }, { defId: 'militia', count: 1 }] },
       enemy: { side: 'enemy', generalName: 'E', atkBonus: 0, defBonus: 0, units: [{ defId: 'swordsman', count: 20 }] }
     })
-    store.dispatch('battle/attack', { unitId: 'p0', targetId: 'e0', to: { q: 2, r: 0 } })
-    store.dispatch('battle/attack', { unitId: 'p1', targetId: 'e0', to: { q: 3, r: 1 } })
+    store.dispatch('battle/attack', { unitId: 'p0', targetId: 'e0', to: { q: 2, r: 0 } }) // p0 主攻
+    store.dispatch('battle/retaliate', { retaliatorId: 'e0', victimId: 'p0' })            // e0 反击 p0
+    store.dispatch('battle/attack', { unitId: 'p1', targetId: 'e0', to: { q: 3, r: 1 } }) // p1 主攻
+    store.dispatch('battle/advance')                                                      // e0 已反击 → 无反击，直接推进
     const s = store.getState()
     const t = s.units.find((u) => u.id === 'e0')!
     const p1 = s.units.find((u) => u.id === 'p1')!
@@ -208,6 +211,21 @@ describe('battle/attack（近战 v2 + 反击）', () => {
     })
     store2.dispatch('battle/attack', { unitId: 'p0', targetId: 'p1', to: { q: 2, r: 0 } })  // ④ 打己方
     expect(store2.getState().units.find((u) => u.id === 'p1')).toBeDefined()
+  })
+  test('canRetaliate：贴身且未反击才可反击（分段结算判定）', () => {
+    const store = makeStore({
+      grid: { cols: 4, rows: 3 },
+      player: { side: 'player', generalName: 'P', atkBonus: 0, defBonus: 0, units: [{ defId: 'militia', count: 20 }] },
+      enemy: { side: 'enemy', generalName: 'E', atkBonus: 0, defBonus: 0, units: [{ defId: 'militia', count: 20 }] }
+    })
+    // e0 (2,0) 距 p0 (0,0) 2 → 不贴身 → 不能反击
+    expect(canRetaliate(store.getState(), 'e0', 'p0')).toBe(false)
+    // p0 冲锋到 (1,0) 贴身 e0 → e0 可反击
+    store.dispatch('battle/attack', { unitId: 'p0', targetId: 'e0', to: { q: 1, r: 0 } })
+    expect(canRetaliate(store.getState(), 'e0', 'p0')).toBe(true)
+    // e0 反击后 → 不能再反击（每回合一次）
+    store.dispatch('battle/retaliate', { retaliatorId: 'e0', victimId: 'p0' })
+    expect(canRetaliate(store.getState(), 'e0', 'p0')).toBe(false)
   })
 })
 
