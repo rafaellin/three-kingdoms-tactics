@@ -12,6 +12,7 @@ import { MainMenuScene } from './MainMenuScene'
 import { getBgmManager } from '../audio/BgmManager'
 import { SfxManager } from '../audio/SfxManager'
 import { BgmControls } from '../ui/BgmControls'
+import { OperationButtons } from '../ui/OperationButtons'
 import { fadeAndStart, fadeIn } from '../ui/fade'
 
 const SIDE_COLORS = { player: 0x33aa44, enemy: 0xcc3333 } as const
@@ -70,8 +71,7 @@ export class BattleScene extends Phaser.Scene {
   private dragging = false
   private downPos = { x: 0, y: 0 }
   private lastPointer = { x: 0, y: 0 }
-  private skipButton!: Phaser.GameObjects.Text
-  private surrenderButton!: Phaser.GameObjects.Text
+  private operationButtons: OperationButtons | null = null
   /** 受击闪白累计次数（debug / e2e 断言用） */
   private hitFlashCount = 0
   /** 音效（渲染层；移动循环 + 攻击一次性） */
@@ -85,7 +85,7 @@ export class BattleScene extends Phaser.Scene {
     super(BattleScene.KEY)
   }
 
-  create(initData?: { debugWin?: boolean }): void {
+  create(): void {
     // 场景实例被 scene.start 复用：字段默认值只在构造时初始化一次，必须在此重置跨场景残留的渲染状态
     this.visualPos.clear()
     this.dragging = false
@@ -109,17 +109,16 @@ export class BattleScene extends Phaser.Scene {
       enemy: ENEMY_ARMY,
       grid: { ...BATTLE_GRID, obstacles: BATTLE_OBSTACLES }
     })
-    // 主菜单 dev 入口：进入即判定胜利（调试结算界面用）
-    if (initData?.debugWin) {
-      this.store.dispatch('battle/debugResult', { phase: 'won' })
-    }
     getBgmManager(this).switchToCategory('battle')
     fadeIn(this)
     this.createLayers()
     this.setupBattle()
     this.bgmControls = new BgmControls(this, getBgmManager(this))
     this.sfx = new SfxManager(this)
-    this.events.once('shutdown', () => this.bgmControls?.destroy())
+    this.events.once('shutdown', () => {
+      this.bgmControls?.destroy()
+      this.operationButtons?.destroy()
+    })
   }
 
   /** 直接以指定阵容/网格开局（e2e 确定性交互测试） */
@@ -209,12 +208,13 @@ export class BattleScene extends Phaser.Scene {
       .setDepth(11)
       .setScrollFactor(0)
       .setVisible(false)
-    // 右下角按钮按当前视口定位（避免小窗口下写死的 1880/980 出画面）
-    this.skipButton = this.makeCornerButton(this.cameras.main.width - 40, this.cameras.main.height - 40, '跳过行动', () => this.endCurrentTurn())
-    this.surrenderButton = this.makeCornerButton(this.cameras.main.width - 40, this.cameras.main.height - 100, '撤退', () => this.surrender())
+    // 战斗操作按钮组（右下角：跳过行动 / 撤退；后续加 待命/防御）——统一定位、resize 重排、结算整体隐藏
+    this.operationButtons = new OperationButtons(this, [
+      { label: '跳过行动', onClick: () => this.endCurrentTurn() },
+      { label: '撤退', onClick: () => this.surrender() }
+    ])
     this.scale.on('resize', () => {
       this.centerCamera()
-      this.repositionCornerButtons()
       this.positionResult()
     })
   }
@@ -359,6 +359,8 @@ export class BattleScene extends Phaser.Scene {
     const terminal = this.state.phase !== 'combat'
     this.resultText.setVisible(terminal)
     this.returnButton.setVisible(terminal)
+    // 结算时隐藏战斗操作按钮（跳过行动 / 撤退）
+    this.operationButtons?.setVisible(!terminal)
     if (terminal) {
       this.resultText.setText(this.state.phase === 'won' ? '胜利' : '战败')
       this.positionResult()
@@ -846,25 +848,6 @@ export class BattleScene extends Phaser.Scene {
     }
   }
 
-  private makeCornerButton(x: number, y: number, label: string, onClick: () => void): Phaser.GameObjects.Text {
-    const btn = this.add
-      .text(x, y, label, { fontFamily: 'sans-serif', fontSize: '20px', color: '#ffffff', backgroundColor: '#33415c' })
-      .setOrigin(1, 0.5)
-      .setDepth(12)
-      .setScrollFactor(0)
-      .setPadding(14, 8)
-      .setInteractive({ useHandCursor: true })
-    btn.on('pointerdown', onClick)
-    return btn
-  }
-
-  /** resize 时把右下角按钮贴到新视口右下角 */
-  private repositionCornerButtons(): void {
-    const cam = this.cameras.main
-    this.skipButton?.setPosition(cam.width - 40, cam.height - 40)
-    this.surrenderButton?.setPosition(cam.width - 40, cam.height - 100)
-  }
-
   /** 结算区（结果文字 + 返回按钮）作为整体：水平居中 + 垂直居中（组内文字/按钮各自水平居中） */
   private positionResult(): void {
     const cam = this.cameras.main
@@ -1057,6 +1040,10 @@ export class BattleScene extends Phaser.Scene {
       result: {
         camWidth: this.cameras.main.width,
         scaleWidth: this.scale.width,
+        buttons: {
+          opButtonsVisible: this.operationButtons?.isVisible() ?? null,
+          resultVisible: this.resultText?.visible ?? null
+        },
         text: this.resultText
           ? {
               x: this.resultText.x,

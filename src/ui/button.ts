@@ -12,6 +12,8 @@ export interface ButtonOptions {
   color?: string
   /** 统一宽度（px）；>0 时按钮等宽、文字居中 */
   minWidth?: number
+  /** 原点（默认居中 0.5,0.5；角落按钮用 1,0.5 右对齐） */
+  origin?: { x: number; y: number }
 }
 
 /**
@@ -33,9 +35,12 @@ export function makeButton(
     background = 0x33415c,
     hoverBackground,
     color = '#ffffff',
-    minWidth = 0
+    minWidth = 0,
+    origin
   } = opts
   const hover = hoverBackground ?? lighten(background, 0.18)
+  const originX = origin?.x ?? 0.5
+  const originY = origin?.y ?? 0.5
 
   const style: Phaser.Types.GameObjects.Text.TextStyle = {
     fontFamily: 'sans-serif',
@@ -46,7 +51,7 @@ export function makeButton(
   }
   if (minWidth > 0) style.fixedWidth = minWidth
 
-  const btn = scene.add.text(x, y, label, style).setOrigin(0.5).setPadding(20, 10)
+  const btn = scene.add.text(x, y, label, style).setOrigin(originX, originY).setPadding(20, 10)
   btn.setInteractive({ useHandCursor: true })
   btn.on('pointerover', () => btn.setStyle({ backgroundColor: css(hover) }))
   btn.on('pointerout', () => btn.setStyle({ backgroundColor: css(background) }))

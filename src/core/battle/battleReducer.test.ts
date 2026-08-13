@@ -314,19 +314,3 @@ describe('battle/shoot（远程）', () => {
     expect(s.phase).toBe('won')
   })
 })
-
-describe('battle/debugResult（调试：直接判定胜负）', () => {
-  test('判定 won：phase 变 won、单位保留、log 记调试判定', () => {
-    const store = makeStore()
-    store.dispatch('battle/debugResult', { phase: 'won' })
-    const s = store.getState()
-    expect(s.phase).toBe('won')
-    expect(s.units).toHaveLength(3)
-    expect(s.log[s.log.length - 1]).toBe('调试：判定胜利')
-  })
-  test('判定 lost：phase 变 lost', () => {
-    const store = makeStore()
-    store.dispatch('battle/debugResult', { phase: 'lost' })
-    expect(store.getState().phase).toBe('lost')
-  })
-})
