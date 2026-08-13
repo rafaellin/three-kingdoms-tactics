@@ -47,12 +47,14 @@ export class BattleScene extends Phaser.Scene {
     swordTargetId: string | null
     blinkId: string | null
   } = { ghostHex: null, swordHex: null, swordAdjHex: null, cursorKind: 'none', swordTargetId: null, blinkId: null }
-  private animationMs = 0
+  private animationMs = 150
   private visualPos = new Map<string, Axial>()
   private animQueue: { unitId: string; path: Axial[]; resolve: () => void }[] = []
   private animActive: { unitId: string; path: Axial[]; idx: number; acc: number; resolve: () => void } | null = null
   private moveWaiter: (() => void) | null = null
   private enemyActing = false
+  /** 受击闪白累计次数（debug / e2e 断言用） */
+  private hitFlashCount = 0
   private bgmControls: BgmControls | null = null
   private resultText!: Phaser.GameObjects.Text
   private returnButton!: Phaser.GameObjects.Text
@@ -272,30 +274,32 @@ export class BattleScene extends Phaser.Scene {
         const before = this.state.units.find((u) => u.id === curId) as BattleUnit
         if (action.type === 'move') {
           const path = battleFindPath(before, action.to, this.state) ?? [action.to]
+          await this.animateMove(curId, path) // 先播移动动画，动画结束才落状态
           this.store.dispatch('battle/move', { unitId: curId, to: action.to })
           const moved = this.state.units.find((u) => u.id === curId) as BattleUnit
           if (hexKey(moved.position) === hexKey(before.position)) {
             this.store.dispatch('battle/endTurn', { unitId: curId })
-          } else {
-            await this.animateMove(curId, path)
           }
         } else if (action.type === 'attack') {
           const path = hexKey(action.to) === hexKey(before.position)
             ? []
             : (battleFindPath(before, action.to, this.state) ?? [action.to])
+          const hpBefore = new Map(this.state.units.map((u) => [u.id, u.hpLeft] as const))
+          const posBefore = new Map(this.state.units.map((u) => [u.id, { pos: u.position, size: u.size }] as const))
+          if (path.length > 0) await this.animateMove(curId, path) // 先冲锋动画
           this.store.dispatch('battle/attack', { unitId: curId, targetId: action.targetId, to: action.to })
-          const afterUnit = this.state.units.find((u) => u.id === curId)
           if (this.state.phase === 'combat' && this.state.currentUnitId === curId) {
             this.store.dispatch('battle/endTurn', { unitId: curId })
           }
-          if (afterUnit && hexKey(afterUnit.position) !== hexKey(before.position) && path.length > 0) {
-            await this.animateMove(curId, path)
-          }
+          this.flashDamageDealt(hpBefore, posBefore) // 受击闪白（主攻目标 + 反击）
         } else if (action.type === 'shoot') {
+          const hpBefore = new Map(this.state.units.map((u) => [u.id, u.hpLeft] as const))
+          const posBefore = new Map(this.state.units.map((u) => [u.id, { pos: u.position, size: u.size }] as const))
           this.store.dispatch('battle/shoot', { unitId: curId, targetId: action.targetId })
           if (this.state.phase === 'combat' && this.state.currentUnitId === curId) {
             this.store.dispatch('battle/endTurn', { unitId: curId })
           }
+          this.flashDamageDealt(hpBefore, posBefore)
         } else {
           this.store.dispatch('battle/endTurn', { unitId: curId })
         }
@@ -517,7 +521,7 @@ export class BattleScene extends Phaser.Scene {
     this.infoPanel.setPosition(p.x + 16, p.y + 16).setVisible(true)
   }
 
-  private handleClick(hex: Axial): void {
+  private async handleClick(hex: Axial): Promise<void> {
     if (this.animActive || this.animQueue.length > 0) return
     const state = this.state
     const current = state.units.find((u) => u.id === state.currentUnitId)
@@ -526,13 +530,19 @@ export class BattleScene extends Phaser.Scene {
     if (this.hover.cursorKind === 'sword' && this.hover.swordTargetId && this.hover.swordHex) {
       const to = this.hover.swordHex
       const path = hexKey(to) === hexKey(current.position) ? [] : (battleFindPath(current, to, this.state) ?? [to])
+      const hpBefore = new Map(state.units.map((u) => [u.id, u.hpLeft] as const))
+      const posBefore = new Map(state.units.map((u) => [u.id, { pos: u.position, size: u.size }] as const))
+      if (path.length > 0) await this.animateMove(current.id, path) // 先冲锋动画，落刀再结算
       this.store.dispatch('battle/attack', { unitId: current.id, targetId: this.hover.swordTargetId, to })
-      if (path.length > 0) void this.animateMove(current.id, path)
+      this.flashDamageDealt(hpBefore, posBefore)
       this.refreshViews()
       return
     }
     if ((this.hover.cursorKind === 'bow' || this.hover.cursorKind === 'broken-arrow') && unitAt && unitAt.side !== current.side) {
+      const hpBefore = new Map(state.units.map((u) => [u.id, u.hpLeft] as const))
+      const posBefore = new Map(state.units.map((u) => [u.id, { pos: u.position, size: u.size }] as const))
       this.store.dispatch('battle/shoot', { unitId: current.id, targetId: unitAt.id })
+      this.flashDamageDealt(hpBefore, posBefore)
       this.refreshViews()
       return
     }
@@ -541,8 +551,8 @@ export class BattleScene extends Phaser.Scene {
     const reachable = battleReachableArea(current, state)
     if (hexKey(hex) !== hexKey(current.position) && reachable.some((h) => hexKey(h) === hexKey(hex))) {
       const path = battleFindPath(current, hex, this.state) ?? [hex]
+      await this.animateMove(current.id, path) // 先播移动动画，动画结束才落状态
       this.store.dispatch('battle/move', { unitId: current.id, to: hex })
-      void this.animateMove(current.id, path)
       this.refreshViews()
       return
     }
@@ -550,6 +560,42 @@ export class BattleScene extends Phaser.Scene {
       this.store.dispatch('battle/select', { unitId: unitAt.id })
       this.refreshViews()
       return
+    }
+  }
+
+  // ---------- 受击特效 ----------
+
+  /** 受击闪白：在目标占据格画白色半透明填充，350ms 淡出后销毁 */
+  private playHitFlash(at: Axial, size: 1 | 2): void {
+    const g = this.add.graphics().setDepth(6)
+    for (const hex of occupiedHexes({ position: at, size })) {
+      this.fillHex(g, hex, 0xffffff, 0.85)
+    }
+    this.hitFlashCount++
+    this.tweens.add({
+      targets: g,
+      alpha: 0,
+      duration: 350,
+      ease: 'Cubic.easeOut',
+      onComplete: () => g.destroy()
+    })
+  }
+
+  /**
+   * 结算一次战斗动作的受击闪白：对比攻击前后 hpLeft，谁掉血谁闪（主攻目标 + 反击目标）。
+   * 位置用攻击前的 posBefore，被消灭的单位也能闪（用最后位置）。
+   */
+  private flashDamageDealt(
+    hpBefore: Map<string, number>,
+    posBefore: Map<string, { pos: Axial; size: 1 | 2 }>
+  ): void {
+    for (const [id, prev] of hpBefore) {
+      const after = this.state.units.find((u) => u.id === id)
+      const damaged = after ? after.hpLeft < prev : true // 不在 units 里 = 本动作被消灭
+      if (damaged) {
+        const p = posBefore.get(id)
+        if (p) this.playHitFlash(p.pos, p.size)
+      }
     }
   }
 
@@ -673,6 +719,8 @@ export class BattleScene extends Phaser.Scene {
       bgmControls: this.bgmControls?.getDebugState() ?? null,
       phase: state.phase,
       turn: state.turn,
+      animating: this.animActive !== null || this.animQueue.length > 0,
+      hitFlashCount: this.hitFlashCount,
       currentUnitId: state.currentUnitId,
       selectedUnitId: state.selectedUnitId,
       grid: state.grid,

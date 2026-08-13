@@ -42,6 +42,8 @@ interface DebugGameState {
     blinkId?: string | null
   }
   infoPanelText?: string | null
+  animating?: boolean
+  hitFlashCount?: number
   units?: UnitState[]
 }
 
@@ -244,6 +246,48 @@ test('移动即行动：移动后 hasActed 且轮到下一单位（AI 不介入�
   expect(after.currentUnitId).toBe('p1') // 移动即行动 → advance 到下一个玩家单位
 })
 
+test('移动动画：默认速度先播动画、动画结束才落状态', async ({ page }) => {
+  await gotoBattle(page)
+  await waitBattleReady(page)
+  // 不设 setAnimationSpeed → 默认 150ms/格
+  await startBattle(page,
+    { side: 'player', generalName: 'P', atkBonus: 0, defBonus: 0, units: [{ defId: 'militia', count: 50 }] },
+    { side: 'enemy', generalName: 'E', atkBonus: 0, defBonus: 0, units: [{ defId: 'militia', count: 50 }] },
+    { cols: 7, rows: 3 })
+  const s = await getState(page)
+  const reach2 = s.reachable!.find((h) => h.q === 2 && h.r === 0)! // 2 格远，动画窗口 ~300ms
+  await page.mouse.click(reach2.screen.x, reach2.screen.y)
+  // 关键断言：p0 移动动画进行中，core 状态尚未更新（先动画、后 dispatch）
+  await page.waitForFunction(() => {
+    const st = (window as { __game?: { getState(): DebugGameState } }).__game?.getState()
+    return st?.animating === true && st.units?.find((u) => u.id === 'p0')?.position.q === 0
+  })
+  const during = await getState(page)
+  expect(during.units!.find((u) => u.id === 'p0')!.position).toEqual({ q: 0, r: 0 })
+  // 动画结束 → 状态才更新到目标格
+  await page.waitForFunction(() => {
+    const st = (window as { __game?: { getState(): DebugGameState } }).__game?.getState()
+    return st?.units?.find((u) => u.id === 'p0')?.position.q === 2
+  })
+  const after = await getState(page)
+  expect(after.units!.find((u) => u.id === 'p0')!.position).toEqual({ q: 2, r: 0 })
+})
+
+test('攻击命中触发受击闪白（hitFlashCount 递增）', async ({ page }) => {
+  await gotoBattle(page)
+  await waitBattleReady(page)
+  await setAnimationSpeed(page, 0)
+  await startBattle(page,
+    { side: 'player', generalName: 'P', atkBonus: 0, defBonus: 0, units: [{ defId: 'militia', count: 20 }] },
+    { side: 'enemy', generalName: 'E', atkBonus: 0, defBonus: 0, units: [{ defId: 'militia', count: 20 }] },
+    { cols: 3, rows: 3 }) // p0 (0,0) 与 e0 (1,0) 贴身
+  const before = (await getState(page)).hitFlashCount ?? 0
+  const e0 = (await getState(page)).units!.find((u) => u.id === 'e0')!
+  await page.mouse.click(e0.screen.x, e0.screen.y) // 原地攻击
+  const after = await getState(page)
+  expect(after.hitFlashCount ?? 0).toBeGreaterThan(before)
+})
+
 test('信息面板：hover 部队 → 兵种/数量/伤兵剩余血', async ({ page }) => {
   await gotoBattle(page)
   await waitBattleReady(page)
@@ -266,6 +310,7 @@ test('信息面板：hover 部队 → 兵种/数量/伤兵剩余血', async ({ p
 test('默认战斗：反复跳过 → AI 冲锋/射击 → 战败 → 返回主菜单', async ({ page }) => {
   await gotoBattle(page)
   await waitBattleReady(page)
+  await setAnimationSpeed(page, 0) // 固定瞬时动画，聚焦 AI 行为结果（新默认 150ms 会让本测变慢）
   let guard = 0
   let s: DebugGameState = await getState(page)
   while (s.phase === 'combat' && guard++ < 120) {
