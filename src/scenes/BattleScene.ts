@@ -85,14 +85,29 @@ export class BattleScene extends Phaser.Scene {
   }
 
   create(): void {
+    // 场景实例被 scene.start 复用：字段默认值只在构造时初始化一次，必须在此重置跨场景残留的渲染状态
+    this.visualPos.clear()
+    this.dragging = false
+    this.downPos = { x: 0, y: 0 }
+    this.lastPointer = { x: 0, y: 0 }
+    this.busy = false
+    this.enemyActing = false
+    this.moveWaiter = null
+    this.animActive = null
+    this.animQueue.length = 0
+    this.logBuffer = []
+    this.logFlushed = 0
+    this.hitFlashCount = 0
+    this.hover = { ghostHex: null, swordHex: null, swordAdjHex: null, cursorKind: 'none', swordTargetId: null, blinkId: null }
+    this.blinkPhase = 0
+    this.unitLabels.clear()
+    this.unitCounts.clear()
     this.store = new CommandLog<BattleState>(createInitialBattleState(), battleReducer)
     this.store.dispatch('battle/init', {
       player: PLAYER_ARMY,
       enemy: ENEMY_ARMY,
       grid: { ...BATTLE_GRID, obstacles: BATTLE_OBSTACLES }
     })
-    this.enemyActing = false
-    this.moveWaiter = null
     getBgmManager(this).switchToCategory('battle')
     this.createLayers()
     this.setupBattle()
@@ -422,6 +437,8 @@ export class BattleScene extends Phaser.Scene {
     // 若场景启动时指针仍按下，说明该 pointerup 属于旧场景的点击：吞掉它（只吞一次）。
     let swallowStaleUp = this.input.activePointer.isDown
     this.input.on('pointerdown', (p: Phaser.Input.Pointer) => {
+      // 点在 UI 控件（跳过/撤退/BGM 音量条等）上 → 不启动地图拖拽（与 pointerup 一致）
+      if (this.input.hitTestPointer(p).length > 0) return
       // 记录按下点：用于区分「点击」与「拖拽平移相机」
       this.dragging = true
       this.downPos = { x: p.x, y: p.y }

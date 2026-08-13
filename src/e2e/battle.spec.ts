@@ -6,6 +6,7 @@ import { gotoBattle, gotoBooted, MENU_BATTLE } from './helpers'
  * 模型无多模态：断言一律程序化（window.__game.getState()）；截图仅供人工目检。
  */
 const SKIP = { x: 1880, y: 1040 }
+const SURRENDER = { x: 1880, y: 980 }
 const RETURN = { x: 960, y: 580 }
 
 interface UnitState {
@@ -44,6 +45,7 @@ interface DebugGameState {
     blinkId?: string | null
   }
   infoPanelText?: string | null
+  menu?: { buttonsEnabled?: boolean }
   log?: string[]
   camera?: { scrollX?: number; scrollY?: number }
   animating?: boolean
@@ -516,4 +518,48 @@ test('默认战斗：反复跳过 → AI 冲锋/射击 → 战败 → 返回主�
     const s = (window as { __game?: { getState(): DebugGameState } }).__game?.getState()
     return s?.scene === 'menu'
   })
+})
+
+test('撤退后重新进入：战斗状态/相机/拖拽状态全部重置（无跨场景残留）', async ({ page }) => {
+  await gotoBattle(page)
+  await waitBattleReady(page)
+  await setAnimationSpeed(page, 0)
+  const initial = (await getState(page)).camera!
+  // 移动一个单位 + 拖拽相机，制造状态
+  let s = await getState(page)
+  const reach1 = s.reachable!.find((h) => h.q === 1 && h.r === 0)!
+  await page.mouse.click(reach1.screen.x, reach1.screen.y)
+  await page.mouse.move(960, 540)
+  await page.mouse.down()
+  await page.mouse.move(1100, 640, { steps: 5 })
+  await page.mouse.up()
+  // 撤退 → 结果界面 → 返回主菜单
+  await page.mouse.click(SURRENDER.x, SURRENDER.y)
+  await page.waitForFunction(() => {
+    const st = (window as { __game?: { getState(): DebugGameState } }).__game?.getState()
+    return st?.phase === 'lost'
+  })
+  await page.mouse.click(RETURN.x, RETURN.y)
+  await page.waitForFunction(() => {
+    const st = (window as { __game?: { getState(): DebugGameState } }).__game?.getState()
+    return st?.scene === 'menu' && st?.menu?.buttonsEnabled === true
+  })
+  await page.waitForTimeout(1500) // 等场景切换完全稳定（否则紧贴的点击可能落在切换中的输入上）
+  // 重新进入战斗
+  await page.mouse.click(MENU_BATTLE.x, MENU_BATTLE.y)
+  await waitBattleReady(page)
+  const fresh = await getState(page)
+  // 状态重置：p0 回出生位、未行动；当前单位 = 骑兵（速度 9 最先）
+  expect(fresh.currentUnitId).toBe('p3')
+  expect(fresh.units!.find((u) => u.id === 'p0')!.position).toEqual({ q: 0, r: 0 })
+  expect(fresh.units!.find((u) => u.id === 'p0')!.hasActed).toBe(false)
+  // 相机重置回初始（无残留偏移）
+  expect(fresh.camera!.scrollX).toBe(initial.scrollX)
+  expect(fresh.camera!.scrollY).toBe(initial.scrollY)
+  // 拖拽状态重置：轻微移动鼠标不应平移相机（若 dragging 残留则会平移）
+  const camBefore = (await getState(page)).camera!
+  await page.mouse.move(900, 500)
+  const camAfter = (await getState(page)).camera!
+  expect(camAfter.scrollX).toBe(camBefore.scrollX)
+  expect(camAfter.scrollY).toBe(camBefore.scrollY)
 })
