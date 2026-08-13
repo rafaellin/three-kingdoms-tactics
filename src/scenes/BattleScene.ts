@@ -41,10 +41,12 @@ export class BattleScene extends Phaser.Scene {
   private hover: {
     ghostHex: Axial | null
     swordHex: Axial | null
+    /** 刀剑绘制锚点：攻击方体积内与目标相邻的体格（1×2 贴身时为东邻格，而非主体格） */
+    swordAdjHex: Axial | null
     cursorKind: 'sword' | 'bow' | 'broken-arrow' | 'move' | 'none'
     swordTargetId: string | null
     blinkId: string | null
-  } = { ghostHex: null, swordHex: null, cursorKind: 'none', swordTargetId: null, blinkId: null }
+  } = { ghostHex: null, swordHex: null, swordAdjHex: null, cursorKind: 'none', swordTargetId: null, blinkId: null }
   private animationMs = 0
   private visualPos = new Map<string, Axial>()
   private animQueue: { unitId: string; path: Axial[]; resolve: () => void }[] = []
@@ -351,6 +353,7 @@ export class BattleScene extends Phaser.Scene {
     this.updateInfoPanel(unitAt ?? null)
     this.hover.ghostHex = null
     this.hover.swordHex = null
+    this.hover.swordAdjHex = null
     this.hover.swordTargetId = null
     this.hover.blinkId = null
     this.hover.cursorKind = 'none'
@@ -472,7 +475,12 @@ export class BattleScene extends Phaser.Scene {
   private drawSword(dest: Axial, targetId: string): void {
     const target = this.state.units.find((u) => u.id === targetId)
     if (!target) return
-    const dPos = this.layout.hexToPixel(dest)
+    const attacker = this.state.units.find((u) => u.id === this.state.currentUnitId)
+    // 刀剑锚在攻击方体积内与目标相邻的体格上（贴身 1×2 时画在「东邻格↔敌军」边界，而非主体格内）
+    const body = attacker ? occupiedHexes({ position: dest, size: attacker.size }) : [dest]
+    const adj = body.find((h) => occupiedHexes(target).some((uh) => hexDistance(h, uh) <= 1)) ?? dest
+    this.hover.swordAdjHex = adj
+    const dPos = this.layout.hexToPixel(adj)
     const tPos = this.layout.hexToPixel(target.position)
     const mid = { x: (dPos.x + tPos.x) / 2, y: (dPos.y + tPos.y) / 2 }
     const ang = Math.atan2(tPos.y - dPos.y, tPos.x - dPos.x)
@@ -675,6 +683,7 @@ export class BattleScene extends Phaser.Scene {
       hover: {
         ghostHex: this.hover.ghostHex,
         swordHex: this.hover.swordHex,
+        swordAdjHex: this.hover.swordAdjHex,
         cursorKind: this.hover.cursorKind,
         swordTargetId: this.hover.swordTargetId,
         blinkId: this.hover.blinkId

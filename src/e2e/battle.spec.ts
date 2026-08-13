@@ -37,6 +37,8 @@ interface DebugGameState {
     ghostHex?: { q: number; r: number } | null
     cursorKind?: string
     swordTargetId?: string | null
+    swordHex?: { q: number; r: number } | null
+    swordAdjHex?: { q: number; r: number } | null
     blinkId?: string | null
   }
   infoPanelText?: string | null
@@ -146,6 +148,21 @@ test('近战贴身：点击相邻敌军本体 → 原地攻击（无需找边界
   expect(p0.position).toEqual({ q: 0, r: 0 })
   expect(p0.hasActed).toBe(true)
   expect(after.units!.find((u) => u.id === 'e0')).toBeUndefined()
+})
+
+test('近战贴身（1×2 骑兵）：刀剑锚在「东邻格↔敌军」边界而非主体格内', async ({ page }) => {
+  // 标准战斗：骑兵 p3 (0,3) 占 (0,3)+(1,3)，敌方刀兵 e3 贴 (2,3) 东邻格
+  await gotoBattle(page)
+  await waitBattleReady(page)
+  await setAnimationSpeed(page, 0)
+  const s = await getState(page)
+  expect(s.currentUnitId).toBe('p3')
+  const e3 = s.units!.find((u) => u.id === 'e3')!
+  await page.mouse.move(e3.screen.x, e3.screen.y)
+  const hov = (await getState(page)).hover
+  expect(hov?.cursorKind).toBe('sword')
+  expect(hov?.swordHex).toEqual({ q: 0, r: 3 }) // 攻击落点=原地（主体格）
+  expect(hov?.swordAdjHex).toEqual({ q: 1, r: 3 }) // 刀剑画在与目标相邻的东邻格边界上
 })
 
 test('1×2 骑兵可左右平移一格：点击自身东邻格=右移、点击左侧格=左移', async ({ page }) => {
