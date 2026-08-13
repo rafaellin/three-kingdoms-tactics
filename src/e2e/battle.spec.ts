@@ -44,6 +44,7 @@ interface DebugGameState {
     blinkId?: string | null
   }
   infoPanelText?: string | null
+  log?: string[]
   animating?: boolean
   actionGapMs?: number
   hitFlashCount?: number
@@ -363,6 +364,29 @@ test('近战反击：目标存活反击时攻守双方都闪（hitFlashCount +2�
   expect(after.hitFlashCount ?? 0).toBe(before + 2) // 主攻目标 + 反击方各闪一次（敌方不再介入）
   expect(after.units!.find((u) => u.id === 'p0')!.hpLeft).toBe(168)
   expect(after.units!.find((u) => u.id === 'e0')!.hpLeft).toBe(160)
+})
+
+test('AI 攻击被我方反击打死：反击段结算前敌方仍存活（分段不提前消失）', async ({ page }) => {
+  await gotoBattle(page)
+  await waitBattleReady(page)
+  // 不设 setAnimationSpeed(0)：保留 700ms 行动间隔，可捕捉"敌攻击后→反击前"的中间状态
+  await startBattle(page,
+    { side: 'player', generalName: 'P', atkBonus: 0, defBonus: 0, units: [{ defId: 'swordsman', count: 20 }] },
+    { side: 'enemy', generalName: 'E', atkBonus: 0, defBonus: 0, units: [{ defId: 'militia', count: 4 }] },
+    { cols: 3, rows: 3 }) // p0 刀兵 (0,0) 与 e0 民兵 (1,0) 贴身
+  await page.mouse.click(SKIP.x, SKIP.y) // 跳过玩家 → 敌方贴身攻击 → 我方反击秒杀敌方
+  // 敌方主攻已 dispatch、反击还没结算：敌方应仍存活（分段结算）
+  await page.waitForFunction(() => {
+    const s = (window as { __game?: { getState(): DebugGameState } }).__game?.getState()
+    return s?.log?.some((l) => l.includes('e0 攻击 p0'))
+  })
+  expect((await getState(page)).units!.find((u) => u.id === 'e0')).toBeDefined()
+  // 反击段结算后：敌方被消灭
+  await page.waitForFunction(() => {
+    const s = (window as { __game?: { getState(): DebugGameState } }).__game?.getState()
+    return s?.log?.some((l) => l.includes('p0 反击 e0'))
+  })
+  expect((await getState(page)).units!.find((u) => u.id === 'e0')).toBeUndefined()
 })
 
 test('冲锋动画期间鼠标移开：攻击仍应命中（不还原）', async ({ page }) => {
