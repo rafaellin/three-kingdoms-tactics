@@ -59,13 +59,12 @@ pnpm lint         # 代码检查
 
 ## Claude Code 插件（开发工具）
 
-> 项目级启用的 4 个官方插件，声明在 `.claude/settings.json`（已入库，随仓库共享）。插件**本体**缓存在用户级 `~/.claude/plugins/`，不入库；clone 后按声明自动提示安装。**装完需重启会话生效。**
+> 项目级启用的 3 个官方插件，声明在 `.claude/settings.json`（已入库，随仓库共享）。插件**本体**缓存在用户级 `~/.claude/plugins/`，不入库；clone 后按声明自动提示安装。**装完需重启会话生效。**
 
 | 插件 | 作用 | 使用方式 |
 |---|---|---|
 | `typescript-lsp` | TS/JS 语言智能（跳转 / 重命名 / 引用 / 诊断） | 需本机有 `typescript-language-server`（`pnpm add -g` 全局装），随会话自动加载 |
 | `context7` | 版本化文档查询（Phaser 4 / Vite 8 / Vitest / Playwright） | 会话内直接调用，零配置 |
-| `playwright` | MCP 浏览器驱动（交互 / 截图 / 复现 bug） | 会话内直接调用 `browser_*` 工具；与 `pnpm test:e2e` **互补** |
 | `frontend-design` | 前端 UI 设计，避免"AI 味"（主菜单 / 战斗 HUD / 设置界面） | 做前端/UI 时自动激活 |
 
 安装命令（新协作者 / 重装时用）：
@@ -73,13 +72,12 @@ pnpm lint         # 代码检查
 ```bash
 claude plugin install typescript-lsp@claude-plugins-official --scope project
 claude plugin install context7@claude-plugins-official --scope project
-claude plugin install playwright@claude-plugins-official --scope project
 claude plugin install frontend-design@claude-plugins-official --scope project
 ```
 
 注意：
 - **project 作用域 = 只对本仓库生效**；user 作用域（如 superpowers）对所有项目生效。
-- `playwright` 插件是浏览器 MCP，与项目 e2e 测试套件是两回事：前者会话内交互驱动，后者 `pnpm test:e2e` 回归断言。
+- `playwright` 插件曾启用用于 canvas 交互驱动，因 **MCP 对 canvas 游戏坐标点击不可靠**（同坐标在 `pnpm test:e2e` 里正常）已移除；浏览器回归验证统一走 `pnpm test:e2e` + dev bridge（见「调试 / 回归工作流」）。
 - `.claude/settings.local.json`、`CLAUDE.local.md` 是个人配置，不入库。
 
 ## 音频（BGM / 音效）
@@ -116,3 +114,5 @@ claude plugin install frontend-design@claude-plugins-official --scope project
 2. **界面回归（以 Playwright 断言为主）**：`pnpm test:e2e` 启动游戏 → 模拟点击/按键 → 通过 dev 调试句柄 `window.__game.getState()`（见 `src/dev/`）断言真实游戏状态。**断言必须写进测试代码**，不靠看截图。
 3. **截图给人看**：e2e 顺手存 `screenshots/*.png`，**由用户人工目检**界面观感（每张截图要在测试里注明给谁看、看什么）。agent 可做的"基本验证"包括：读 PNG 文件头 IHDR（字节 16-23 = 宽高）校验分辨率等 meta，但**不分析像素内容**。
 4. 出 bug 优先用「固定种子 + 事件日志」在 core 层复现，再修。
+5. **`page.goto` 会重置浏览器音频解锁**：每次导航后 LoadingScene 会重新出现「点击进入」按钮。用 Playwright 脚本复现时标准流程（见 `src/e2e/helpers.ts` 的 `gotoBooted`）：等 `scene==='loading' && okButton` → 点 OK → 等主菜单 `buttonsEnabled===true` → **强制一次 `page.evaluate` 同步往返**排空 Phaser input 排队副作用，再点目标。
+6. **独立脚本跑 Playwright 的两点**：脚本放项目根（pnpm 严格 node_modules 只对根解析）；`import { chromium } from '@playwright/test'`（不要 `import 'playwright'`——它不是直接依赖）。开发端口 3000，e2e 独立端口 3100，调试别连错。

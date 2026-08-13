@@ -281,6 +281,11 @@ export const battleReducer: Reducer<BattleState> = (state, cmd: Command) => {
       return advanceTurn(state)
     case 'battle/surrender':
       return { ...state, phase: 'lost', log: [...state.log, '投降'] }
+    case 'battle/debugResult': {
+      // 调试：直接判定胜负（主菜单 dev 入口 / 测试用）；不改单位/回合
+      const payload = cmd.payload as { phase: 'won' | 'lost' }
+      return { ...state, phase: payload.phase, log: [...state.log, `调试：判定${payload.phase === 'won' ? '胜利' : '战败'}`] }
+    }
     default:
       return state
   }

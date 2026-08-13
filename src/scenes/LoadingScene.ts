@@ -1,7 +1,8 @@
 import Phaser from 'phaser'
 import { MainMenuScene } from './MainMenuScene'
 import { getBgmManager, type BgmManager } from '../audio/BgmManager'
-import { BGM_URLS, SFX_URLS, ICON_URLS, baseKey } from '../audio/assetKeys'
+import { fadeAndStart } from '../ui/fade'
+import { BGM_URLS, SFX_URLS, ICON_URLS, FONT_URLS, baseKey } from '../audio/assetKeys'
 
 /**
  * 加载页（渲染层）：第一个场景，一次性预载 icon / BGM / SFX 进 Phaser 全局缓存，
@@ -39,6 +40,9 @@ export class LoadingScene extends Phaser.Scene {
     for (const [path, url] of Object.entries(ICON_URLS)) {
       this.load.image(baseKey(path), url)
     }
+    for (const [path, url] of Object.entries(FONT_URLS)) {
+      this.load.font({ key: baseKey(path), url, format: 'woff2' })
+    }
     for (const [path, url] of Object.entries(BGM_URLS)) {
       this.load.audio(baseKey(path), url)
     }
@@ -69,7 +73,7 @@ export class LoadingScene extends Phaser.Scene {
       // switchToCategory 也走的是已解锁分支，不会把起播推迟到下一次手势。
       bgm.unlock()
       bgm.switchToCategory('menu')
-      this.scene.start(MainMenuScene.KEY)
+      fadeAndStart(this, MainMenuScene.KEY)
     } else {
       // 音频被浏览器自动播放策略锁定：装解锁监听 + 显示 OK 按钮，单击解锁并起播主题曲
       bgm.unlock()
@@ -92,7 +96,7 @@ export class LoadingScene extends Phaser.Scene {
       .setInteractive({ useHandCursor: true })
     this.okButton.on('pointerdown', () => {
       bgm.switchToCategory('menu')
-      this.scene.start(MainMenuScene.KEY)
+      fadeAndStart(this, MainMenuScene.KEY)
     })
   }
 
