@@ -25,12 +25,18 @@ export interface SfxState {
   volume: number
   /** 当前是否有循环音效在播（如移动脚步） */
   loopPlaying: boolean
+  /** 当前循环音效的 key（移动用：infantry move / horse move / hero move） */
+  loopKey: string | null
+  /** 最近一次一次性音效的 key（攻击用：melee attack / range attack） */
+  lastOnceKey: string | null
 }
 
 export class SfxManager {
   private readonly keys: Set<string> = new Set()
   /** 当前循环音效（同一时刻只允许一个，如移动脚步） */
   private loop: Phaser.Sound.BaseSound | null = null
+  private loopKey: string | null = null
+  private lastOnceKey: string | null = null
   private volume = DEFAULT_SFX_VOLUME
   private ready = false
 
@@ -56,6 +62,7 @@ export class SfxManager {
     const s = this.scene.sound.add(key, { loop: true, volume: this.volume })
     s.play()
     this.loop = s
+    this.loopKey = key
   }
 
   /** 停止当前循环音效（移动结束必须调用） */
@@ -64,6 +71,16 @@ export class SfxManager {
     this.loop.stop()
     this.loop.destroy()
     this.loop = null
+    this.loopKey = null
+  }
+
+  /** 播放一次性音效（攻击等）；未就绪时忽略；记录 lastOnceKey 供 e2e 断言 */
+  playOnce(key: string): void {
+    if (!this.ready || !this.keys.has(key)) return
+    this.lastOnceKey = key
+    const s = this.scene.sound.add(key, { volume: this.volume })
+    s.play()
+    s.once('complete', () => s.destroy())
   }
 
   /** 设置音量（0~1，clamp）；未来"设置"界面用 */
@@ -77,6 +94,6 @@ export class SfxManager {
   }
 
   getState(): SfxState {
-    return { ready: this.ready, volume: this.volume, loopPlaying: this.loop !== null }
+    return { ready: this.ready, volume: this.volume, loopPlaying: this.loop !== null, loopKey: this.loopKey, lastOnceKey: this.lastOnceKey }
   }
 }

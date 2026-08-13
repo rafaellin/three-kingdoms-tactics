@@ -9,6 +9,7 @@ import { UNIT_DEFS } from '../data/units'
 import { BATTLE_GRID, BATTLE_OBSTACLES, ENEMY_ARMY, PLAYER_ARMY } from '../data/battleTest'
 import { MainMenuScene } from './MainMenuScene'
 import { getBgmManager } from '../audio/BgmManager'
+import { SfxManager } from '../audio/SfxManager'
 import { BgmControls } from '../ui/BgmControls'
 
 const SIDE_COLORS = { player: 0x33aa44, enemy: 0xcc3333 } as const
@@ -55,6 +56,8 @@ export class BattleScene extends Phaser.Scene {
   private enemyActing = false
   /** 受击闪白累计次数（debug / e2e 断言用） */
   private hitFlashCount = 0
+  /** 音效（渲染层；移动循环 + 攻击一次性） */
+  private sfx: SfxManager | null = null
   private bgmControls: BgmControls | null = null
   private resultText!: Phaser.GameObjects.Text
   private returnButton!: Phaser.GameObjects.Text
@@ -77,6 +80,7 @@ export class BattleScene extends Phaser.Scene {
     this.createLayers()
     this.setupBattle()
     this.bgmControls = new BgmControls(this, getBgmManager(this))
+    this.sfx = new SfxManager(this)
     this.events.once('shutdown', () => this.bgmControls?.destroy())
   }
 
@@ -89,6 +93,7 @@ export class BattleScene extends Phaser.Scene {
     this.animActive = null
     this.enemyActing = false
     this.moveWaiter = null
+    this.sfx?.stopLooped()
     this.drawGrid()
     this.drawObstacles()
     this.setupBattle()
@@ -287,6 +292,7 @@ export class BattleScene extends Phaser.Scene {
           const hpBefore = new Map(this.state.units.map((u) => [u.id, u.hpLeft] as const))
           const posBefore = new Map(this.state.units.map((u) => [u.id, { pos: u.position, size: u.size }] as const))
           if (path.length > 0) await this.animateMove(curId, path) // 先冲锋动画
+          this.sfx?.playOnce('melee attack') // 敌方近战音效
           this.store.dispatch('battle/attack', { unitId: curId, targetId: action.targetId, to: action.to })
           if (this.state.phase === 'combat' && this.state.currentUnitId === curId) {
             this.store.dispatch('battle/endTurn', { unitId: curId })
@@ -295,6 +301,7 @@ export class BattleScene extends Phaser.Scene {
         } else if (action.type === 'shoot') {
           const hpBefore = new Map(this.state.units.map((u) => [u.id, u.hpLeft] as const))
           const posBefore = new Map(this.state.units.map((u) => [u.id, { pos: u.position, size: u.size }] as const))
+          this.sfx?.playOnce('range attack') // 敌方远程音效
           this.store.dispatch('battle/shoot', { unitId: curId, targetId: action.targetId })
           if (this.state.phase === 'combat' && this.state.currentUnitId === curId) {
             this.store.dispatch('battle/endTurn', { unitId: curId })
@@ -533,6 +540,7 @@ export class BattleScene extends Phaser.Scene {
       const hpBefore = new Map(state.units.map((u) => [u.id, u.hpLeft] as const))
       const posBefore = new Map(state.units.map((u) => [u.id, { pos: u.position, size: u.size }] as const))
       if (path.length > 0) await this.animateMove(current.id, path) // 先冲锋动画，落刀再结算
+      this.sfx?.playOnce('melee attack') // 近战（含远程兵近战）落刀音效
       this.store.dispatch('battle/attack', { unitId: current.id, targetId: this.hover.swordTargetId, to })
       this.flashDamageDealt(hpBefore, posBefore)
       this.refreshViews()
@@ -541,6 +549,7 @@ export class BattleScene extends Phaser.Scene {
     if ((this.hover.cursorKind === 'bow' || this.hover.cursorKind === 'broken-arrow') && unitAt && unitAt.side !== current.side) {
       const hpBefore = new Map(state.units.map((u) => [u.id, u.hpLeft] as const))
       const posBefore = new Map(state.units.map((u) => [u.id, { pos: u.position, size: u.size }] as const))
+      this.sfx?.playOnce('range attack') // 远程射击音效
       this.store.dispatch('battle/shoot', { unitId: current.id, targetId: unitAt.id })
       this.flashDamageDealt(hpBefore, posBefore)
       this.refreshViews()
@@ -651,9 +660,17 @@ export class BattleScene extends Phaser.Scene {
 
   // ---------- 移动动画 ----------
 
+  /** 移动音效 key：骑兵走马步、其余走步兵步；循环播放直到移动结束 */
+  private playMoveSound(unitId: string): void {
+    const unit = this.state.units.find((u) => u.id === unitId)
+    const key = unit?.defId === 'cavalry' ? 'horse move' : 'infantry move'
+    this.sfx?.playLooped(key)
+  }
+
   private animateMove(unitId: string, path: Axial[]): Promise<void> {
     if (this.animationMs <= 0 || path.length === 0) return Promise.resolve()
     this.visualPos.set(unitId, path[0] as Axial)
+    if (!this.animActive && this.animQueue.length === 0) this.playMoveSound(unitId)
     return new Promise((resolve) => {
       this.animQueue.push({ unitId, path, resolve })
     })
@@ -664,6 +681,7 @@ export class BattleScene extends Phaser.Scene {
     if (!item) return
     this.animActive = { unitId: item.unitId, path: item.path, idx: 0, acc: 0, resolve: item.resolve }
     this.visualPos.set(item.unitId, item.path[0] as Axial)
+    this.playMoveSound(item.unitId)
   }
 
   private updateAnimation(delta: number): void {
@@ -677,6 +695,7 @@ export class BattleScene extends Phaser.Scene {
           const done = this.animActive
           this.visualPos.delete(done.unitId)
           this.animActive = null
+          this.sfx?.stopLooped() // 移动结束 → 停循环音效
           done.resolve()
           this.startNextAnim()
         } else {
@@ -717,6 +736,7 @@ export class BattleScene extends Phaser.Scene {
       scene: 'battle',
       bgm: getBgmManager(this).getState(),
       bgmControls: this.bgmControls?.getDebugState() ?? null,
+      sfx: this.sfx?.getState() ?? null,
       phase: state.phase,
       turn: state.turn,
       animating: this.animActive !== null || this.animQueue.length > 0,

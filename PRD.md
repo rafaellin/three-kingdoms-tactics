@@ -603,7 +603,7 @@ else:            战斗
 - [ ] 关卡/剧本系统
 - [ ] 多种胜利条件
 - [ ] 动画效果
-- [x] 音效/BGM（BGM 游戏级共享单例 `getBgmManager`；`bgmConfig.json` 三分类 playlist（menu 单曲=主题曲/explore/battle）统一洗牌→循环；LoadingScene 一次性预载全部音频；共享 `BgmControls` 组件（上一首/曲名♪/下一首/音量按钮+滑块）供 Adventure/Battle 复用；浏览器自动播放策略通过 `unlock()` +「点击进入」按钮处理；移动脚步音效循环；默认 BGM 音量 10%；2026-08 完成）
+- [x] 音效/BGM（BGM 游戏级共享单例 `getBgmManager`；`bgmConfig.json` 三分类 playlist（menu 单曲=主题曲/explore/battle）统一洗牌→循环；LoadingScene 一次性预载全部音频；共享 `BgmControls` 组件（上一首/曲名♪/下一首/音量按钮+滑块）供 Adventure/Battle 复用；浏览器自动播放策略通过 `unlock()` +「点击进入」按钮处理；移动脚步音效循环；默认 BGM 音量 10%；战斗音效：步兵移动 `infantry move` / 骑兵移动 `horse move`（循环至移动停止）、近战 `melee attack` / 远程 `range attack`（一次性），玩家与敌方 AI 共用；2026-08 完成）
 - [ ] 设置界面（BGM / 音效音量调节——`BgmControls` 已提供游戏内音量滑块，`BgmManager.setVolume/getVolume` 已就绪；独立设置页面 UI 未做）
 - [ ] 像素美术资源替换
 - [ ] UI 美化
