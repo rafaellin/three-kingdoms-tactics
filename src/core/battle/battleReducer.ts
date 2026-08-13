@@ -49,7 +49,7 @@ function init(state: BattleState, payload: { player: BattleArmyConfig; enemy: Ba
         side: cfg.side,
         defId: u.defId,
         count: u.count,
-        position: { q: qBase, r: i },
+        position: u.position ?? { q: qBase, r: i },
         size: def.size,
         hpLeft: u.count * def.hp,
         maxHp: u.count * def.hp,

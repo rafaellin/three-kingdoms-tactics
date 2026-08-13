@@ -63,14 +63,17 @@ const startBattle = (page: Page, player: Army, enemy: Army, grid: { cols: number
 const setAnimationSpeed = (page: Page, ms: number) =>
   page.evaluate((v) => (window as { __game?: { setAnimationSpeed(n: number): void } }).__game?.setAnimationSpeed(v), ms)
 
-test('主菜单 → 战斗测试：矩形战场 + 障碍物 + 7 单位', async ({ page }) => {
+test('主菜单 → 战斗测试：矩形战场 + 障碍物 + 8 单位', async ({ page }) => {
   await gotoBattle(page)
   await waitBattleReady(page)
   const s = await getState(page)
   expect(s.grid).toEqual(expect.objectContaining({ cols: 13, rows: 9 }))
   expect(s.obstacles).toHaveLength(6)
-  expect(s.units).toHaveLength(7)
+  expect(s.units).toHaveLength(8) // 玩家4 + 敌方4
   expect(s.units?.find((u) => u.defId === 'cavalry')?.size).toBe(2)
+  // 敌方刀兵固定放在骑兵右侧 (2,3) 贴身，便于测试近战原地攻击
+  const enemySword = s.units!.find((u) => u.defId === 'swordsman' && u.side === 'enemy')!
+  expect(enemySword.position).toEqual({ q: 2, r: 3 })
   await page.screenshot({ path: 'screenshots/battle-field-rect.png' })
 })
 

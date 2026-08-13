@@ -1,6 +1,6 @@
 /**
  * 战斗测试固定阵容（纯数据）：主菜单「战斗测试」入口用。
- * 我方：关羽（武力90/统御70）+ 4 支；敌方：吕布（武力100/统御80）+ 3 支。
+ * 我方：关羽（武力90/统御70）+ 4 支；敌方：吕布（武力100/统御80）+ 4 支。
  * atkBonus = round(武力/3)，defBonus = round(统御/3)。
  */
 import type { Axial } from '../core/hex/HexGrid'
@@ -36,6 +36,8 @@ export const ENEMY_ARMY: BattleArmyConfig = {
   units: [
     { defId: 'militia', count: 20 },
     { defId: 'pikeman', count: 12 },
-    { defId: 'archer', count: 8 }
+    { defId: 'archer', count: 8 },
+    // 刀兵：骑兵（p3 占 (0,3)+(1,3)）右侧贴身 (2,3)，便于测试近战原地攻击
+    { defId: 'swordsman', count: 12, position: { q: 2, r: 3 } }
   ]
 }

@@ -29,6 +29,13 @@ export interface BattleUnit {
   retaliated: boolean
 }
 
+export interface BattleUnitConfig {
+  defId: UnitDefId
+  count: number
+  /** 可选自定义出生格（默认玩家 q=0、敌方 q=cols-2，行=单位索引） */
+  position?: Axial
+}
+
 export interface BattleArmyConfig {
   side: Side
   generalName: string
@@ -36,7 +43,7 @@ export interface BattleArmyConfig {
   atkBonus: number
   /** = round(统御/3)，加到此方所有单位实际防御 */
   defBonus: number
-  units: { defId: UnitDefId; count: number }[]
+  units: BattleUnitConfig[]
 }
 
 export interface BattleState {
