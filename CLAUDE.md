@@ -59,18 +59,16 @@ pnpm lint         # 代码检查
 
 ## Claude Code 插件（开发工具）
 
-> 项目级启用的 3 个官方插件，声明在 `.claude/settings.json`（已入库，随仓库共享）。插件**本体**缓存在用户级 `~/.claude/plugins/`，不入库；clone 后按声明自动提示安装。**装完需重启会话生效。**
+> 项目级启用的 2 个官方插件，声明在 `.claude/settings.json`（已入库，随仓库共享）。插件**本体**缓存在用户级 `~/.claude/plugins/`，不入库；clone 后按声明自动提示安装。**装完需重启会话生效。**
 
 | 插件 | 作用 | 使用方式 |
 |---|---|---|
-| `typescript-lsp` | TS/JS 语言智能（跳转 / 重命名 / 引用 / 诊断） | 需本机有 `typescript-language-server`（`pnpm add -g` 全局装），随会话自动加载 |
 | `context7` | 版本化文档查询（Phaser 4 / Vite 8 / Vitest / Playwright） | 会话内直接调用，零配置 |
 | `frontend-design` | 前端 UI 设计，避免"AI 味"（主菜单 / 战斗 HUD / 设置界面） | 做前端/UI 时自动激活 |
 
 安装命令（新协作者 / 重装时用）：
 
 ```bash
-claude plugin install typescript-lsp@claude-plugins-official --scope project
 claude plugin install context7@claude-plugins-official --scope project
 claude plugin install frontend-design@claude-plugins-official --scope project
 ```
@@ -78,6 +76,7 @@ claude plugin install frontend-design@claude-plugins-official --scope project
 注意：
 - **project 作用域 = 只对本仓库生效**；user 作用域（如 superpowers）对所有项目生效。
 - `playwright` 插件曾启用用于 canvas 交互驱动，因 **MCP 对 canvas 游戏坐标点击不可靠**（同坐标在 `pnpm test:e2e` 里正常）已移除；浏览器回归验证统一走 `pnpm test:e2e` + dev bridge（见「调试 / 回归工作流」）。
+- `typescript-lsp` 曾启用用于 TS 语言智能，因本项目导航靠 Read/Grep 足够、其 tsserver 进程还会锁文件（删目录受阻）已移除；typecheck 走 `pnpm typecheck`（提交前一次）。
 - `.claude/settings.local.json`、`CLAUDE.local.md` 是个人配置，不入库。
 
 ## 音频（BGM / 音效）
