@@ -122,6 +122,56 @@ test('近战：边界刀剑 → 点击冲锋 + 全伤反击', async ({ page }) =
   await page.screenshot({ path: 'screenshots/battle-sword-attack.png' })
 })
 
+test('近战贴身：点击相邻敌军本体 → 原地攻击（无需找边界）', async ({ page }) => {
+  await gotoBattle(page)
+  await waitBattleReady(page)
+  await setAnimationSpeed(page, 0)
+  await startBattle(page,
+    { side: 'player', generalName: 'P', atkBonus: 0, defBonus: 0, units: [{ defId: 'militia', count: 20 }] },
+    { side: 'enemy', generalName: 'E', atkBonus: 0, defBonus: 0, units: [{ defId: 'militia', count: 20 }] },
+    { cols: 3, rows: 3 }) // p0 (0,0) 与 e0 (1,0) 出生即贴身
+  const s = await getState(page)
+  expect(s.currentUnitId).toBe('p0')
+  const e0 = s.units!.find((u) => u.id === 'e0')!
+  // 悬停敌军本体 → 刀剑（原地攻击光标）
+  await page.mouse.move(e0.screen.x, e0.screen.y)
+  expect((await getState(page)).hover?.cursorKind).toBe('sword')
+  // 点击敌军本体 → 原地攻击：位置不变、民兵 20 池被 68 伤全灭
+  await page.mouse.click(e0.screen.x, e0.screen.y)
+  const after = await getState(page)
+  const p0 = after.units!.find((u) => u.id === 'p0')!
+  expect(p0.position).toEqual({ q: 0, r: 0 })
+  expect(p0.hasActed).toBe(true)
+  expect(after.units!.find((u) => u.id === 'e0')).toBeUndefined()
+})
+
+test('1×2 骑兵可左右平移一格：点击自身东邻格=右移、点击左侧格=左移', async ({ page }) => {
+  await gotoBattle(page)
+  await waitBattleReady(page)
+  await setAnimationSpeed(page, 0)
+  const army = { side: 'player' as const, generalName: 'P', atkBonus: 0, defBonus: 0,
+    units: [{ defId: 'militia', count: 10 }, { defId: 'militia', count: 10 }, { defId: 'cavalry', count: 8 }] }
+  const enemy = { side: 'enemy' as const, generalName: 'E', atkBonus: 0, defBonus: 0, units: [{ defId: 'militia', count: 20 }] }
+  // 骑兵 speed9 最先行动，位于 (0,2)（row2 锯齿左进 → 左侧格可走）
+  await startBattle(page, army, enemy, { cols: 7, rows: 3 })
+  let s = await getState(page)
+  expect(s.currentUnitId).toBe('p2')
+  let cav = s.units!.find((u) => u.id === 'p2')!
+  expect(cav.position).toEqual({ q: 0, r: 2 })
+  // 右移一格：点击自身东邻格 (1,2)（旧逻辑会误判为「选中自身」）
+  const right = s.reachable!.find((h) => h.q === 1 && h.r === 2)!
+  await page.mouse.click(right.screen.x, right.screen.y)
+  let after = await getState(page)
+  expect(after.units!.find((u) => u.id === 'p2')!.position).toEqual({ q: 1, r: 2 })
+  // 重置后左移一格：点击 (0,2) 左侧 (-1,2)
+  await startBattle(page, army, enemy, { cols: 7, rows: 3 })
+  s = await getState(page)
+  const left = s.reachable!.find((h) => h.q === -1 && h.r === 2)!
+  await page.mouse.click(left.screen.x, left.screen.y)
+  after = await getState(page)
+  expect(after.units!.find((u) => u.id === 'p2')!.position).toEqual({ q: -1, r: 2 })
+})
+
 test('远程：弓（满额）/ 断箭（半额）', async ({ page }) => {
   await gotoBattle(page)
   await waitBattleReady(page)

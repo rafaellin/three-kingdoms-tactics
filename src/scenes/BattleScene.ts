@@ -367,6 +367,17 @@ export class BattleScene extends Phaser.Scene {
       this.drawHoverLayer()
       return
     }
+    // 近战贴身：悬停相邻敌军本体 → 刀剑（原地攻击，无需找共享边界）
+    if (!isRanged && unitAt && unitAt.side !== current.side &&
+      occupiedHexes(current).some((h) => occupiedHexes(unitAt).some((uh) => hexDistance(h, uh) <= 1))) {
+      this.hover.cursorKind = 'sword'
+      this.hover.swordTargetId = unitAt.id
+      this.hover.swordHex = current.position
+      this.hover.ghostHex = null
+      this.hover.blinkId = unitAt.id
+      this.drawHoverLayer()
+      return
+    }
     // 近战：扫描可达落点与其相邻敌军的共享边界，命中最近者
     const reachable = battleReachableArea(current, state)
     const mx = pointer.worldX
@@ -517,15 +528,18 @@ export class BattleScene extends Phaser.Scene {
       this.refreshViews()
       return
     }
-    if (unitAt && unitAt.side === 'player') {
-      this.store.dispatch('battle/select', { unitId: unitAt.id })
-      this.refreshViews()
-      return
-    }
-    if (battleReachableArea(current, state).some((h) => hexKey(h) === hexKey(hex))) {
+    // 移动优先于选中：1×2 单位可滑入自身东邻格（点击该格 = 右移一格）。
+    // 他人单位占据格不在可达集内，故"点击他人单位 → 选中"不受影响；点击自身主体格仍回退到选中。
+    const reachable = battleReachableArea(current, state)
+    if (hexKey(hex) !== hexKey(current.position) && reachable.some((h) => hexKey(h) === hexKey(hex))) {
       const path = battleFindPath(current, hex, this.state) ?? [hex]
       this.store.dispatch('battle/move', { unitId: current.id, to: hex })
       void this.animateMove(current.id, path)
+      this.refreshViews()
+      return
+    }
+    if (unitAt && unitAt.side === 'player') {
+      this.store.dispatch('battle/select', { unitId: unitAt.id })
       this.refreshViews()
       return
     }

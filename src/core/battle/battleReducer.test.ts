@@ -176,6 +176,20 @@ describe('battle/attack（近战 v2 + 反击）', () => {
     expect(s.phase).toBe('won')
     expect(s.log.some((l) => l.includes('267'))).toBe(true)
   })
+  test('1×2 骑兵原地攻击：目标贴自身东邻格即可（无需主体格相邻）', () => {
+    // 骑兵 p0 (0,0) 占 (0,0)+(1,0)；敌 e0 (2,0) 贴东邻格 (1,0) 但距主体 (0,0) 为 2
+    // 原地攻击 to=当前位：按攻击方完整体积判定相邻（回归 bug6）
+    const store = makeStore({
+      grid: { cols: 4, rows: 3 }, // e0 在 q=cols-2=2，贴骑兵东邻格 (1,0)
+      player: { side: 'player', generalName: 'P', atkBonus: 0, defBonus: 0, units: [{ defId: 'cavalry', count: 8 }] },
+      enemy: { side: 'enemy', generalName: 'E', atkBonus: 0, defBonus: 0, units: [{ defId: 'militia', count: 20 }] }
+    })
+    store.dispatch('battle/attack', { unitId: 'p0', targetId: 'e0', to: { q: 0, r: 0 } })
+    const s = store.getState()
+    // 攻击应命中：骑兵攻10 vs 民兵防4（差+6 ×1.3）×8×avg6.5 ≈ 68 → 20 池全灭
+    expect(s.units.find((u) => u.id === 'e0')).toBeUndefined()
+    expect(s.units.find((u) => u.id === 'p0')?.position).toEqual({ q: 0, r: 0 }) // 原地未动
+  })
   test('no-op：落点不可达 / 不与目标相邻 / 无 to 直接点远处敌军 / 打己方', () => {
     const store = makeStore({
       grid: { cols: 5, rows: 3 },

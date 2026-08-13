@@ -147,7 +147,9 @@ function attack(state: BattleState, unitId: string, targetId: string, to?: Axial
     if (!battleReachableArea(attacker, state).some((h) => hexKey(h) === hexKey(dest))) return state
     if (!battleFindPath(attacker, dest, state)) return state
   }
-  if (!occupiedHexes(target).some((h) => hexDistance(dest, h) <= 1)) return state
+  // 攻击方体积内任一体格与目标相邻即可近战（1×2 骑兵东邻格贴身也算命中）
+  const destBody = occupiedHexes({ position: dest, size: attacker.size })
+  if (!occupiedHexes(target).some((h) => destBody.some((dh) => hexDistance(dh, h) <= 1))) return state
   const atkGen = state.general[attacker.side]
   const defGen = state.general[target.side]
   const atkMult = UNIT_DEFS[attacker.defId].range > 1 ? MELEE_ATTACK_MULT : 1
