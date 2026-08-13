@@ -218,16 +218,16 @@ export class BattleScene extends Phaser.Scene {
       }
       label.setPosition(cx, cy)
       label.setText(def.gridLabel)
-      // 右下角小字：兵力数量
+      // 右下角小字：兵力数量（黑色，靠底边，不与中央大字重叠）
       let count = this.unitCounts.get(unit.id)
       if (!count) {
         count = this.add
-          .text(0, 0, '', { fontFamily: 'sans-serif', fontSize: '14px', color: '#e8eef5' })
+          .text(0, 0, '', { fontFamily: 'sans-serif', fontSize: '14px', color: '#000000' })
           .setOrigin(1, 1)
           .setDepth(4)
         this.unitCounts.set(unit.id, count)
       }
-      count.setPosition(c2.x + this.layout.size * 0.55, c2.y + this.layout.size * 0.42)
+      count.setPosition(c2.x + this.layout.size * 0.6, c2.y + this.layout.size * 0.85)
       count.setText(String(unit.count))
       seen.add(unit.id)
     }
