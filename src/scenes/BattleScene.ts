@@ -326,7 +326,15 @@ export class BattleScene extends Phaser.Scene {
   private setupInput(): void {
     this.input.off('pointerup')
     this.input.off('pointermove')
+    // 切场防抖：主菜单按钮 pointerdown 触发 scene.start 后，同一次点击的收尾 pointerup
+    // 会泄漏进新场景的全局监听 → 误触发一次操作（把当前行动单位移到按钮所在格）。
+    // 若场景启动时指针仍按下，说明该 pointerup 属于旧场景的点击：吞掉它（只吞一次）。
+    let swallowStaleUp = this.input.activePointer.isDown
     this.input.on('pointerup', (p: Phaser.Input.Pointer) => {
+      if (swallowStaleUp) {
+        swallowStaleUp = false
+        return
+      }
       if (this.state.phase !== 'combat' || this.currentSide() !== 'player') return
       this.handleClick(this.layout.pixelToHex(p.worldX, p.worldY))
     })

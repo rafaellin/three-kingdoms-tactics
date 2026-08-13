@@ -1,5 +1,5 @@
 import { expect, test, type Page } from '@playwright/test'
-import { gotoBattle } from './helpers'
+import { gotoBattle, gotoBooted, MENU_BATTLE } from './helpers'
 
 /**
  * 战斗 e2e：主菜单入口 + startBattle 确定性交互（刀剑冲锋/反击、远程满额/半额、移动即行动、信息面板、胜负循环）。
@@ -72,6 +72,24 @@ test('主菜单 → 战斗测试：矩形战场 + 障碍物 + 7 单位', async (
   expect(s.units).toHaveLength(7)
   expect(s.units?.find((u) => u.defId === 'cavalry')?.size).toBe(2)
   await page.screenshot({ path: 'screenshots/battle-field-rect.png' })
+})
+
+test('主菜单进入战斗：按钮点击的收尾 pointerup 不得触发误移动（防抖）', async ({ page }) => {
+  // 回归：主菜单「战斗测试」按钮 pointerdown 切场后，同一次点击的收尾 pointerup 会泄漏进
+  // 新 BattleScene 的全局 pointerup 监听 → 把当前行动单位移动到按钮所在格（hex (2,8)）。
+  // 真实用户点击按下后保持若干帧再松开（Playwright 默认 click 同帧 down+up 不会复现），
+  // 故显式 down → 保持 → up。
+  await gotoBooted(page)
+  await page.mouse.move(MENU_BATTLE.x, MENU_BATTLE.y)
+  await page.mouse.down()
+  await page.waitForTimeout(100)
+  await page.mouse.up()
+  await waitBattleReady(page)
+  const s = await getState(page)
+  const cavalry = s.units!.find((u) => u.defId === 'cavalry')!
+  expect(s.currentUnitId).toBe('p3') // 骑兵 speed 9 最先行动
+  expect(cavalry.position).toEqual({ q: 0, r: 3 }) // 出生位，不得被误移走
+  expect(cavalry.hasActed).toBe(false)
 })
 
 test('近战：边界刀剑 → 点击冲锋 + 全伤反击', async ({ page }) => {
