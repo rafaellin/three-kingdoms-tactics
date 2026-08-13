@@ -4,6 +4,7 @@ screenshots/
 test-results/
 playwright-report/
 *.local
+CLAUDE.local.md
 .DS_Store
 .claude/settings.local.json
 poc-video/

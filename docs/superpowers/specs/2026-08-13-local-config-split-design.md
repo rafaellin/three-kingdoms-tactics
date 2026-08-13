@@ -34,8 +34,11 @@
 ### 无需改动
 
 - `.claude/settings.local.json`（已 git-ignored，全为 Windows 特有权限）
-- `.gitignore`（`*.local` 与 `.claude/settings.local.json` 已有）
 - `PRD.md`（基本平台中立）
+
+### 需改动
+
+- `.gitignore`：`*.local` 规则**不匹配** `CLAUDE.local.md`（`*.local` 只匹配以 `.local` 结尾的文件名），需显式加入 `CLAUDE.local.md`，防止误提交。
 
 ## 验证
 
