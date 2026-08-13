@@ -276,7 +276,7 @@ export class BattleScene extends Phaser.Scene {
     if (current && current.side === 'player') {
       // 可达高亮覆盖 1×2 完整占地（主格 + 东邻格）：落脚时双格都在高亮内，不会"一脚里一脚外"
       // 慢速脉动（闪烁）标识"这是可移动范围"；Set 去重保证每格只填一次（否则相邻占地重叠格会更亮、边界更暗）
-      const a = 0.12 + 0.28 * Math.abs(Math.sin(this.blinkPhase * 0.25))
+      const a = 0.18 + 0.1 * Math.abs(Math.sin(this.blinkPhase * 0.25))
       const drawn = new Set<string>()
       for (const hex of battleReachableArea(current, state)) {
         for (const h of occupiedHexes({ position: hex, size: current.size })) {
