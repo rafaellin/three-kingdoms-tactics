@@ -29,6 +29,7 @@ interface DebugGameState {
   ready?: boolean
   scene?: string
   phase?: string
+  currentUnitId?: string | null
   sfx?: SfxState
   reachable?: { q: number; r: number; screen: { x: number; y: number } }[]
   units?: UnitState[]
