@@ -33,6 +33,8 @@ export class BattleScene extends Phaser.Scene {
   private store!: CommandLog<BattleState>
   private gridGraphics!: Phaser.GameObjects.Graphics
   private overlayGraphics!: Phaser.GameObjects.Graphics
+  /** 可达范围闪烁层（低 depth，位于单位之下，避免压住单位） */
+  private reachGraphics!: Phaser.GameObjects.Graphics
   private unitGraphics!: Phaser.GameObjects.Graphics
   private obstacleGraphics!: Phaser.GameObjects.Graphics
   private hoverGraphics!: Phaser.GameObjects.Graphics
@@ -127,6 +129,7 @@ export class BattleScene extends Phaser.Scene {
   private createLayers(): void {
     this.gridGraphics = this.add.graphics().setDepth(0)
     this.obstacleGraphics = this.add.graphics().setDepth(1)
+    this.reachGraphics = this.add.graphics().setDepth(1)
     this.unitGraphics = this.add.graphics().setDepth(2)
     this.overlayGraphics = this.add.graphics().setDepth(3)
     this.hoverGraphics = this.add.graphics().setDepth(5)
@@ -268,13 +271,19 @@ export class BattleScene extends Phaser.Scene {
       this.overlayGraphics.fillStyle(0xffcc33, 1)
       this.overlayGraphics.fillTriangle(c.x, c.y - 40, c.x - 9, c.y - 27, c.x + 9, c.y - 27)
     }
+    // 可达范围闪烁画在低 depth 的 reachGraphics（单位之下），不压住单位
+    this.reachGraphics.clear()
     if (current && current.side === 'player') {
       // 可达高亮覆盖 1×2 完整占地（主格 + 东邻格）：落脚时双格都在高亮内，不会"一脚里一脚外"
-      // 脉动 alpha（慢速闪烁）标识"这是可移动范围"（区别于地图可见/不可见）
-      const a = 0.1 + 0.25 * Math.abs(Math.sin(this.blinkPhase * 0.5))
+      // 慢速脉动（闪烁）标识"这是可移动范围"；Set 去重保证每格只填一次（否则相邻占地重叠格会更亮、边界更暗）
+      const a = 0.12 + 0.28 * Math.abs(Math.sin(this.blinkPhase * 0.25))
+      const drawn = new Set<string>()
       for (const hex of battleReachableArea(current, state)) {
         for (const h of occupiedHexes({ position: hex, size: current.size })) {
-          this.fillHex(this.overlayGraphics, h, REACHABLE_FILL, a)
+          const k = hexKey(h)
+          if (drawn.has(k)) continue
+          drawn.add(k)
+          this.fillHex(this.reachGraphics, h, REACHABLE_FILL, a)
         }
       }
     }
