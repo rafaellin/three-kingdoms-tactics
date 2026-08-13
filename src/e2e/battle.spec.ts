@@ -296,6 +296,22 @@ test('攻击命中触发受击闪白（hitFlashCount 递增）', async ({ page }
   expect(after.hitFlashCount ?? 0).toBeGreaterThan(before)
 })
 
+test('远程攻击：攻方与被攻击方都闪烁（hitFlashCount +2）', async ({ page }) => {
+  await gotoBattle(page)
+  await waitBattleReady(page)
+  await setAnimationSpeed(page, 0)
+  await startBattle(page,
+    { side: 'player', generalName: 'P', atkBonus: 0, defBonus: 0, units: [{ defId: 'archer', count: 10 }, { defId: 'militia', count: 10 }] },
+    { side: 'enemy', generalName: 'E', atkBonus: 0, defBonus: 0, units: [{ defId: 'militia', count: 50 }] },
+    { cols: 5, rows: 3 }) // archer p0 (0,0) 距 e0 (3,0) 3 ≤ 射程 6；射击后轮到 p1（玩家）→ 无敌方介入
+  const before = (await getState(page)).hitFlashCount ?? 0
+  const e0 = (await getState(page)).units!.find((u) => u.id === 'e0')!
+  await page.mouse.move(e0.screen.x, e0.screen.y)
+  await page.mouse.click(e0.screen.x, e0.screen.y) // 远程射击
+  const after = await getState(page)
+  expect(after.hitFlashCount ?? 0).toBe(before + 2) // 攻方 + 目标各闪一次（550ms）
+})
+
 test('信息面板：hover 部队 → 兵种/数量/伤兵剩余血', async ({ page }) => {
   await gotoBattle(page)
   await waitBattleReady(page)

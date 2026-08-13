@@ -329,7 +329,9 @@ export class BattleScene extends Phaser.Scene {
           if (this.state.phase === 'combat' && this.state.currentUnitId === curId) {
             this.store.dispatch('battle/endTurn', { unitId: curId })
           }
-          this.flashDamageDealt(hpBefore, posBefore)
+          // 远程攻击：攻方与被攻击方都闪，时间稍久
+          this.playHitFlash(before.position, before.size, 550)
+          this.flashDamageDealt(hpBefore, posBefore, 550)
         } else {
           this.store.dispatch('battle/endTurn', { unitId: curId })
         }
@@ -574,7 +576,9 @@ export class BattleScene extends Phaser.Scene {
       const posBefore = new Map(state.units.map((u) => [u.id, { pos: u.position, size: u.size }] as const))
       this.sfx?.playOnce('range attack') // 远程射击音效
       this.store.dispatch('battle/shoot', { unitId: current.id, targetId: unitAt.id })
-      this.flashDamageDealt(hpBefore, posBefore)
+      // 远程攻击：攻方与被攻击方都闪，时间稍久，让远程攻击更显眼
+      this.playHitFlash(current.position, current.size, 550)
+      this.flashDamageDealt(hpBefore, posBefore, 550)
       this.refreshViews()
       return
     }
@@ -597,8 +601,8 @@ export class BattleScene extends Phaser.Scene {
 
   // ---------- 受击特效 ----------
 
-  /** 受击闪白：在目标占据格画白色半透明填充，350ms 淡出后销毁 */
-  private playHitFlash(at: Axial, size: 1 | 2): void {
+  /** 受击闪白：在指定占据格画白色半透明填充后淡出销毁；duration 默认 350ms */
+  private playHitFlash(at: Axial, size: 1 | 2, duration = 350): void {
     const g = this.add.graphics().setDepth(6)
     for (const hex of occupiedHexes({ position: at, size })) {
       this.fillHex(g, hex, 0xffffff, 0.85)
@@ -607,7 +611,7 @@ export class BattleScene extends Phaser.Scene {
     this.tweens.add({
       targets: g,
       alpha: 0,
-      duration: 350,
+      duration,
       ease: 'Cubic.easeOut',
       onComplete: () => g.destroy()
     })
@@ -619,14 +623,15 @@ export class BattleScene extends Phaser.Scene {
    */
   private flashDamageDealt(
     hpBefore: Map<string, number>,
-    posBefore: Map<string, { pos: Axial; size: 1 | 2 }>
+    posBefore: Map<string, { pos: Axial; size: 1 | 2 }>,
+    duration = 350
   ): void {
     for (const [id, prev] of hpBefore) {
       const after = this.state.units.find((u) => u.id === id)
       const damaged = after ? after.hpLeft < prev : true // 不在 units 里 = 本动作被消灭
       if (damaged) {
         const p = posBefore.get(id)
-        if (p) this.playHitFlash(p.pos, p.size)
+        if (p) this.playHitFlash(p.pos, p.size, duration)
       }
     }
   }
