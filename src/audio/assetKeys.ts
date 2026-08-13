@@ -27,6 +27,13 @@ export const ICON_URLS = import.meta.glob('/assets/icons/*.png', {
   eager: true
 }) as Record<string, string>
 
+/** 字体资源（display 角色；LoadingScene 一次性预载，key = 文件名去扩展名） */
+export const FONT_URLS = import.meta.glob('/assets/fonts/*.woff2', {
+  query: '?url',
+  import: 'default',
+  eager: true
+}) as Record<string, string>
+
 /** 路径 → 缓存 key：取文件名（去扩展名），如 '/assets/bgm/mp3/Neon Jade.mp3' → 'Neon Jade' */
 export function baseKey(path: string): string {
   const file = path.split('/').pop() ?? path

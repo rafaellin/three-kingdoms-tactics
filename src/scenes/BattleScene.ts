@@ -12,6 +12,7 @@ import { MainMenuScene } from './MainMenuScene'
 import { getBgmManager } from '../audio/BgmManager'
 import { SfxManager } from '../audio/SfxManager'
 import { BgmControls } from '../ui/BgmControls'
+import { fadeAndStart, fadeIn } from '../ui/fade'
 
 const SIDE_COLORS = { player: 0x33aa44, enemy: 0xcc3333 } as const
 const GRID_COLOR = 0x1a2333
@@ -109,6 +110,7 @@ export class BattleScene extends Phaser.Scene {
       grid: { ...BATTLE_GRID, obstacles: BATTLE_OBSTACLES }
     })
     getBgmManager(this).switchToCategory('battle')
+    fadeIn(this)
     this.createLayers()
     this.setupBattle()
     this.bgmControls = new BgmControls(this, getBgmManager(this))
@@ -165,22 +167,23 @@ export class BattleScene extends Phaser.Scene {
     this.hoverGraphics = this.add.graphics().setDepth(5)
     this.drawGrid()
     this.drawObstacles()
-    // 结果 + 返回主菜单（视口固定，scrollFactor 0）
+    // 结果 + 返回主菜单（视口固定，scrollFactor 0；水平居中随相机宽度动态计算）
+    const cx = this.cameras.main.width / 2
     this.resultText = this.add
-      .text(960, 520, '', { fontFamily: 'sans-serif', fontSize: '48px', color: '#ffffff' })
+      .text(cx, 520, '', { fontFamily: 'sans-serif', fontSize: '48px', color: '#ffffff' })
       .setOrigin(0.5)
       .setDepth(12)
       .setScrollFactor(0)
       .setVisible(false)
     this.returnButton = this.add
-      .text(960, 580, '返回主菜单', { fontFamily: 'sans-serif', fontSize: '24px', color: '#ffffff', backgroundColor: '#33415c' })
+      .text(cx, 580, '返回主菜单', { fontFamily: 'sans-serif', fontSize: '24px', color: '#ffffff', backgroundColor: '#33415c' })
       .setOrigin(0.5)
       .setDepth(12)
       .setScrollFactor(0)
       .setPadding(24, 12)
       .setVisible(false)
       .setInteractive({ useHandCursor: true })
-    this.returnButton.on('pointerdown', () => this.scene.start(MainMenuScene.KEY))
+    this.returnButton.on('pointerdown', () => fadeAndStart(this, MainMenuScene.KEY))
     this.logText = this.add
       .text(24, 24, '', { fontFamily: 'sans-serif', fontSize: '16px', color: '#c8d2e0' })
       .setDepth(12)
@@ -197,6 +200,7 @@ export class BattleScene extends Phaser.Scene {
     this.scale.on('resize', () => {
       this.centerCamera()
       this.repositionCornerButtons()
+      this.repositionResult()
     })
   }
 
@@ -843,6 +847,13 @@ export class BattleScene extends Phaser.Scene {
     this.surrenderButton?.setPosition(cam.width - 40, cam.height - 100)
   }
 
+  /** resize 时结果文字与返回按钮保持水平居中（原本写死 960 在非 1920 窗口会偏） */
+  private repositionResult(): void {
+    const cx = this.cameras.main.width / 2
+    this.resultText?.setX(cx)
+    this.returnButton?.setX(cx)
+  }
+
   /** 逐格移动动画耗时（ms）；0 = 瞬间完成（e2e 用）；同时关掉行动间隔 */
   setAnimationSpeed(ms: number): void {
     this.animationMs = ms
@@ -1011,6 +1022,20 @@ export class BattleScene extends Phaser.Scene {
         blinkId: this.hover.blinkId
       },
       infoPanelText: this.infoPanel && this.infoPanel.visible ? this.infoPanel.text : null,
+      // 结算元素真实坐标（诊断：验证结果文字/返回按钮水平居中）
+      result: {
+        camWidth: this.cameras.main.width,
+        text: this.resultText ? { x: this.resultText.x, w: this.resultText.width, dw: this.resultText.displayWidth } : null,
+        button: this.returnButton
+          ? {
+              x: this.returnButton.x,
+              w: this.returnButton.width,
+              dw: this.returnButton.displayWidth,
+              ox: this.returnButton.originX,
+              oy: this.returnButton.originY
+            }
+          : null
+      },
       units: state.units.map((u) => ({
         id: u.id,
         side: u.side,

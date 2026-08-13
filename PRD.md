@@ -528,6 +528,7 @@ else:            战斗
 
 ### 主菜单
 - [x] 主菜单（开始游戏 → 大地图；战斗测试 → 固定部队 PVE 战斗；标题+按钮淡入动画 500ms Cubic.easeOut 完成后按钮可点；**resize 时标题/按钮按新窗口比例重排**，2026-08 完成）
+- [x] 主菜单视觉身份（2026-08 M1）：标题换**书法 display 字体**（马善政子集 woff2，OFL，`assets/fonts/`）；右侧**朱砂印**（程序化毛边红描边框 + 红字「戰」繁体、无填充——印章盖纸效果；戰 用霞鹜文楷子集，马善政 GB2312 无繁体）；按钮用共享 `src/ui/button.ts`（hover 朱砂变色 / pressed 按压缩放 / 统一宽度 280px）；场景切换统一 `fadeAndStart` 淡出→淡入 220ms
 - [x] 自适应与地图拖拽（2026-08）：Adventure/Battle resize 时相机重新居中、右下角按钮贴视口；Battle 支持**拖拽平移相机**（位移>6px 视为拖拽，不误触点击移动/攻击；按下/抬起都在 UI 控件上时不触发地图拖拽或操作——BGM 音量条拖动不再平移地图）
 - [x] 战斗重入状态重置（2026-08）：scene.start 复用场景实例，create() 重置跨场景残留渲染状态（dragging/visualPos/busy/hover/logBuffer/hitFlashCount 等），撤退→重进不再"像按着鼠标"、初始画面不再残留上一场
 
@@ -550,7 +551,7 @@ else:            战斗
 - [x] 行动结算锁输入（2026-08）：`busy` 期间（冲锋+攻击+反击停顿+闪白）屏蔽点击/跳过，动画未完不能操作下一单位；结算中隐藏刀剑/弓/残影等"可操作"光标图形（`drawHoverLayer` busy 早退）
 - [x] 提示系统：当前单位金标+箭头、移动残影、刀剑/弓/断箭三态光标、目标闪烁、hover 信息面板
 - [x] 标准化 battle log（2026-08）：core 按统一格式记录每步动作——`第X回合 武将·兵种 移动/攻击/射击/反击 … 造成 N 点伤害，歼灭 M 个（全伤|半伤|消灭）`；左上角显示最近 6 条；**分段输出**（主攻完立即输出攻击 log、反击完才输出反击 log，与动画一致）；新增条目 `console.log` + 累计缓冲，dev bridge 提供 `getLog()` / `downloadLog()`（.log 文件）/ `exportState()`（战斗状态 JSON 复现）
-- [x] 胜负判定 + 返回主菜单
+- [x] 胜负判定 + 返回主菜单（结果文字「胜利/战败」与「返回主菜单」按钮**水平居中**、随相机宽度动态计算，resize 时重排——2026-08 M1 修复，原写死 960 在非 1920 窗口会偏）
 - [x] 切场输入防抖：主菜单「战斗测试」按钮 pointerdown 切场后，同一次点击的收尾 pointerup 会泄漏进新场景的全局监听 → 吞掉（仅当场景启动时指针已按下），避免当前行动单位被误移到按钮所在格（2026-08 修复）
 
 ### 战后
@@ -568,6 +569,7 @@ else:            战斗
 - [x] 顶部 HUD 资源条 + 日期（流式布局、hover 明细 tooltip）
 - [x] 底部 BGM 播放控件（左下角：上一首/曲名♪/下一首 + 音量按钮 + 滑块）
 - [x] 视口分区（HUD 区 / Map 交互区 / Tools 区；地图拖拽/点击/滚轮缩放仅在 Map 区生效，HUD/工具栏经独立固定 UI 相机渲染、不随地图缩放）
+- [x] 共享 UI 基建（2026-08 M1）：`src/ui/theme.ts` 调色板 token（nightInk/cinnabar/jade/gilt/parchment/slateAzure）+ `src/ui/button.ts` 带状态按钮 + `src/ui/fade.ts` 场景淡转场；全量颜色替换与正文字体见 §16「UI 美化」
 - [ ] 底部英雄栏
 - [ ] 右侧城池列表
 - [ ] 选中武将详情
@@ -615,7 +617,7 @@ else:            战斗
 - [x] 音效/BGM（BGM 游戏级共享单例 `getBgmManager`；`bgmConfig.json` 三分类 playlist（menu 单曲=主题曲/explore/battle）统一洗牌→循环；LoadingScene 一次性预载全部音频；共享 `BgmControls` 组件（上一首/曲名♪/下一首/音量按钮+滑块）供 Adventure/Battle 复用；浏览器自动播放策略通过 `unlock()` +「点击进入」按钮处理；移动脚步音效循环；默认 BGM 音量 10%；战斗音效：步兵移动 `infantry move` / 骑兵移动 `horse move`（循环至移动停止）、近战 `melee attack` / 远程 `range attack`（一次性），玩家与敌方 AI 共用；2026-08 完成）
 - [ ] 设置界面（BGM / 音效音量调节——`BgmControls` 已提供游戏内音量滑块，`BgmManager.setVolume/getVolume` 已就绪；独立设置页面 UI 未做）
 - [ ] 像素美术资源替换
-- [ ] UI 美化
+- [ ] UI 美化（2026-08 M1 已做：主菜单书法标题+朱砂印、共享按钮 hover/pressed、场景 fade；余下见 `UI-update-proposal.md`：M2 调色板全量替换+正文字体 / M3 面板卡片化+log 事件流 / M4 单位大字书法体 / M5 键盘导航；已剔除：血条、飘血数字、测试入口移出）
 
 ---
 

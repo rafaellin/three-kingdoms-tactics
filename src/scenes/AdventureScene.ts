@@ -17,6 +17,7 @@ import { getTerrain } from '../data/terrain'
 import { RESOURCE_NODE_DEFS } from '../data/resourceNode'
 import { BgmManager, getBgmManager } from '../audio/BgmManager'
 import { BgmControls } from '../ui/BgmControls'
+import { fadeIn } from '../ui/fade'
 import { SfxManager } from '../audio/SfxManager'
 import {
   HERO_FACTION,
@@ -173,6 +174,7 @@ export class AdventureScene extends Phaser.Scene {
   create(): void {
     // BGM 管理器先创建（createLayers 中 BGM 控件依赖它）
     this.bgm = getBgmManager(this)
+    fadeIn(this)
     this.createLayers()
     this.buildStore()
     this.refreshViews()
