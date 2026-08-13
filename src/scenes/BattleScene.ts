@@ -29,7 +29,7 @@ const EDGE_HIT_TOLERANCE = 10
 export class BattleScene extends Phaser.Scene {
   static readonly KEY = 'Battle'
 
-  private readonly layout = new HexLayout({ size: 30, origin: { x: 0, y: 0 } })
+  private readonly layout = new HexLayout({ size: 36, origin: { x: 0, y: 0 } })
   private store!: CommandLog<BattleState>
   private gridGraphics!: Phaser.GameObjects.Graphics
   private overlayGraphics!: Phaser.GameObjects.Graphics

@@ -111,7 +111,7 @@ test('近战：边界刀剑 → 点击冲锋 + 全伤反击', async ({ page }) =
   const s = await getState(page)
   expect(s.currentUnitId).toBe('p0')
   const e0 = s.units!.find((u) => u.id === 'e0')!
-  const ex = e0.screen.x - (30 * Math.sqrt(3)) / 2
+  const ex = e0.screen.x - (36 * Math.sqrt(3)) / 2 // 共享边界中点（layout size 36，与 Adventure 一致）
   const ey = e0.screen.y
   await page.mouse.move(ex, ey)
   const hov = (await getState(page)).hover
