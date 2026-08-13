@@ -183,8 +183,11 @@ export class AdventureScene extends Phaser.Scene {
     this.sfx = new SfxManager(this)
     // E 键结束回合（与右下角按钮等效）
     this.input.keyboard?.on('keydown-E', () => this.endTurn())
-    // 窗口大小变化时重新排布底部控件
-    this.scale.on('resize', () => this.repositionBottomControls())
+    // 窗口大小变化时：地图保持居中 + 重新排布底部控件
+    this.scale.on('resize', () => {
+      this.cameras.main.centerOn(0, 0)
+      this.repositionBottomControls()
+    })
     this.events.once('shutdown', () => this.bgmControls?.destroy())
   }
 

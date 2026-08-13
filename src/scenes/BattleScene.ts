@@ -65,6 +65,12 @@ export class BattleScene extends Phaser.Scene {
   /** 后台 log 缓冲（新增条目输出到 console + 可下载为 .log 文件） */
   private logBuffer: string[] = []
   private logFlushed = 0
+  /** 拖拽平移相机（与点击移动/攻击区分：位移 > 阈值视为拖拽） */
+  private dragging = false
+  private downPos = { x: 0, y: 0 }
+  private lastPointer = { x: 0, y: 0 }
+  private skipButton!: Phaser.GameObjects.Text
+  private surrenderButton!: Phaser.GameObjects.Text
   /** 受击闪白累计次数（debug / e2e 断言用） */
   private hitFlashCount = 0
   /** 音效（渲染层；移动循环 + 攻击一次性） */
@@ -170,8 +176,12 @@ export class BattleScene extends Phaser.Scene {
       .setDepth(11)
       .setScrollFactor(0)
       .setVisible(false)
-    this.makeCornerButton(1880, 1040, '跳过行动', () => this.endCurrentTurn())
-    this.makeCornerButton(1880, 980, '撤退', () => this.surrender())
+    this.skipButton = this.makeCornerButton(1880, 1040, '跳过行动', () => this.endCurrentTurn())
+    this.surrenderButton = this.makeCornerButton(1880, 980, '撤退', () => this.surrender())
+    this.scale.on('resize', () => {
+      this.centerCamera()
+      this.repositionCornerButtons()
+    })
   }
 
   private drawGrid(): void {
@@ -403,21 +413,41 @@ export class BattleScene extends Phaser.Scene {
   // ---------- 输入 ----------
 
   private setupInput(): void {
+    this.input.off('pointerdown')
     this.input.off('pointerup')
     this.input.off('pointermove')
     // 切场防抖：主菜单按钮 pointerdown 触发 scene.start 后，同一次点击的收尾 pointerup
     // 会泄漏进新场景的全局监听 → 误触发一次操作（把当前行动单位移到按钮所在格）。
     // 若场景启动时指针仍按下，说明该 pointerup 属于旧场景的点击：吞掉它（只吞一次）。
     let swallowStaleUp = this.input.activePointer.isDown
+    this.input.on('pointerdown', (p: Phaser.Input.Pointer) => {
+      // 记录按下点：用于区分「点击」与「拖拽平移相机」
+      this.dragging = true
+      this.downPos = { x: p.x, y: p.y }
+      this.lastPointer = { x: p.x, y: p.y }
+    })
     this.input.on('pointerup', (p: Phaser.Input.Pointer) => {
       if (swallowStaleUp) {
         swallowStaleUp = false
         return
       }
+      this.dragging = false
       if (this.state.phase !== 'combat' || this.currentSide() !== 'player') return
+      // 点在 UI 控件（跳过/撤退/BGM 等）上 → 不触发地图操作
+      if (this.input.hitTestPointer(p).length > 0) return
+      // 位移过大 = 拖拽平移地图，不算点击
+      const moved = Math.hypot(p.x - this.downPos.x, p.y - this.downPos.y)
+      if (moved > 6 || this.busy) return
       this.handleClick(this.layout.pixelToHex(p.worldX, p.worldY))
     })
     this.input.on('pointermove', (p: Phaser.Input.Pointer) => {
+      if (this.dragging) {
+        // 拖拽平移相机（战场 zoom=1，直接按像素位移）
+        this.cameras.main.scrollX -= p.x - this.lastPointer.x
+        this.cameras.main.scrollY -= p.y - this.lastPointer.y
+        this.lastPointer = { x: p.x, y: p.y }
+        return
+      }
       this.onHover(p)
     })
   }
@@ -776,7 +806,7 @@ export class BattleScene extends Phaser.Scene {
     }
   }
 
-  private makeCornerButton(x: number, y: number, label: string, onClick: () => void): void {
+  private makeCornerButton(x: number, y: number, label: string, onClick: () => void): Phaser.GameObjects.Text {
     const btn = this.add
       .text(x, y, label, { fontFamily: 'sans-serif', fontSize: '20px', color: '#ffffff', backgroundColor: '#33415c' })
       .setOrigin(1, 0.5)
@@ -785,6 +815,14 @@ export class BattleScene extends Phaser.Scene {
       .setPadding(14, 8)
       .setInteractive({ useHandCursor: true })
     btn.on('pointerdown', onClick)
+    return btn
+  }
+
+  /** resize 时把右下角按钮贴到新视口右下角 */
+  private repositionCornerButtons(): void {
+    const cam = this.cameras.main
+    this.skipButton?.setPosition(cam.width - 40, cam.height - 40)
+    this.surrenderButton?.setPosition(cam.width - 40, cam.height - 100)
   }
 
   /** 逐格移动动画耗时（ms）；0 = 瞬间完成（e2e 用）；同时关掉行动间隔 */
@@ -929,6 +967,7 @@ export class BattleScene extends Phaser.Scene {
       bgmControls: this.bgmControls?.getDebugState() ?? null,
       sfx: this.sfx?.getState() ?? null,
       phase: state.phase,
+      camera: { scrollX: Math.round(this.cameras.main.scrollX), scrollY: Math.round(this.cameras.main.scrollY) },
       turn: state.turn,
       animating: this.animActive !== null || this.animQueue.length > 0,
       actionGapMs: this.actionGapMs,

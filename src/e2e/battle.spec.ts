@@ -45,6 +45,7 @@ interface DebugGameState {
   }
   infoPanelText?: string | null
   log?: string[]
+  camera?: { scrollX?: number; scrollY?: number }
   animating?: boolean
   actionGapMs?: number
   hitFlashCount?: number
@@ -310,6 +311,30 @@ test('标准化 battle log：getLog / exportState（后台日志 + 状态导出�
   const parsed = JSON.parse(exp) as { units?: unknown[]; log?: string[] }
   expect(parsed.units).toBeDefined()
   expect(parsed.log?.length).toBeGreaterThan(0)
+})
+
+test('拖拽可平移战场相机（且不误触点击移动）', async ({ page }) => {
+  await gotoBattle(page)
+  await waitBattleReady(page)
+  await setAnimationSpeed(page, 0)
+  await startBattle(page,
+    { side: 'player', generalName: 'P', atkBonus: 0, defBonus: 0, units: [{ defId: 'militia', count: 50 }] },
+    { side: 'enemy', generalName: 'E', atkBonus: 0, defBonus: 0, units: [{ defId: 'militia', count: 50 }] },
+    { cols: 7, rows: 3 })
+  const before = (await getState(page)).camera!
+  // 拖拽：按住并向右下移动一段距离
+  await page.mouse.move(960, 540)
+  await page.mouse.down()
+  await page.mouse.move(1100, 640, { steps: 5 })
+  await page.mouse.up()
+  const after = (await getState(page)).camera!
+  expect(after.scrollX).not.toBe(before.scrollX)
+  expect(after.scrollY).not.toBe(before.scrollY)
+  // 拖拽后点击可达格移动仍有效（screen 坐标已含相机偏移）
+  const s = await getState(page)
+  const reach1 = s.reachable!.find((h) => h.q === 1 && h.r === 0)!
+  await page.mouse.click(reach1.screen.x, reach1.screen.y)
+  expect((await getState(page)).units!.find((u) => u.id === 'p0')!.position).toEqual({ q: 1, r: 0 })
 })
 
 test('移动动画：默认速度先播动画、动画结束才落状态', async ({ page }) => {
