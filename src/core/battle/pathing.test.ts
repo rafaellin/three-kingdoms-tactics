@@ -1,8 +1,8 @@
 import { describe, expect, test } from 'vitest'
 import { hexKey } from '../hex/HexGrid'
 import type { Axial } from '../hex/HexGrid'
-import { battleFindPath, battleReachableArea, battleGridConnected, inBattleGrid } from './pathing'
-import type { BattleState, BattleUnit } from './types'
+import { battleFindPath, battleReachableArea, battleGridConnected, canStandAt, inBattleGrid } from './pathing'
+import { occupiedHexes, type BattleState, type BattleUnit } from './types'
 
 function makeUnit(over: Partial<BattleUnit>): BattleUnit {
   return {
@@ -52,6 +52,44 @@ describe('战斗寻路（全平地，障碍 = 其他单位）', () => {
     expect(battleFindPath(s.units[0]!, { q: 2, r: 0 }, s)).not.toBeNull()
     const s2 = makeState([makeUnit({ defId: 'militia' }), makeUnit({ id: 'e0', side: 'enemy', position: { q: 2, r: 0 } })])
     expect(battleFindPath(s2.units[0]!, { q: 2, r: 0 }, s2)).toBeNull()
+  })
+})
+
+describe('1×2 骑兵可达范围边界保证（回归）', () => {
+  /** 网格上所有合法 1×2 主格（双格都在界内） */
+  function validMains(state: BattleState): Axial[] {
+    const out: Axial[] = []
+    for (let r = 0; r < state.grid.rows; r++) {
+      const qMin = -Math.floor(r / 2)
+      for (let q = qMin; q <= qMin + state.grid.cols - 1; q++) {
+        const m = makeUnit({ id: 'x', defId: 'cavalry', position: { q, r }, size: 2 })
+        if (canStandAt(m, state, { q, r })) out.push({ q, r })
+      }
+    }
+    return out
+  }
+
+  test('每个合法骑兵起始位：所有可达落点的双格都在界内（无出界）', () => {
+    const s = makeState([], { cols: 13, rows: 9 })
+    let bad = 0
+    for (const start of validMains(s)) {
+      const cav = makeUnit({ id: 'u0', defId: 'cavalry', position: start, size: 2 })
+      for (const p of battleReachableArea(cav, s)) {
+        for (const h of occupiedHexes({ position: p, size: 2 })) {
+          if (!inBattleGrid(s, h)) bad++
+        }
+      }
+    }
+    expect(bad).toBe(0)
+  })
+
+  test('可达范围从两头都覆盖：主格 ±speed 极端可达（而非只一头）', () => {
+    // 骑兵 main (15,4) body (15,4)+(16,4)，speed 9 → 主格可达 (15±9, 4)
+    const cav = makeUnit({ id: 'u0', defId: 'cavalry', position: { q: 15, r: 4 }, size: 2 })
+    const s = makeState([cav], { cols: 30, rows: 9 })
+    const reach = battleReachableArea(cav, s).map(hexKey)
+    expect(reach.includes('6,4')).toBe(true)  // 西端 main 15-9
+    expect(reach.includes('24,4')).toBe(true) // 东端 main 15+9（body 到 25,4）
   })
 })
 

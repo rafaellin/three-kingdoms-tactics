@@ -2,7 +2,7 @@ import Phaser from 'phaser'
 import { CommandLog } from '../core/events/CommandLog'
 import { battleReducer, createInitialBattleState } from '../core/battle/battleReducer'
 import { planEnemyAction } from '../core/battle/ai'
-import { battleFindPath, battleReachableArea } from '../core/battle/pathing'
+import { battleFindPath, battleReachableArea, inBattleGrid } from '../core/battle/pathing'
 import { occupiedHexes, woundedHp, type BattleArmyConfig, type BattleState, type BattleUnit } from '../core/battle/types'
 import { hexDistance, hexKey, hexNeighbor, HexLayout, type Axial, type HexDir } from '../core/hex/HexGrid'
 import { UNIT_DEFS } from '../data/units'
@@ -201,6 +201,7 @@ export class BattleScene extends Phaser.Scene {
       const pos = this.visualPos.get(unit.id) ?? unit.position
       const def = UNIT_DEFS[unit.defId]
       for (const hex of occupiedHexes({ position: pos, size: unit.size })) {
+        if (!inBattleGrid(this.state, hex)) continue // 防御：1×2 绝不画出边界外
         this.fillHex(this.unitGraphics, hex, SIDE_COLORS[unit.side], 0.85)
         // 白边框：单位挤在一起时区分谁是谁
         this.strokeHex(this.unitGraphics, hex, 0xffffff, 2)
