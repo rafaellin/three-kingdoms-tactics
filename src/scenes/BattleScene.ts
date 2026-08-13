@@ -36,7 +36,8 @@ export class BattleScene extends Phaser.Scene {
   private unitGraphics!: Phaser.GameObjects.Graphics
   private obstacleGraphics!: Phaser.GameObjects.Graphics
   private hoverGraphics!: Phaser.GameObjects.Graphics
-  private unitTexts = new Map<string, Phaser.GameObjects.Text>()
+  private unitLabels = new Map<string, Phaser.GameObjects.Text>()
+  private unitCounts = new Map<string, Phaser.GameObjects.Text>()
   private infoPanel!: Phaser.GameObjects.Text
   private blinkPhase = 0
   private hover: {
@@ -196,28 +197,50 @@ export class BattleScene extends Phaser.Scene {
     const seen = new Set<string>()
     for (const unit of this.state.units) {
       const pos = this.visualPos.get(unit.id) ?? unit.position
+      const def = UNIT_DEFS[unit.defId]
       for (const hex of occupiedHexes({ position: pos, size: unit.size })) {
         this.fillHex(this.unitGraphics, hex, SIDE_COLORS[unit.side], 0.85)
+        // 白边框：单位挤在一起时区分谁是谁
+        this.strokeHex(this.unitGraphics, hex, 0xffffff, 2)
       }
       const c1 = this.layout.hexToPixel(pos)
       const c2 = unit.size === 2 ? this.layout.hexToPixel({ q: pos.q + 1, r: pos.r }) : c1
       const cx = (c1.x + c2.x) / 2
-      let t = this.unitTexts.get(unit.id)
-      if (!t) {
-        t = this.add
-          .text(cx, c1.y, '', { fontFamily: 'sans-serif', fontSize: '18px', color: '#ffffff' })
+      const cy = c1.y
+      // 中央大字：兵种格上显示文本（来自配置 gridLabel，如「刀」「弓」「骑兵」）
+      let label = this.unitLabels.get(unit.id)
+      if (!label) {
+        label = this.add
+          .text(cx, cy, '', { fontFamily: 'sans-serif', fontSize: '30px', color: '#ffffff', fontStyle: 'bold' })
           .setOrigin(0.5)
           .setDepth(4)
-        this.unitTexts.set(unit.id, t)
+        this.unitLabels.set(unit.id, label)
       }
-      t.setPosition(cx, c1.y)
-      t.setText(String(unit.count))
+      label.setPosition(cx, cy)
+      label.setText(def.gridLabel)
+      // 右下角小字：兵力数量
+      let count = this.unitCounts.get(unit.id)
+      if (!count) {
+        count = this.add
+          .text(0, 0, '', { fontFamily: 'sans-serif', fontSize: '14px', color: '#e8eef5' })
+          .setOrigin(1, 1)
+          .setDepth(4)
+        this.unitCounts.set(unit.id, count)
+      }
+      count.setPosition(c2.x + this.layout.size * 0.55, c2.y + this.layout.size * 0.42)
+      count.setText(String(unit.count))
       seen.add(unit.id)
     }
-    for (const id of this.unitTexts.keys()) {
+    for (const [id, t] of this.unitLabels) {
       if (!seen.has(id)) {
-        this.unitTexts.get(id)?.destroy()
-        this.unitTexts.delete(id)
+        t.destroy()
+        this.unitLabels.delete(id)
+      }
+    }
+    for (const [id, t] of this.unitCounts) {
+      if (!seen.has(id)) {
+        t.destroy()
+        this.unitCounts.delete(id)
       }
     }
   }
@@ -761,6 +784,8 @@ export class BattleScene extends Phaser.Scene {
         id: u.id,
         side: u.side,
         defId: u.defId,
+        /** 格上中央大字（配置 gridLabel，与 drawUnits 一致） */
+        gridLabel: UNIT_DEFS[u.defId].gridLabel,
         count: u.count,
         position: u.position,
         size: u.size,

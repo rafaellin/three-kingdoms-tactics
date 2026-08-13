@@ -12,6 +12,7 @@ interface UnitState {
   id: string
   side: string
   defId: string
+  gridLabel?: string
   count: number
   position: { q: number; r: number }
   size: number
@@ -78,6 +79,13 @@ test('主菜单 → 战斗测试：矩形战场 + 障碍物 + 8 单位', async (
   // 敌方刀兵固定放在骑兵右侧 (2,3) 贴身，便于测试近战原地攻击
   const enemySword = s.units!.find((u) => u.defId === 'swordsman' && u.side === 'enemy')!
   expect(enemySword.position).toEqual({ q: 2, r: 3 })
+  // 格上中央大字来自配置 gridLabel（民/刀/弓/枪/骑兵）
+  const labels = Object.fromEntries(s.units!.map((u) => [u.id, u.gridLabel]))
+  expect(labels.p0).toBe('民')
+  expect(labels.p1).toBe('刀')
+  expect(labels.p2).toBe('弓')
+  expect(labels.p3).toBe('骑兵')
+  expect(labels.e1).toBe('枪')
   await page.screenshot({ path: 'screenshots/battle-field-rect.png' })
 })
 

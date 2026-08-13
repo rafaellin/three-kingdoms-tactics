@@ -14,6 +14,9 @@ describe('兵种属性表', () => {
       expect(def.hp).toBeGreaterThan(0)
       expect(def.range).toBeGreaterThanOrEqual(1)
       expect([1, 2]).toContain(def.size)
+      expect(def.gridLabel.length).toBeGreaterThan(0) // 格上显示文本必填
+      // 格上文本：1×1 单字、1×2 两字（渲染层不截断名称）
+      expect(def.gridLabel.length).toBe(def.size === 1 ? 1 : 2)
     }
   })
   test('弓兵远程射程 6、骑兵 1×2', () => {
