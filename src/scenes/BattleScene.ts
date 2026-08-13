@@ -176,8 +176,9 @@ export class BattleScene extends Phaser.Scene {
       .setDepth(11)
       .setScrollFactor(0)
       .setVisible(false)
-    this.skipButton = this.makeCornerButton(1880, 1040, '跳过行动', () => this.endCurrentTurn())
-    this.surrenderButton = this.makeCornerButton(1880, 980, '撤退', () => this.surrender())
+    // 右下角按钮按当前视口定位（避免小窗口下写死的 1880/980 出画面）
+    this.skipButton = this.makeCornerButton(this.cameras.main.width - 40, this.cameras.main.height - 40, '跳过行动', () => this.endCurrentTurn())
+    this.surrenderButton = this.makeCornerButton(this.cameras.main.width - 40, this.cameras.main.height - 100, '撤退', () => this.surrender())
     this.scale.on('resize', () => {
       this.centerCamera()
       this.repositionCornerButtons()
