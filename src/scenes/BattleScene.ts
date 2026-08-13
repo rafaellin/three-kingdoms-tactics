@@ -111,6 +111,10 @@ export class BattleScene extends Phaser.Scene {
   update(_time: number, delta: number): void {
     this.blinkPhase += delta * 0.01
     this.updateAnimation(delta)
+    // 玩家当前单位行动时，可达范围每帧重绘 → 脉动 alpha（闪烁）标识"这是可移动范围"
+    if (this.state.phase === 'combat' && this.currentSide() === 'player') {
+      this.drawOverlay()
+    }
     if (this.state.phase === 'combat' && (this.hover.ghostHex || this.hover.swordHex || this.hover.blinkId)) {
       this.drawHoverLayer()
     }
@@ -266,9 +270,11 @@ export class BattleScene extends Phaser.Scene {
     }
     if (current && current.side === 'player') {
       // 可达高亮覆盖 1×2 完整占地（主格 + 东邻格）：落脚时双格都在高亮内，不会"一脚里一脚外"
+      // 脉动 alpha（慢速闪烁）标识"这是可移动范围"（区别于地图可见/不可见）
+      const a = 0.1 + 0.25 * Math.abs(Math.sin(this.blinkPhase * 0.5))
       for (const hex of battleReachableArea(current, state)) {
         for (const h of occupiedHexes({ position: hex, size: current.size })) {
-          this.fillHex(this.overlayGraphics, h, REACHABLE_FILL, 0.18)
+          this.fillHex(this.overlayGraphics, h, REACHABLE_FILL, a)
         }
       }
     }
@@ -483,12 +489,12 @@ export class BattleScene extends Phaser.Scene {
   private drawHoverLayer(): void {
     this.hoverGraphics.clear()
     const h = this.hover
-    // 残影
+    // 目的地残影：同色（蓝）静态更亮，指示去向（不闪烁；可达区才闪烁）
     if (h.ghostHex) {
       const current = this.state.units.find((u) => u.id === this.state.currentUnitId)
       const size = current?.size ?? 1
       for (const hex of occupiedHexes({ position: h.ghostHex, size })) {
-        this.fillHex(this.hoverGraphics, hex, 0xffffff, 0.35)
+        this.fillHex(this.hoverGraphics, hex, REACHABLE_FILL, 0.5)
       }
     }
     // 目标闪烁（脉动 alpha）

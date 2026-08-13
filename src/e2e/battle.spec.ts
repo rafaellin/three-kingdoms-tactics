@@ -105,8 +105,8 @@ test('主菜单进入战斗：按钮点击的收尾 pointerup 不得触发误移
   await page.mouse.up()
   await waitBattleReady(page)
   const s = await getState(page)
-  // 骑兵 speed3 → 弓兵(5) 最先行动；所有单位都应停留在出生位、未行动
-  expect(s.currentUnitId).toBe('p2')
+  // 骑兵 speed3 是唯一机动单位、最先行动；所有单位都应停留在出生位、未行动
+  expect(s.currentUnitId).toBe('p3')
   for (const u of s.units!) {
     expect(u.hasActed).toBe(false) // 泄漏的 pointerup 被吞掉，无任何误行动
   }
