@@ -24,6 +24,7 @@ export class MainMenuScene extends Phaser.Scene {
   private sealText!: Phaser.GameObjects.Text
   private startBtn!: Phaser.GameObjects.Text
   private battleBtn!: Phaser.GameObjects.Text
+  private debugBtn!: Phaser.GameObjects.Text
 
   constructor() {
     super(MainMenuScene.KEY)
@@ -56,9 +57,13 @@ export class MainMenuScene extends Phaser.Scene {
     this.battleBtn = this.createButton(width / 2, height * 0.68, '战斗测试', () => {
       if (this.buttonsEnabled) fadeAndStart(this, BattleScene.KEY)
     })
+    // dev 入口：进入战斗并直接判定胜利（调试结算界面用；次要样式区别于主按钮）
+    this.debugBtn = makeButton(this, width / 2, height * 0.81, '调试：胜利', () => {
+      if (this.buttonsEnabled) fadeAndStart(this, BattleScene.KEY, { debugWin: true })
+    }, { fontSize: 20, minWidth: 200, background: COLORS.slateAzure }).setAlpha(0)
     // 标题 + 印章 + 按钮一起淡入；动画完成才放行点击
     this.tweens.add({
-      targets: [this.title, this.sealGraphics, this.sealText, this.startBtn, this.battleBtn],
+      targets: [this.title, this.sealGraphics, this.sealText, this.startBtn, this.battleBtn, this.debugBtn],
       alpha: 1,
       duration: 500,
       ease: 'Cubic.easeOut',
@@ -138,6 +143,7 @@ export class MainMenuScene extends Phaser.Scene {
     if (this.title) this.positionTitle()
     this.startBtn?.setPosition(width / 2, height * 0.55)
     this.battleBtn?.setPosition(width / 2, height * 0.68)
+    this.debugBtn?.setPosition(width / 2, height * 0.81)
   }
 
   getDebugState(): Record<string, unknown> {

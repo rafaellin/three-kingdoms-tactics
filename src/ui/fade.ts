@@ -11,9 +11,9 @@ const INK = [(COLORS.nightInk >> 16) & 0xff, (COLORS.nightInk >> 8) & 0xff, COLO
  * 切换到目标场景：先淡出到墨色，完成后再 scene.start。
  * 目标场景 create() 里应调用 fadeIn(this) 从墨色淡入。
  */
-export function fadeAndStart(scene: Phaser.Scene, target: string): void {
+export function fadeAndStart(scene: Phaser.Scene, target: string, data?: object): void {
   scene.cameras.main.fadeOut(SCENE_FADE_MS, INK[0], INK[1], INK[2])
-  scene.cameras.main.once('camerafadeoutcomplete', () => scene.scene.start(target))
+  scene.cameras.main.once('camerafadeoutcomplete', () => scene.scene.start(target, data))
 }
 
 /** 进入场景时从墨色淡入（在目标场景 create() 开头调用） */

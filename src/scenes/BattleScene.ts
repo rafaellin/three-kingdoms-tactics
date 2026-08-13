@@ -85,7 +85,7 @@ export class BattleScene extends Phaser.Scene {
     super(BattleScene.KEY)
   }
 
-  create(): void {
+  create(initData?: { debugWin?: boolean }): void {
     // 场景实例被 scene.start 复用：字段默认值只在构造时初始化一次，必须在此重置跨场景残留的渲染状态
     this.visualPos.clear()
     this.dragging = false
@@ -109,6 +109,10 @@ export class BattleScene extends Phaser.Scene {
       enemy: ENEMY_ARMY,
       grid: { ...BATTLE_GRID, obstacles: BATTLE_OBSTACLES }
     })
+    // 主菜单 dev 入口：进入即判定胜利（调试结算界面用）
+    if (initData?.debugWin) {
+      this.store.dispatch('battle/debugResult', { phase: 'won' })
+    }
     getBgmManager(this).switchToCategory('battle')
     fadeIn(this)
     this.createLayers()
@@ -167,16 +171,26 @@ export class BattleScene extends Phaser.Scene {
     this.hoverGraphics = this.add.graphics().setDepth(5)
     this.drawGrid()
     this.drawObstacles()
-    // 结果 + 返回主菜单（视口固定，scrollFactor 0；水平居中随相机宽度动态计算）
-    const cx = this.cameras.main.width / 2
+    // 结果 + 返回主菜单（视口固定，scrollFactor 0；整体水平+垂直居中，随相机尺寸动态计算）
     this.resultText = this.add
-      .text(cx, 520, '', { fontFamily: 'sans-serif', fontSize: '48px', color: '#ffffff' })
+      .text(this.cameras.main.width / 2, this.cameras.main.height / 2, '', {
+        fontFamily: 'sans-serif',
+        fontSize: '48px',
+        color: '#ffffff',
+        align: 'center'
+      })
       .setOrigin(0.5)
       .setDepth(12)
       .setScrollFactor(0)
       .setVisible(false)
     this.returnButton = this.add
-      .text(cx, 580, '返回主菜单', { fontFamily: 'sans-serif', fontSize: '24px', color: '#ffffff', backgroundColor: '#33415c' })
+      .text(this.cameras.main.width / 2, this.cameras.main.height / 2, '返回主菜单', {
+        fontFamily: 'sans-serif',
+        fontSize: '24px',
+        color: '#ffffff',
+        backgroundColor: '#33415c',
+        align: 'center'
+      })
       .setOrigin(0.5)
       .setDepth(12)
       .setScrollFactor(0)
@@ -184,6 +198,7 @@ export class BattleScene extends Phaser.Scene {
       .setVisible(false)
       .setInteractive({ useHandCursor: true })
     this.returnButton.on('pointerdown', () => fadeAndStart(this, MainMenuScene.KEY))
+    this.positionResult()
     this.logText = this.add
       .text(24, 24, '', { fontFamily: 'sans-serif', fontSize: '16px', color: '#c8d2e0' })
       .setDepth(12)
@@ -200,7 +215,7 @@ export class BattleScene extends Phaser.Scene {
     this.scale.on('resize', () => {
       this.centerCamera()
       this.repositionCornerButtons()
-      this.repositionResult()
+      this.positionResult()
     })
   }
 
@@ -344,7 +359,10 @@ export class BattleScene extends Phaser.Scene {
     const terminal = this.state.phase !== 'combat'
     this.resultText.setVisible(terminal)
     this.returnButton.setVisible(terminal)
-    if (terminal) this.resultText.setText(this.state.phase === 'won' ? '胜利！' : '战败…')
+    if (terminal) {
+      this.resultText.setText(this.state.phase === 'won' ? '胜利' : '战败')
+      this.positionResult()
+    }
   }
 
   private refreshViews(): void {
@@ -847,11 +865,18 @@ export class BattleScene extends Phaser.Scene {
     this.surrenderButton?.setPosition(cam.width - 40, cam.height - 100)
   }
 
-  /** resize 时结果文字与返回按钮保持水平居中（原本写死 960 在非 1920 窗口会偏） */
-  private repositionResult(): void {
-    const cx = this.cameras.main.width / 2
-    this.resultText?.setX(cx)
-    this.returnButton?.setX(cx)
+  /** 结算区（结果文字 + 返回按钮）作为整体：水平居中 + 垂直居中（组内文字/按钮各自水平居中） */
+  private positionResult(): void {
+    const cam = this.cameras.main
+    const cx = cam.width / 2
+    if (!this.resultText || !this.returnButton) return
+    const textH = this.resultText.height
+    const btnH = this.returnButton.height
+    const GAP = 28
+    const groupH = textH + GAP + btnH
+    const top = cam.height / 2 - groupH / 2
+    this.resultText.setPosition(cx, top + textH / 2)
+    this.returnButton.setPosition(cx, top + textH + GAP + btnH / 2)
   }
 
   /** 逐格移动动画耗时（ms）；0 = 瞬间完成（e2e 用）；同时关掉行动间隔 */
@@ -973,6 +998,12 @@ export class BattleScene extends Phaser.Scene {
 
   // ---------- dev / e2e ----------
 
+  /** 对象渲染盒（诊断用） */
+  private boundsOf(o: Phaser.GameObjects.GameObject): { x: number; y: number; width: number; height: number } {
+    const b = (o as unknown as { getBounds(): Phaser.Geom.Rectangle }).getBounds()
+    return { x: b.x, y: b.y, width: b.width, height: b.height }
+  }
+
   getDebugState(): Record<string, unknown> {
     if (!this.store) return { ready: false }
     const state = this.state
@@ -1022,17 +1053,24 @@ export class BattleScene extends Phaser.Scene {
         blinkId: this.hover.blinkId
       },
       infoPanelText: this.infoPanel && this.infoPanel.visible ? this.infoPanel.text : null,
-      // 结算元素真实坐标（诊断：验证结果文字/返回按钮水平居中）
+      // 结算元素真实坐标（诊断：验证结果文字/返回按钮水平居中；bounds = 渲染盒）
       result: {
         camWidth: this.cameras.main.width,
-        text: this.resultText ? { x: this.resultText.x, w: this.resultText.width, dw: this.resultText.displayWidth } : null,
+        scaleWidth: this.scale.width,
+        text: this.resultText
+          ? {
+              x: this.resultText.x,
+              dw: this.resultText.displayWidth,
+              ox: this.resultText.originX,
+              bounds: this.boundsOf(this.resultText)
+            }
+          : null,
         button: this.returnButton
           ? {
               x: this.returnButton.x,
-              w: this.returnButton.width,
               dw: this.returnButton.displayWidth,
               ox: this.returnButton.originX,
-              oy: this.returnButton.originY
+              bounds: this.boundsOf(this.returnButton)
             }
           : null
       },
