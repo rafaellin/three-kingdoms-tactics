@@ -50,6 +50,8 @@ export class BattleScene extends Phaser.Scene {
     blinkId: string | null
   } = { ghostHex: null, swordHex: null, swordAdjHex: null, cursorKind: 'none', swordTargetId: null, blinkId: null }
   private animationMs = 150
+  /** 每步行动之间的停顿（ms）；敌方 AI 行动前停顿，让玩家看清上一步结果 */
+  private actionGapMs = 700
   private visualPos = new Map<string, Axial>()
   private animQueue: { unitId: string; path: Axial[]; resolve: () => void }[] = []
   private animActive: { unitId: string; path: Axial[]; idx: number; acc: number; resolve: () => void } | null = null
@@ -297,6 +299,8 @@ export class BattleScene extends Phaser.Scene {
     try {
       let guard = 0
       while (this.state.phase === 'combat' && this.currentSide() === 'enemy' && guard++ < 50) {
+        // 每步行动之间停顿：让玩家看清上一步的结果（如敌方弓兵秒杀前有一拍）
+        await this.sleep(this.actionGapMs)
         const action = planEnemyAction(this.state)
         const curId = this.state.currentUnitId as string
         const before = this.state.units.find((u) => u.id === curId) as BattleUnit
@@ -673,9 +677,20 @@ export class BattleScene extends Phaser.Scene {
     btn.on('pointerdown', onClick)
   }
 
-  /** 逐格移动动画耗时（ms）；0 = 瞬间完成（e2e 用） */
+  /** 逐格移动动画耗时（ms）；0 = 瞬间完成（e2e 用）；同时关掉行动间隔 */
   setAnimationSpeed(ms: number): void {
     this.animationMs = ms
+    if (ms <= 0) this.actionGapMs = 0
+  }
+
+  /** 行动间隔（ms）；0 = 无停顿（e2e 用） */
+  setActionGap(ms: number): void {
+    this.actionGapMs = Math.max(0, ms)
+  }
+
+  private sleep(ms: number): Promise<void> {
+    if (ms <= 0) return Promise.resolve()
+    return new Promise((resolve) => setTimeout(resolve, ms))
   }
 
   /** 移动动画结束后 resolve；无动画立即 resolve */
@@ -768,6 +783,7 @@ export class BattleScene extends Phaser.Scene {
       phase: state.phase,
       turn: state.turn,
       animating: this.animActive !== null || this.animQueue.length > 0,
+      actionGapMs: this.actionGapMs,
       hitFlashCount: this.hitFlashCount,
       currentUnitId: state.currentUnitId,
       selectedUnitId: state.selectedUnitId,

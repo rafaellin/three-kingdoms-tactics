@@ -44,6 +44,7 @@ interface DebugGameState {
   }
   infoPanelText?: string | null
   animating?: boolean
+  actionGapMs?: number
   hitFlashCount?: number
   units?: UnitState[]
 }
@@ -74,6 +75,7 @@ test('主菜单 → 战斗测试：矩形战场 + 障碍物 + 8 单位', async (
   const s = await getState(page)
   expect(s.grid).toEqual(expect.objectContaining({ cols: 13, rows: 9 }))
   expect(s.obstacles).toHaveLength(6)
+  expect(s.actionGapMs).toBe(700) // 每步行动间隔默认 700ms（setAnimationSpeed(0) 时归零）
   expect(s.units).toHaveLength(8) // 玩家4 + 敌方4
   expect(s.units?.find((u) => u.defId === 'cavalry')?.size).toBe(2)
   // 敌方刀兵固定放在骑兵右侧 (2,3) 贴身，便于测试近战原地攻击
