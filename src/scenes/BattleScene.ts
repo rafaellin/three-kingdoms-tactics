@@ -210,8 +210,9 @@ export class BattleScene extends Phaser.Scene {
       const cx = (c1.x + c2.x) / 2
       const cy = c1.y
       // 中央大字：兵种格上显示文本（来自配置 gridLabel，如「刀」「弓」「骑兵」）
+      // active 检查：对象被销毁（残留于 Map）时重建，避免"文字有时消失"
       let label = this.unitLabels.get(unit.id)
-      if (!label) {
+      if (!label || !label.active) {
         label = this.add
           .text(cx, cy, '', { fontFamily: 'sans-serif', fontSize: '30px', color: '#ffffff', fontStyle: 'bold' })
           .setOrigin(0.5)
@@ -222,7 +223,7 @@ export class BattleScene extends Phaser.Scene {
       label.setText(def.gridLabel)
       // 右下角小字：兵力数量（黑色，靠底边，不与中央大字重叠）
       let count = this.unitCounts.get(unit.id)
-      if (!count) {
+      if (!count || !count.active) {
         count = this.add
           .text(0, 0, '', { fontFamily: 'sans-serif', fontSize: '14px', color: '#000000' })
           .setOrigin(1, 1)
@@ -565,12 +566,13 @@ export class BattleScene extends Phaser.Scene {
     const unitAt = state.units.find((u) => occupiedHexes(u).some((h) => hexKey(h) === hexKey(hex)))
     if (this.hover.cursorKind === 'sword' && this.hover.swordTargetId && this.hover.swordHex) {
       const to = this.hover.swordHex
+      const targetId = this.hover.swordTargetId // 提前捕获：冲锋动画期间鼠标移动会改写 hover，落刀必须用这个目标
       const path = hexKey(to) === hexKey(current.position) ? [] : (battleFindPath(current, to, this.state) ?? [to])
       const hpBefore = new Map(state.units.map((u) => [u.id, u.hpLeft] as const))
       const posBefore = new Map(state.units.map((u) => [u.id, { pos: u.position, size: u.size }] as const))
       if (path.length > 0) await this.animateMove(current.id, path) // 先冲锋动画，落刀再结算
       this.sfx?.playOnce('melee attack') // 近战（含远程兵近战）落刀音效
-      this.store.dispatch('battle/attack', { unitId: current.id, targetId: this.hover.swordTargetId, to })
+      this.store.dispatch('battle/attack', { unitId: current.id, targetId, to })
       this.flashDamageDealt(hpBefore, posBefore)
       this.refreshViews()
       return
@@ -785,6 +787,10 @@ export class BattleScene extends Phaser.Scene {
       animating: this.animActive !== null || this.animQueue.length > 0,
       actionGapMs: this.actionGapMs,
       hitFlashCount: this.hitFlashCount,
+      // 诊断：所有在场单位的格上文本对象是否都存活（无"文字消失"）
+      textOk: state.units.every(
+        (u) => (this.unitLabels.get(u.id)?.active ?? false) && (this.unitCounts.get(u.id)?.active ?? false)
+      ),
       currentUnitId: state.currentUnitId,
       selectedUnitId: state.selectedUnitId,
       grid: state.grid,

@@ -46,6 +46,7 @@ interface DebugGameState {
   animating?: boolean
   actionGapMs?: number
   hitFlashCount?: number
+  textOk?: boolean
   units?: UnitState[]
 }
 
@@ -312,6 +313,50 @@ test('远程攻击：攻方与被攻击方都闪烁（hitFlashCount +2）', asyn
   await page.mouse.click(e0.screen.x, e0.screen.y) // 远程射击
   const after = await getState(page)
   expect(after.hitFlashCount ?? 0).toBe(before + 2) // 攻方 + 目标各闪一次（550ms）
+})
+
+test('冲锋动画期间鼠标移开：攻击仍应命中（不还原）', async ({ page }) => {
+  // 回归：旧逻辑在 await 冲锋动画后才读 this.hover.swordTargetId，动画期间鼠标移动会改写 hover
+  // → dispatch 用失效 targetId 被拒绝 → 动画播放后状态还原（骑兵回原位、敌方无伤）。
+  await gotoBattle(page)
+  await waitBattleReady(page)
+  await startBattle(page,
+    { side: 'player', generalName: 'P', atkBonus: 0, defBonus: 0, units: [{ defId: 'swordsman', count: 20 }] },
+    { side: 'enemy', generalName: 'E', atkBonus: 0, defBonus: 0, units: [{ defId: 'militia', count: 50 }] },
+    { cols: 5, rows: 3 }) // p0 刀兵 (0,0) 距 e0 (3,0)，冲锋到 (2,0) 约 300ms；88 伤灭 e0，自身存活
+  const s = await getState(page)
+  const e0 = s.units!.find((u) => u.id === 'e0')!
+  const ex = e0.screen.x - (36 * Math.sqrt(3)) / 2 // (2,0)↔(3,0) 共享边界
+  await page.mouse.move(ex, e0.screen.y)
+  expect((await getState(page)).hover?.cursorKind).toBe('sword')
+  await page.mouse.click(ex, e0.screen.y) // 触发冲锋
+  await page.waitForTimeout(100) // 冲锋动画进行中
+  await page.mouse.move(100, 100) // 移到空地，改写 hover（swordTargetId → null）
+  await page.evaluate(() => (window as { __game?: { waitForMove(): Promise<void> } }).__game?.waitForMove())
+  const after = await getState(page)
+  const p0 = after.units!.find((u) => u.id === 'p0')!
+  expect(p0.position).toEqual({ q: 2, r: 0 }) // 冲锋落点，不还原
+  expect(after.units!.find((u) => u.id === 'e0')).toBeUndefined() // 造成伤害（灭 e0）
+})
+
+test('连续动画行动后所有单位格上文本仍在（textOk）', async ({ page }) => {
+  await gotoBattle(page)
+  await waitBattleReady(page)
+  await startBattle(page,
+    { side: 'player', generalName: 'P', atkBonus: 0, defBonus: 0, units: [{ defId: 'militia', count: 50 }, { defId: 'militia', count: 50 }] },
+    { side: 'enemy', generalName: 'E', atkBonus: 0, defBonus: 0, units: [{ defId: 'militia', count: 50 }] },
+    { cols: 7, rows: 3 })
+  // 默认动画速度，先后移动 p0 / p1（各两步），检查文本对象仍存活
+  let s = await getState(page)
+  const t0 = s.reachable!.find((h) => h.q === 2 && h.r === 0)!
+  await page.mouse.click(t0.screen.x, t0.screen.y)
+  await page.evaluate(() => (window as { __game?: { waitForMove(): Promise<void> } }).__game?.waitForMove())
+  s = await getState(page)
+  expect(s.currentUnitId).toBe('p1')
+  const t1 = s.reachable!.find((h) => h.q === 2 && h.r === 1)!
+  await page.mouse.click(t1.screen.x, t1.screen.y)
+  await page.evaluate(() => (window as { __game?: { waitForMove(): Promise<void> } }).__game?.waitForMove())
+  expect((await getState(page)).textOk).toBe(true)
 })
 
 test('信息面板：hover 部队 → 兵种/数量/伤兵剩余血', async ({ page }) => {
