@@ -34,6 +34,7 @@ interface DebugGameState {
   grid?: { cols: number; rows: number }
   obstacles?: { q: number; r: number }[]
   reachable?: { q: number; r: number; screen: { x: number; y: number } }[]
+  reachableFootprint?: { q: number; r: number }[]
   hover?: {
     ghostHex?: { q: number; r: number } | null
     cursorKind?: string
@@ -59,7 +60,7 @@ const waitBattleReady = (page: Page) =>
     return s?.ready === true && s?.scene === 'battle' && s?.phase === 'combat'
   })
 
-type Army = { side: 'player' | 'enemy'; generalName: string; atkBonus: number; defBonus: number; units: { defId: string; count: number }[] }
+type Army = { side: 'player' | 'enemy'; generalName: string; atkBonus: number; defBonus: number; units: { defId: string; count: number; speed?: number }[] }
 
 const startBattle = (page: Page, player: Army, enemy: Army, grid: { cols: number; rows: number }) =>
   page.evaluate(({ p, e, g }) => {
@@ -79,9 +80,9 @@ test('主菜单 → 战斗测试：矩形战场 + 障碍物 + 8 单位', async (
   expect(s.actionGapMs).toBe(700) // 每步行动间隔默认 700ms（setAnimationSpeed(0) 时归零）
   expect(s.units).toHaveLength(8) // 玩家4 + 敌方4
   expect(s.units?.find((u) => u.defId === 'cavalry')?.size).toBe(2)
-  // 敌方刀兵固定放在骑兵右侧 (2,3) 贴身，便于测试近战原地攻击
+  // 敌方刀兵放在骑兵右侧 4 格 (5,3)：speed3 骑兵主格到 (3,3)、东邻格 (4,3) 贴它可攻击（测东邻格贴敌）
   const enemySword = s.units!.find((u) => u.defId === 'swordsman' && u.side === 'enemy')!
-  expect(enemySword.position).toEqual({ q: 2, r: 3 })
+  expect(enemySword.position).toEqual({ q: 5, r: 3 })
   // 格上中央大字来自配置 gridLabel（民/刀/弓/枪/骑兵）
   const labels = Object.fromEntries(s.units!.map((u) => [u.id, u.gridLabel]))
   expect(labels.p0).toBe('民')
@@ -94,7 +95,7 @@ test('主菜单 → 战斗测试：矩形战场 + 障碍物 + 8 单位', async (
 
 test('主菜单进入战斗：按钮点击的收尾 pointerup 不得触发误移动（防抖）', async ({ page }) => {
   // 回归：主菜单「战斗测试」按钮 pointerdown 切场后，同一次点击的收尾 pointerup 会泄漏进
-  // 新 BattleScene 的全局 pointerup 监听 → 把当前行动单位移动到按钮所在格（hex (2,8)）。
+  // 新 BattleScene 的全局 pointerup 监听 → 吞掉，不得触发任何行动。
   // 真实用户点击按下后保持若干帧再松开（Playwright 默认 click 同帧 down+up 不会复现），
   // 故显式 down → 保持 → up。
   await gotoBooted(page)
@@ -104,10 +105,11 @@ test('主菜单进入战斗：按钮点击的收尾 pointerup 不得触发误移
   await page.mouse.up()
   await waitBattleReady(page)
   const s = await getState(page)
-  const cavalry = s.units!.find((u) => u.defId === 'cavalry')!
-  expect(s.currentUnitId).toBe('p3') // 骑兵 speed 9 最先行动
-  expect(cavalry.position).toEqual({ q: 0, r: 3 }) // 出生位，不得被误移走
-  expect(cavalry.hasActed).toBe(false)
+  // 骑兵 speed3 → 弓兵(5) 最先行动；所有单位都应停留在出生位、未行动
+  expect(s.currentUnitId).toBe('p2')
+  for (const u of s.units!) {
+    expect(u.hasActed).toBe(false) // 泄漏的 pointerup 被吞掉，无任何误行动
+  }
 })
 
 test('近战：边界刀剑 → 点击冲锋 + 全伤反击', async ({ page }) => {
@@ -164,18 +166,49 @@ test('近战贴身：点击相邻敌军本体 → 原地攻击（无需找边界
 })
 
 test('近战贴身（1×2 骑兵）：刀剑锚在「东邻格↔敌军」边界而非主体格内', async ({ page }) => {
-  // 标准战斗：骑兵 p3 (0,3) 占 (0,3)+(1,3)，敌方刀兵 e3 贴 (2,3) 东邻格
   await gotoBattle(page)
   await waitBattleReady(page)
   await setAnimationSpeed(page, 0)
+  await startBattle(page,
+    { side: 'player', generalName: 'P', atkBonus: 0, defBonus: 0, units: [{ defId: 'cavalry', count: 8 }] },
+    { side: 'enemy', generalName: 'E', atkBonus: 0, defBonus: 0, units: [{ defId: 'militia', count: 20 }] },
+    { cols: 4, rows: 3 }) // 骑兵 p0 (0,0) 占 (0,0)+(1,0)，敌 e0 (2,0) 贴东邻格 (1,0)
   const s = await getState(page)
-  expect(s.currentUnitId).toBe('p3')
-  const e3 = s.units!.find((u) => u.id === 'e3')!
-  await page.mouse.move(e3.screen.x, e3.screen.y)
+  expect(s.currentUnitId).toBe('p0')
+  const e0 = s.units!.find((u) => u.id === 'e0')!
+  await page.mouse.move(e0.screen.x, e0.screen.y)
   const hov = (await getState(page)).hover
   expect(hov?.cursorKind).toBe('sword')
-  expect(hov?.swordHex).toEqual({ q: 0, r: 3 }) // 攻击落点=原地（主体格）
-  expect(hov?.swordAdjHex).toEqual({ q: 1, r: 3 }) // 刀剑画在与目标相邻的东邻格边界上
+  expect(hov?.swordHex).toEqual({ q: 0, r: 0 }) // 攻击落点=原地（主体格）
+  expect(hov?.swordAdjHex).toEqual({ q: 1, r: 0 }) // 刀剑画在与目标相邻的东邻格边界上
+})
+
+test('1×2 骑兵：可达高亮覆盖完整占地 + 东邻格贴敌可攻击（不依赖主格相邻）', async ({ page }) => {
+  await gotoBattle(page)
+  await waitBattleReady(page)
+  await setAnimationSpeed(page, 0)
+  // 骑兵 p0 (0,0) speed4（与 militia 平速攻方先行）占 (0,0)+(1,0)；敌 e0 (5,0)。主格到 (3,0)、东邻格 (4,0) 贴 e0
+  await startBattle(page,
+    { side: 'player', generalName: 'P', atkBonus: 0, defBonus: 0, units: [{ defId: 'cavalry', count: 50, speed: 4 }] },
+    { side: 'enemy', generalName: 'E', atkBonus: 0, defBonus: 0, units: [{ defId: 'militia', count: 50 }] },
+    { cols: 7, rows: 3 })
+  const s = await getState(page)
+  expect(s.currentUnitId).toBe('p0')
+  // 可达高亮覆盖完整占地：(4,0) 是主格 (3,0) 的东邻格，应在高亮内（不是暗格）
+  expect(s.reachableFootprint!.some((h) => h.q === 4 && h.r === 0)).toBe(true)
+  // 悬停 (4,0)↔(5,0) 边界 → 刀剑指向 e0（东邻格贴敌，主格 (3,0) 不贴）
+  const e0 = s.units!.find((u) => u.id === 'e0')!
+  const ex = e0.screen.x - (36 * Math.sqrt(3)) / 2
+  await page.mouse.move(ex, e0.screen.y)
+  const hov = (await getState(page)).hover
+  expect(hov?.cursorKind).toBe('sword')
+  expect(hov?.swordTargetId).toBe('e0')
+  expect(hov?.swordAdjHex).toEqual({ q: 4, r: 0 }) // 刀剑锚在贴敌的东邻格边界
+  // 点击 → 攻击落点主格 (3,0)，灭 e0（骑兵50 伤 422 > militia50 血池）
+  await page.mouse.click(ex, e0.screen.y)
+  const after = await getState(page)
+  expect(after.units!.find((u) => u.id === 'p0')!.position).toEqual({ q: 3, r: 0 })
+  expect(after.units!.find((u) => u.id === 'e0')).toBeUndefined()
 })
 
 test('1×2 骑兵可左右平移一格：点击自身东邻格=右移、点击左侧格=左移', async ({ page }) => {

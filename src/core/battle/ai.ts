@@ -15,7 +15,9 @@ export function canEngageTarget(mover: BattleUnit, target: BattleUnit, state: Ba
   let best: Axial | null = null
   let bestDist = Number.POSITIVE_INFINITY
   for (const hex of reachable) {
-    if (!occupiedHexes(target).some((h) => hexDistance(hex, h) <= 1)) continue
+    // 1×2：任一体格（主格+东邻）与 target 相邻即算够得着（reducer 按攻击方体积判定命中）
+    const body = occupiedHexes({ position: hex, size: mover.size })
+    if (!occupiedHexes(target).some((h) => body.some((bh) => hexDistance(bh, h) <= 1))) continue
     const d = hexDistance(mover.position, hex)
     if (d < bestDist) {
       bestDist = d

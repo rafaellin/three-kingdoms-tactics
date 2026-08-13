@@ -265,8 +265,11 @@ export class BattleScene extends Phaser.Scene {
       this.overlayGraphics.fillTriangle(c.x, c.y - 40, c.x - 9, c.y - 27, c.x + 9, c.y - 27)
     }
     if (current && current.side === 'player') {
+      // 可达高亮覆盖 1×2 完整占地（主格 + 东邻格）：落脚时双格都在高亮内，不会"一脚里一脚外"
       for (const hex of battleReachableArea(current, state)) {
-        this.fillHex(this.overlayGraphics, hex, REACHABLE_FILL, 0.18)
+        for (const h of occupiedHexes({ position: hex, size: current.size })) {
+          this.fillHex(this.overlayGraphics, h, REACHABLE_FILL, 0.18)
+        }
       }
     }
     if (state.selectedUnitId) {
@@ -429,17 +432,20 @@ export class BattleScene extends Phaser.Scene {
     const my = pointer.worldY
     let edgeHit: { targetId: string; dist: number; dest: Axial } | null = null
     for (const dest of reachable) {
-      for (let d = 0; d < 6; d++) {
-        const nb = hexNeighbor(dest, d as HexDir)
-        const foe = state.units.find((u) => u.side !== current.side && occupiedHexes(u).some((h) => hexKey(h) === hexKey(nb)))
-        if (!foe) continue
-        const c1 = (6 - d) % 6
-        const c2 = (c1 + 1) % 6
-        const p1 = this.layout.cornerAt(dest, c1)
-        const p2 = this.layout.cornerAt(dest, c2)
-        const dist = this.distToSegment(mx, my, p1.x, p1.y, p2.x, p2.y)
-        if (dist <= EDGE_HIT_TOLERANCE && (!edgeHit || dist < edgeHit.dist)) {
-          edgeHit = { targetId: foe.id, dist, dest }
+      // 攻击方在该落点的体格（1×2 = 主格+东邻格）：任一体格贴敌都算够得着 → 刀剑画在该体格边界
+      for (const bodyHex of occupiedHexes({ position: dest, size: current.size })) {
+        for (let d = 0; d < 6; d++) {
+          const nb = hexNeighbor(bodyHex, d as HexDir)
+          const foe = state.units.find((u) => u.side !== current.side && occupiedHexes(u).some((h) => hexKey(h) === hexKey(nb)))
+          if (!foe) continue
+          const c1 = (6 - d) % 6
+          const c2 = (c1 + 1) % 6
+          const p1 = this.layout.cornerAt(bodyHex, c1)
+          const p2 = this.layout.cornerAt(bodyHex, c2)
+          const dist = this.distToSegment(mx, my, p1.x, p1.y, p2.x, p2.y)
+          if (dist <= EDGE_HIT_TOLERANCE && (!edgeHit || dist < edgeHit.dist)) {
+            edgeHit = { targetId: foe.id, dist, dest }
+          }
         }
       }
     }
@@ -773,9 +779,12 @@ export class BattleScene extends Phaser.Scene {
       return { x: p.x - cam.scrollX, y: p.y - cam.scrollY }
     }
     const current = state.units.find((u) => u.id === state.currentUnitId)
-    const reachable =
+    const reachMains = current && state.phase === 'combat' ? battleReachableArea(current, state) : []
+    const reachable = reachMains.map((h) => ({ q: h.q, r: h.r, screen: screen(h) }))
+    // 可达高亮的完整占地（1×2 = 主格+东邻格；与 drawOverlay 一致）
+    const reachableFootprint =
       current && state.phase === 'combat'
-        ? battleReachableArea(current, state).map((h) => ({ q: h.q, r: h.r, screen: screen(h) }))
+        ? reachMains.flatMap((h) => occupiedHexes({ position: h, size: current.size }).map((f) => ({ q: f.q, r: f.r })))
         : []
     return {
       ready: true,
@@ -799,6 +808,7 @@ export class BattleScene extends Phaser.Scene {
       order: state.order,
       log: state.log,
       reachable,
+      reachableFootprint,
       hover: {
         ghostHex: this.hover.ghostHex,
         swordHex: this.hover.swordHex,

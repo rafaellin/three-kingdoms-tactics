@@ -13,6 +13,8 @@ export interface BattleUnit {
   id: string
   side: Side
   defId: UnitDefId
+  /** 速度覆盖（可选；缺省用 UNIT_DEFS[defId].speed；测试/配置用） */
+  speed?: number
   /** 当前 stack 数量（受创后按 命×count 池折算，见 reducer） */
   count: number
   /** 主体格（轴向坐标；size=2 时为左侧格） */
@@ -34,6 +36,8 @@ export interface BattleUnitConfig {
   count: number
   /** 可选自定义出生格（默认玩家 q=0、敌方 q=cols-2，行=单位索引） */
   position?: Axial
+  /** 可选速度覆盖（默认 UNIT_DEFS 值；测试/调试用） */
+  speed?: number
 }
 
 export interface BattleArmyConfig {

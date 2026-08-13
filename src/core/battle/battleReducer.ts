@@ -31,7 +31,7 @@ export function createInitialBattleState(): BattleState {
 function sortOrder(units: BattleUnit[]): string[] {
   return [...units]
     .sort((a, b) => {
-      const sp = UNIT_DEFS[b.defId].speed - UNIT_DEFS[a.defId].speed
+      const sp = (b.speed ?? UNIT_DEFS[b.defId].speed) - (a.speed ?? UNIT_DEFS[a.defId].speed)
       if (sp !== 0) return sp
       // 同速 → 攻方（玩家）先行；仍相同按 id 稳定序
       if (a.side !== b.side) return a.side === 'player' ? -1 : 1
@@ -48,6 +48,7 @@ function init(state: BattleState, payload: { player: BattleArmyConfig; enemy: Ba
         id: `${cfg.side === 'player' ? 'p' : 'e'}${i}`,
         side: cfg.side,
         defId: u.defId,
+        speed: u.speed,
         count: u.count,
         position: u.position ?? { q: qBase, r: i },
         size: def.size,

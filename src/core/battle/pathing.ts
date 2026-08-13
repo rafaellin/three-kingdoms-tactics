@@ -71,7 +71,7 @@ export function battleMovementCost(mover: BattleUnit, state: BattleState): Movem
 }
 
 export function battleReachableArea(mover: BattleUnit, state: BattleState): Axial[] {
-  return reachableArea(mover.position, UNIT_DEFS[mover.defId].speed, battleMovementCost(mover, state))
+  return reachableArea(mover.position, mover.speed ?? UNIT_DEFS[mover.defId].speed, battleMovementCost(mover, state))
 }
 
 export function battleFindPath(mover: BattleUnit, to: Axial, state: BattleState): Axial[] | null {

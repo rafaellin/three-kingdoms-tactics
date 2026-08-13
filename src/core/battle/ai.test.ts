@@ -37,6 +37,12 @@ describe('planEnemyAction（冲锋/射击）', () => {
     const enemy = unit({ id: 'e0', defId: 'militia' })
     expect(planEnemyAction(state(enemy, [foe]))).toEqual({ type: 'attack', targetId: 'p0', to: { q: 1, r: 0 } })
   })
+  test('1×2 骑兵：东邻体格相邻即可冲锋（主格不贴但东邻格贴）', () => {
+    // 敌骑兵主格 (0,0) body (0,0)+(1,0)，我方 (3,0)。冲锋到主格 (1,0)，东邻格 (2,0) 贴 (3,0) → 够得着
+    const foe = unit({ id: 'p0', side: 'player', position: { q: 3, r: 0 } })
+    const enemy = unit({ id: 'e0', defId: 'cavalry', position: { q: 0, r: 0 }, size: 2 })
+    expect(planEnemyAction(state(enemy, [foe]))).toEqual({ type: 'attack', targetId: 'p0', to: { q: 1, r: 0 } })
+  })
   test('远程：射程内 → shoot', () => {
     const foe = unit({ id: 'p0', side: 'player', position: { q: 0, r: 0 } })
     const enemy = unit({ id: 'e0', defId: 'archer', position: { q: 6, r: 0 } })

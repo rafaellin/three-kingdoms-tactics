@@ -24,7 +24,7 @@ export const PLAYER_ARMY: BattleArmyConfig = {
     { defId: 'militia', count: 30 },
     { defId: 'swordsman', count: 12 },
     { defId: 'archer', count: 10 },
-    { defId: 'cavalry', count: 8 }   // 骑兵 → 验证 1×2 支持
+    { defId: 'cavalry', count: 8, speed: 3 }   // 骑兵速度 3（调试可达边界用；1×2 验证）
   ]
 }
 
@@ -37,7 +37,7 @@ export const ENEMY_ARMY: BattleArmyConfig = {
     { defId: 'militia', count: 20 },
     { defId: 'pikeman', count: 12 },
     { defId: 'archer', count: 8 },
-    // 刀兵：骑兵（p3 占 (0,3)+(1,3)）右侧贴身 (2,3)，便于测试近战原地攻击
-    { defId: 'swordsman', count: 12, position: { q: 2, r: 3 } }
+    // 刀兵：骑兵（p3 占 (0,3)+(1,3)）右侧 4 格 (5,3)——骑兵 speed3 主格到 (3,3)、东邻格 (4,3) 贴它可攻击
+    { defId: 'swordsman', count: 12, position: { q: 5, r: 3 } }
   ]
 }
