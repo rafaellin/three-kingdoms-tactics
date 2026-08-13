@@ -25,6 +25,12 @@ export interface DebugBridge {
   setSfxVolume(volume: number): void
   /** 直接以指定阵容/网格开局（e2e 确定性交互测试） */
   startBattle(player: BattleArmyConfig, enemy: BattleArmyConfig, grid: { cols: number; rows: number; obstacles?: Axial[] }): void
+  /** 完整 battle log 文本（标准化格式，每行一条） */
+  getLog(): string
+  /** 下载完整 battle log 为 .log 文件 */
+  downloadLog(): void
+  /** 导出当前战斗状态为 JSON（复现 / debug 用） */
+  exportState(): string
 }
 
 declare global {
@@ -73,6 +79,15 @@ export function installDevBridge(game: Phaser.Game): DebugBridge {
     },
     startBattle(player, enemy, grid) {
       battle()?.startBattle(player, enemy, grid)
+    },
+    getLog() {
+      return battle()?.getFullLog() ?? ''
+    },
+    downloadLog() {
+      battle()?.downloadLog()
+    },
+    exportState() {
+      return battle()?.exportState() ?? '{}'
     }
   }
   window.__game = bridge

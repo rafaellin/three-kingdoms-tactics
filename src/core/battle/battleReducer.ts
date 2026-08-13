@@ -10,6 +10,11 @@ import { computeDamage, MELEE_ATTACK_MULT, RANGE_OUT_MULT } from './damage'
 import { battleFindPath, battleReachableArea } from './pathing'
 import { occupiedHexes, type BattleArmyConfig, type BattleState, type BattleUnit } from './types'
 
+/** 标准化 log 单位名：`武将的兵种`（如「关羽的骑兵」） */
+function unitName(state: BattleState, unit: Pick<BattleUnit, 'side' | 'defId'>): string {
+  return `${state.general[unit.side].name}的${UNIT_DEFS[unit.defId].name}`
+}
+
 export function createInitialBattleState(): BattleState {
   return {
     grid: { cols: 0, rows: 0 },
@@ -122,7 +127,7 @@ function move(state: BattleState, unitId: string, to: Axial): BattleState {
   const units = state.units.map((u) =>
     u.id === unitId ? { ...u, position: { ...to }, hasActed: true, hasMoved: true } : u
   )
-  const log = [...state.log, `${unitId} 移动至 (${to.q},${to.r})`]
+  const log = [...state.log, `第${state.turn}回合 ${unitName(state, unit)} 移动到 (${to.q},${to.r})`]
   return advance({ ...state, units, log })
 }
 
@@ -159,11 +164,18 @@ function attack(state: BattleState, unitId: string, targetId: string, to?: Axial
   const defGen = state.general[target.side]
   const atkMult = UNIT_DEFS[attacker.defId].range > 1 ? MELEE_ATTACK_MULT : 1
   const dmg = computeDamage({ ...attacker, position: dest }, target, atkGen.atkBonus, defGen.defBonus, atkMult)
+  const targetCountBefore = target.count
   let units = state.units.map((u) =>
     u.id === attacker.id ? { ...u, position: { ...dest }, hasActed: true, hasMoved: true } : u
   )
   units = dealDamage(units, target.id, dmg)
-  const logs = [`${attacker.id} 攻击 ${target.id} 造成 ${dmg} 伤害${units.some((u) => u.id === target.id) ? '' : '（消灭）'}`]
+  const targetAfter = units.find((u) => u.id === target.id)
+  const killedCount = targetAfter ? targetCountBefore - targetAfter.count : targetCountBefore
+  const eliminated = !targetAfter
+  const logs = [
+    `第${state.turn}回合 ${unitName(state, attacker)} 攻击 ${unitName(state, target)}，` +
+    `造成 ${dmg} 点伤害${killedCount > 0 ? `，歼灭 ${killedCount} 个` : ''}（${eliminated ? '消灭' : '全伤'}）`
+  ]
   const phase = phaseOf(units)
   return { ...state, units, phase, log: [...state.log, ...logs] }
 }
@@ -186,9 +198,16 @@ function retaliate(state: BattleState, retaliatorId: string, victimId: string): 
   const atkGen = state.general[retaliator.side]
   const rMult = UNIT_DEFS[retaliator.defId].range > 1 ? MELEE_ATTACK_MULT : 1
   const rDmg = computeDamage(retaliator, victim, atkGen.atkBonus, defGen.defBonus, rMult)
+  const victimCountBefore = victim.count
   let units = state.units.map((u) => (u.id === retaliator.id ? { ...u, retaliated: true } : u))
   units = dealDamage(units, victim.id, rDmg)
-  const logs = [`${retaliator.id} 反击 ${victim.id} 造成 ${rDmg} 伤害${units.some((u) => u.id === victim.id) ? '' : '（消灭）'}`]
+  const victimAfter = units.find((u) => u.id === victim.id)
+  const killedCount = victimAfter ? victimCountBefore - victimAfter.count : victimCountBefore
+  const eliminated = !victimAfter
+  const logs = [
+    `第${state.turn}回合 ${unitName(state, retaliator)} 反击 ${unitName(state, victim)}，` +
+    `造成 ${rDmg} 点伤害${killedCount > 0 ? `，歼灭 ${killedCount} 个` : ''}（${eliminated ? '消灭' : '全伤'}）`
+  ]
   const phase = phaseOf(units)
   if (phase !== 'combat') return { ...state, units, phase, log: [...state.log, ...logs] }
   return advance({ ...state, units, log: [...state.log, ...logs] })
@@ -216,10 +235,17 @@ function shoot(state: BattleState, unitId: string, targetId: string): BattleStat
   const defGen = state.general[target.side]
   const base = computeDamage(attacker, target, atkGen.atkBonus, defGen.defBonus)
   const dmg = Math.round(base * (inRange ? 1 : RANGE_OUT_MULT))
+  const targetCountBefore = target.count
   let units = state.units.map((u) => (u.id === attacker.id ? { ...u, hasActed: true, hasMoved: true } : u))
   units = dealDamage(units, target.id, dmg)
-  const dead = !units.some((u) => u.id === target.id)
-  const log = [...state.log, `${attacker.id} 射击 ${target.id} 造成 ${dmg} 伤害${inRange ? '' : '（射程外）'}${dead ? '（消灭）' : ''}`]
+  const targetAfter = units.find((u) => u.id === target.id)
+  const killedCount = targetAfter ? targetCountBefore - targetAfter.count : targetCountBefore
+  const eliminated = !targetAfter
+  const log = [
+    ...state.log,
+    `第${state.turn}回合 ${unitName(state, attacker)} 射击 ${unitName(state, target)}，` +
+    `造成 ${dmg} 点伤害${killedCount > 0 ? `，歼灭 ${killedCount} 个` : ''}（${eliminated ? '消灭' : inRange ? '满额' : '半额'}）`
+  ]
   const phase = phaseOf(units)
   if (phase !== 'combat') return { ...state, units, phase, log }
   return advance({ ...state, units, log })

@@ -291,6 +291,27 @@ test('移动即行动：移动后 hasActed 且轮到下一单位（AI 不介入�
   expect(after.currentUnitId).toBe('p1') // 移动即行动 → advance 到下一个玩家单位
 })
 
+test('标准化 battle log：getLog / exportState（后台日志 + 状态导出）', async ({ page }) => {
+  await gotoBattle(page)
+  await waitBattleReady(page)
+  await setAnimationSpeed(page, 0)
+  await startBattle(page,
+    { side: 'player', generalName: '关羽', atkBonus: 0, defBonus: 0, units: [{ defId: 'militia', count: 20 }] },
+    { side: 'enemy', generalName: '吕布', atkBonus: 0, defBonus: 0, units: [{ defId: 'militia', count: 20 }] },
+    { cols: 7, rows: 3 })
+  const s = await getState(page)
+  const reach1 = s.reachable!.find((h) => h.q === 1 && h.r === 0)!
+  await page.mouse.click(reach1.screen.x, reach1.screen.y) // 移动
+  // 后台 log（标准化格式：回合·武将·兵种·位置）
+  const log = await page.evaluate(() => (window as { __game?: { getLog(): string } }).__game?.getLog() ?? '')
+  expect(log).toContain('第1回合 关羽的民兵 移动到 (1,0)')
+  // 导出状态为 JSON（复现 / debug）
+  const exp = await page.evaluate(() => (window as { __game?: { exportState(): string } }).__game?.exportState() ?? '{}')
+  const parsed = JSON.parse(exp) as { units?: unknown[]; log?: string[] }
+  expect(parsed.units).toBeDefined()
+  expect(parsed.log?.length).toBeGreaterThan(0)
+})
+
 test('移动动画：默认速度先播动画、动画结束才落状态', async ({ page }) => {
   await gotoBattle(page)
   await waitBattleReady(page)
@@ -378,13 +399,13 @@ test('AI 攻击被我方反击打死：反击段结算前敌方仍存活（分�
   // 敌方主攻已 dispatch、反击还没结算：敌方应仍存活（分段结算）
   await page.waitForFunction(() => {
     const s = (window as { __game?: { getState(): DebugGameState } }).__game?.getState()
-    return s?.log?.some((l) => l.includes('e0 攻击 p0'))
+    return s?.log?.some((l) => l.includes('E的民兵 攻击 P的刀兵'))
   })
   expect((await getState(page)).units!.find((u) => u.id === 'e0')).toBeDefined()
   // 反击段结算后：敌方被消灭
   await page.waitForFunction(() => {
     const s = (window as { __game?: { getState(): DebugGameState } }).__game?.getState()
-    return s?.log?.some((l) => l.includes('p0 反击 e0'))
+    return s?.log?.some((l) => l.includes('P的刀兵 反击 E的民兵'))
   })
   expect((await getState(page)).units!.find((u) => u.id === 'e0')).toBeUndefined()
 })

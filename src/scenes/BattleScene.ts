@@ -62,6 +62,9 @@ export class BattleScene extends Phaser.Scene {
   private enemyActing = false
   /** 玩家行动结算中（冲锋+攻击+反击停顿+闪白）→ 屏蔽输入，防动画未完就能操作下一单位 */
   private busy = false
+  /** 后台 log 缓冲（新增条目输出到 console + 可下载为 .log 文件） */
+  private logBuffer: string[] = []
+  private logFlushed = 0
   /** 受击闪白累计次数（debug / e2e 断言用） */
   private hitFlashCount = 0
   /** 音效（渲染层；移动循环 + 攻击一次性） */
@@ -102,6 +105,8 @@ export class BattleScene extends Phaser.Scene {
     this.enemyActing = false
     this.moveWaiter = null
     this.busy = false
+    this.logBuffer = []
+    this.logFlushed = 0
     this.sfx?.stopLooped()
     this.drawGrid()
     this.drawObstacles()
@@ -298,8 +303,14 @@ export class BattleScene extends Phaser.Scene {
     }
   }
 
+  /** 同步左上角 log + 后台输出新增条目（每段动作完成后立即调用，保证 log 与动画一致） */
+  private syncLog(): void {
+    this.logText.setText(this.state.log.slice(-6).join('\n'))
+    this.flushLog()
+  }
+
   private updateLogAndResult(): void {
-    this.logText.setText(this.state.log.slice(-4).join('\n'))
+    this.syncLog()
     const terminal = this.state.phase !== 'combat'
     this.resultText.setVisible(terminal)
     this.returnButton.setVisible(terminal)
@@ -333,6 +344,7 @@ export class BattleScene extends Phaser.Scene {
           const path = battleFindPath(before, action.to, this.state) ?? [action.to]
           await this.animateMove(curId, path) // 先播移动动画，动画结束才落状态
           this.store.dispatch('battle/move', { unitId: curId, to: action.to })
+          this.syncLog() // 敌方移动完成 → 立即输出移动 log
           const moved = this.state.units.find((u) => u.id === curId) as BattleUnit
           if (hexKey(moved.position) === hexKey(before.position)) {
             this.visualPos.delete(curId) // 移动被拒 → 清除动画残留，回原位
@@ -347,12 +359,14 @@ export class BattleScene extends Phaser.Scene {
           if (path.length > 0) await this.animateMove(curId, path) // 先冲锋动画
           this.sfx?.playOnce('melee attack') // 敌方近战音效
           this.store.dispatch('battle/attack', { unitId: curId, targetId: action.targetId, to: action.to })
+          this.syncLog() // 敌方主攻段完成 → 立即输出攻击 log
           await this.resolveMelee(hpBefore, posBefore, curId, action.targetId, action.to, before.size) // 主攻闪目标；反击分段
         } else if (action.type === 'shoot') {
           const hpBefore = new Map(this.state.units.map((u) => [u.id, u.hpLeft] as const))
           const posBefore = new Map(this.state.units.map((u) => [u.id, { pos: u.position, size: u.size }] as const))
           this.sfx?.playOnce('range attack') // 敌方远程音效
           this.store.dispatch('battle/shoot', { unitId: curId, targetId: action.targetId })
+          this.syncLog() // 敌方射击完成 → 立即输出射击 log
           if (this.state.phase === 'combat' && this.state.currentUnitId === curId) {
             this.store.dispatch('battle/endTurn', { unitId: curId })
           }
@@ -611,6 +625,7 @@ export class BattleScene extends Phaser.Scene {
       if (path.length > 0) await this.animateMove(current.id, path) // 先冲锋动画，落刀再结算
       this.sfx?.playOnce('melee attack') // 近战（含远程兵近战）落刀音效
       this.store.dispatch('battle/attack', { unitId: current.id, targetId, to })
+      this.syncLog() // 主攻段完成 → 立即输出攻击 log（不等反击）
       await this.resolveMelee(hpBefore, posBefore, current.id, targetId, to, current.size) // 主攻闪目标；反击分段
       this.refreshViews()
       return
@@ -620,6 +635,7 @@ export class BattleScene extends Phaser.Scene {
       const posBefore = new Map(state.units.map((u) => [u.id, { pos: u.position, size: u.size }] as const))
       this.sfx?.playOnce('range attack') // 远程射击音效
       this.store.dispatch('battle/shoot', { unitId: current.id, targetId: unitAt.id })
+      this.syncLog() // 射击段完成 → 立即输出射击 log
       // 远程攻击：攻方与被攻击方都闪，时间稍久，让远程攻击更显眼
       this.playHitFlash(current.position, current.size, 550)
       this.flashDamageDealt(hpBefore, posBefore, 550)
@@ -633,6 +649,7 @@ export class BattleScene extends Phaser.Scene {
       const path = battleFindPath(current, hex, this.state) ?? [hex]
       await this.animateMove(current.id, path) // 先播移动动画，动画结束才落状态
       this.store.dispatch('battle/move', { unitId: current.id, to: hex })
+      this.syncLog() // 移动完成 → 立即输出移动 log
       this.refreshViews()
       return
     }
@@ -708,6 +725,7 @@ export class BattleScene extends Phaser.Scene {
       await this.sleep(this.actionGapMs)
       this.sfx?.playOnce('melee attack')
       this.store.dispatch('battle/retaliate', { retaliatorId: targetId, victimId: attackerId })
+      this.syncLog() // 反击段完成 → 立即输出反击 log
       // 反击闪在攻击者【冲锋后落点】（被打灭也用落点）
       this.playHitFlash(attackerDest, attackerSize)
     } else if (this.state.phase === 'combat') {
@@ -849,6 +867,41 @@ export class BattleScene extends Phaser.Scene {
     const w = this.moveWaiter
     this.moveWaiter = null
     w?.()
+  }
+
+  // ---------- log / 导出 ----------
+
+  /** 新增 log 条目 → console（后台日志流）+ 累计缓冲（供下载） */
+  private flushLog(): void {
+    const log = this.state.log
+    for (let i = this.logFlushed; i < log.length; i++) {
+      const entry = log[i]
+      if (entry === undefined) continue
+      console.log(`[battle] ${entry}`)
+      this.logBuffer.push(entry)
+    }
+    this.logFlushed = log.length
+  }
+
+  /** 完整 log 文本（每行一条标准化动作） */
+  getFullLog(): string {
+    return this.logBuffer.join('\n')
+  }
+
+  /** 导出当前战斗状态为 JSON（复现 / debug 用）：含 state + 完整 log + 行动序 */
+  exportState(): string {
+    return JSON.stringify({ grid: this.state.grid, turn: this.state.turn, order: this.state.order, units: this.state.units, general: this.state.general, phase: this.state.phase, log: this.state.log }, null, 2)
+  }
+
+  /** 下载完整 log 为 .log 文件（浏览器 Blob 下载） */
+  downloadLog(): void {
+    const blob = new Blob([this.getFullLog()], { type: 'text/plain' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `battle-${new Date().toISOString().replace(/[:.]/g, '-')}.log`
+    a.click()
+    URL.revokeObjectURL(url)
   }
 
   // ---------- dev / e2e ----------

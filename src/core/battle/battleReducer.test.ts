@@ -242,7 +242,7 @@ describe('battle/shoot（远程）', () => {
     expect(t.hpLeft).toBe(467)      // 民兵50×hp10=500 - 33
     expect(t.count).toBe(47)        // ceil(467/10)
   })
-  test('射程外半额（距离7 > 射程6）：33×0.5=16.5→17，log 记「射程外」', () => {
+  test('射程外半额（距离7 > 射程6）：33×0.5=16.5→17，log 记「半额」', () => {
     const store = makeStore({
       grid: { cols: 9, rows: 3 },
       player: { side: 'player', generalName: 'P', atkBonus: 0, defBonus: 0, units: [{ defId: 'archer', count: 10 }] },
@@ -251,7 +251,7 @@ describe('battle/shoot（远程）', () => {
     store.dispatch('battle/shoot', { unitId: 'p0', targetId: 'e0' })
     const t = store.getState().units.find((u) => u.id === 'e0')!
     expect(t.hpLeft).toBe(483)      // 500 - 17
-    expect(store.getState().log.some((l) => l.includes('射程外'))).toBe(true)
+    expect(store.getState().log.some((l) => l.includes('半额'))).toBe(true)
   })
   test('1×2 目标：任意身体格在射程内即满额', () => {
     // e0 骑兵 (6,0) 占 (6,0)+(7,0)；距 (0,0) 为 6 ≤ 6 → 满额
