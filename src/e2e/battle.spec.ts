@@ -135,8 +135,8 @@ test('近战：边界刀剑 → 点击冲锋 + 全伤反击', async ({ page }) =
   const p0 = after.units!.find((u) => u.id === 'p0')!
   const e0a = after.units!.find((u) => u.id === 'e0')!
   expect(p0.position).toEqual({ q: 2, r: 0 })
-  expect(e0a.hpLeft).toBe(6)      // 40 - 34
-  expect(p0.hpLeft).toBe(7)       // 20 - 13（反击）
+  expect(e0a.hpLeft).toBe(366)    // 刀兵20×hp20=400 - 34
+  expect(p0.hpLeft).toBe(116)     // 民兵20×hp10=200 - 84（反击）
   expect(e0a.retaliated).toBe(true)
   expect(after.currentUnitId).toBe('p1') // 反击后 advance 到 p1（无 AI 介入）
   await page.screenshot({ path: 'screenshots/battle-sword-attack.png' })
@@ -148,15 +148,15 @@ test('近战贴身：点击相邻敌军本体 → 原地攻击（无需找边界
   await setAnimationSpeed(page, 0)
   await startBattle(page,
     { side: 'player', generalName: 'P', atkBonus: 0, defBonus: 0, units: [{ defId: 'militia', count: 20 }] },
-    { side: 'enemy', generalName: 'E', atkBonus: 0, defBonus: 0, units: [{ defId: 'militia', count: 20 }] },
-    { cols: 3, rows: 3 }) // p0 (0,0) 与 e0 (1,0) 出生即贴身
+    { side: 'enemy', generalName: 'E', atkBonus: 0, defBonus: 0, units: [{ defId: 'militia', count: 3 }] },
+    { cols: 3, rows: 3 }) // p0 (0,0) 与 e0 (1,0) 出生即贴身；e0 3×hp10=30 池
   const s = await getState(page)
   expect(s.currentUnitId).toBe('p0')
   const e0 = s.units!.find((u) => u.id === 'e0')!
   // 悬停敌军本体 → 刀剑（原地攻击光标）
   await page.mouse.move(e0.screen.x, e0.screen.y)
   expect((await getState(page)).hover?.cursorKind).toBe('sword')
-  // 点击敌军本体 → 原地攻击：位置不变、民兵 20 池被 68 伤全灭
+  // 点击敌军本体 → 原地攻击：位置不变、民兵 20×hp10=200 池伤 40 → e0 3 池全灭
   await page.mouse.click(e0.screen.x, e0.screen.y)
   const after = await getState(page)
   const p0 = after.units!.find((u) => u.id === 'p0')!
@@ -243,9 +243,9 @@ test('远程：弓（满额）/ 断箭（半额）', async ({ page }) => {
   await waitBattleReady(page)
   await setAnimationSpeed(page, 0)
   await startBattle(page,
-    { side: 'player', generalName: 'P', atkBonus: 0, defBonus: 0, units: [{ defId: 'archer', count: 10 }] },
+    { side: 'player', generalName: 'P', atkBonus: 0, defBonus: 0, units: [{ defId: 'archer', count: 10 }, { defId: 'militia', count: 10 }] },
     { side: 'enemy', generalName: 'E', atkBonus: 0, defBonus: 0, units: [{ defId: 'militia', count: 50 }] },
-    { cols: 5, rows: 3 }) // e0 (3,0)，距离 3 ≤ 6 → 满额
+    { cols: 5, rows: 3 }) // e0 (3,0)，距离 3 ≤ 6 → 满额；射完轮到己方 militia → 敌方不介入
   const s = await getState(page)
   expect(s.currentUnitId).toBe('p0')
   const e0 = s.units!.find((u) => u.id === 'e0')!
@@ -253,11 +253,11 @@ test('远程：弓（满额）/ 断箭（半额）', async ({ page }) => {
   expect((await getState(page)).hover?.cursorKind).toBe('bow')
   await page.mouse.click(e0.screen.x, e0.screen.y)
   await page.waitForTimeout(80)
-  expect((await getState(page)).units!.find((u) => u.id === 'e0')!.hpLeft).toBe(17)
+  expect((await getState(page)).units!.find((u) => u.id === 'e0')!.hpLeft).toBe(467) // 民兵50×hp10=500-33
   await page.screenshot({ path: 'screenshots/battle-bow-full.png' })
   // 断箭：e0 距离 7（另一场 startBattle 重置）
   await startBattle(page,
-    { side: 'player', generalName: 'P', atkBonus: 0, defBonus: 0, units: [{ defId: 'archer', count: 10 }] },
+    { side: 'player', generalName: 'P', atkBonus: 0, defBonus: 0, units: [{ defId: 'archer', count: 10 }, { defId: 'militia', count: 10 }] },
     { side: 'enemy', generalName: 'E', atkBonus: 0, defBonus: 0, units: [{ defId: 'militia', count: 50 }] },
     { cols: 9, rows: 3 }) // e0 (7,0)，距离 7 > 6 → 半额
   const s2 = await getState(page)
@@ -266,7 +266,7 @@ test('远程：弓（满额）/ 断箭（半额）', async ({ page }) => {
   expect((await getState(page)).hover?.cursorKind).toBe('broken-arrow')
   await page.mouse.click(e0b.screen.x, e0b.screen.y)
   await page.waitForTimeout(80)
-  expect((await getState(page)).units!.find((u) => u.id === 'e0')!.hpLeft).toBe(33)
+  expect((await getState(page)).units!.find((u) => u.id === 'e0')!.hpLeft).toBe(483) // 500-17
   await page.screenshot({ path: 'screenshots/battle-broken-arrow.png' })
 })
 
@@ -348,6 +348,23 @@ test('远程攻击：攻方与被攻击方都闪烁（hitFlashCount +2）', asyn
   expect(after.hitFlashCount ?? 0).toBe(before + 2) // 攻方 + 目标各闪一次（550ms）
 })
 
+test('近战反击：目标存活反击时攻守双方都闪（hitFlashCount +2）', async ({ page }) => {
+  await gotoBattle(page)
+  await waitBattleReady(page)
+  await setAnimationSpeed(page, 0)
+  await startBattle(page,
+    { side: 'player', generalName: 'P', atkBonus: 0, defBonus: 0, units: [{ defId: 'militia', count: 20 }, { defId: 'militia', count: 20 }] },
+    { side: 'enemy', generalName: 'E', atkBonus: 0, defBonus: 0, units: [{ defId: 'militia', count: 20 }] },
+    { cols: 3, rows: 3 }) // p0 (0,0) 与 e0 (1,0) 贴身；主攻 40 → e0 160；反击 16×2=32 → p0 168；打完后轮到己方 p1
+  const before = (await getState(page)).hitFlashCount ?? 0
+  const e0 = (await getState(page)).units!.find((u) => u.id === 'e0')!
+  await page.mouse.click(e0.screen.x, e0.screen.y) // 原地近战 → 双方都掉血
+  const after = await getState(page)
+  expect(after.hitFlashCount ?? 0).toBe(before + 2) // 主攻目标 + 反击方各闪一次（敌方不再介入）
+  expect(after.units!.find((u) => u.id === 'p0')!.hpLeft).toBe(168)
+  expect(after.units!.find((u) => u.id === 'e0')!.hpLeft).toBe(160)
+})
+
 test('冲锋动画期间鼠标移开：攻击仍应命中（不还原）', async ({ page }) => {
   // 回归：旧逻辑在 await 冲锋动画后才读 this.hover.swordTargetId，动画期间鼠标移动会改写 hover
   // → dispatch 用失效 targetId 被拒绝 → 动画播放后状态还原（骑兵回原位、敌方无伤）。
@@ -355,8 +372,8 @@ test('冲锋动画期间鼠标移开：攻击仍应命中（不还原）', async
   await waitBattleReady(page)
   await startBattle(page,
     { side: 'player', generalName: 'P', atkBonus: 0, defBonus: 0, units: [{ defId: 'swordsman', count: 20 }] },
-    { side: 'enemy', generalName: 'E', atkBonus: 0, defBonus: 0, units: [{ defId: 'militia', count: 50 }] },
-    { cols: 5, rows: 3 }) // p0 刀兵 (0,0) 距 e0 (3,0)，冲锋到 (2,0) 约 300ms；88 伤灭 e0，自身存活
+    { side: 'enemy', generalName: 'E', atkBonus: 0, defBonus: 0, units: [{ defId: 'militia', count: 8 }] },
+    { cols: 5, rows: 3 }) // p0 刀兵 (0,0) 距 e0 (3,0)，冲锋到 (2,0) 约 300ms；88 伤 > 民兵8×hp10=80 灭 e0，自身存活
   const s = await getState(page)
   const e0 = s.units!.find((u) => u.id === 'e0')!
   const ex = e0.screen.x - (36 * Math.sqrt(3)) / 2 // (2,0)↔(3,0) 共享边界
@@ -407,7 +424,7 @@ test('信息面板：hover 部队 → 兵种/数量/伤兵剩余血', async ({ p
   const panel = (await getState(page)).infoPanelText
   expect(panel).toContain('刀兵')
   expect(panel).toContain('数量：12')
-  expect(panel).toContain('伤兵剩余：2') // swordsman hp2，12 满编 → 末位 24-11×2=2
+  expect(panel).toContain('伤兵剩余：20') // swordsman hp20，12 满编 → 末位 240-11×20=20
   await page.screenshot({ path: 'screenshots/battle-info-panel.png' })
 })
 

@@ -21,10 +21,10 @@ export const PLAYER_ARMY: BattleArmyConfig = {
   atkBonus: 30,   // 90/3
   defBonus: 23,   // 70/3 ≈ 23.3
   units: [
-    { defId: 'militia', count: 30, speed: 1 },
-    { defId: 'swordsman', count: 12, speed: 1 },
-    { defId: 'archer', count: 10, speed: 1 },
-    { defId: 'cavalry', count: 8, speed: 3 }   // 骑兵速度 3（唯一机动单位，便于测试边界/攻击）
+    { defId: 'militia', count: 30 },
+    { defId: 'swordsman', count: 12 },
+    { defId: 'archer', count: 10 },
+    { defId: 'cavalry', count: 8 }
   ]
 }
 
@@ -34,10 +34,10 @@ export const ENEMY_ARMY: BattleArmyConfig = {
   atkBonus: 33,   // 100/3 ≈ 33.3
   defBonus: 27,   // 80/3 ≈ 26.7
   units: [
-    { defId: 'militia', count: 20, speed: 1 },
-    { defId: 'pikeman', count: 12, speed: 1 },
-    { defId: 'archer', count: 8, speed: 1 },
-    // 刀兵：骑兵（p3 占 (0,3)+(1,3)）右侧 4 格 (5,3)——骑兵 speed3 主格到 (3,3)、东邻格 (4,3) 贴它可攻击
-    { defId: 'swordsman', count: 12, speed: 1, position: { q: 5, r: 3 } }
+    { defId: 'militia', count: 20 },
+    { defId: 'pikeman', count: 12 },
+    { defId: 'archer', count: 8 },
+    // 刀兵：骑兵（p3 占 (0,3)+(1,3)）右侧 4 格 (5,3)——骑兵 speed9 主格到 (4,3)、东邻格 (5,3) 贴它可攻击
+    { defId: 'swordsman', count: 12, position: { q: 5, r: 3 } }
   ]
 }

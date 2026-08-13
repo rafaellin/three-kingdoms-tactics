@@ -15,10 +15,10 @@ describe('occupiedHexes（1×1 / 1×2 占据格）', () => {
 
 describe('woundedHp（伤兵剩余血量）', () => {
   test('末位伤兵血 = hpLeft - (count-1)×hp', () => {
-    // 骑兵单兵 3 血：5 骑满编 hpLeft=15 吃 4 伤 → 11，count=ceil(11/3)=4 → 末者 11-3×3=2
-    expect(woundedHp({ hpLeft: 11, count: 4, defId: 'cavalry' })).toBe(2)
+    // 骑兵单兵 30 血：5 骑满编 hpLeft=150 吃 40 伤 → 110，count=ceil(110/30)=4 → 末者 110-3×30=20
+    expect(woundedHp({ hpLeft: 110, count: 4, defId: 'cavalry' })).toBe(20)
   })
   test('满编无伤兵：末位兵满血', () => {
-    expect(woundedHp({ hpLeft: 15, count: 5, defId: 'cavalry' })).toBe(3)
+    expect(woundedHp({ hpLeft: 150, count: 5, defId: 'cavalry' })).toBe(30)
   })
 })

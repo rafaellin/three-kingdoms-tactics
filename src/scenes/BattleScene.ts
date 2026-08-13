@@ -59,6 +59,8 @@ export class BattleScene extends Phaser.Scene {
   private animActive: { unitId: string; path: Axial[]; idx: number; acc: number; resolve: () => void } | null = null
   private moveWaiter: (() => void) | null = null
   private enemyActing = false
+  /** 玩家行动结算中（冲锋+攻击+反击停顿+闪白）→ 屏蔽输入，防动画未完就能操作下一单位 */
+  private busy = false
   /** 受击闪白累计次数（debug / e2e 断言用） */
   private hitFlashCount = 0
   /** 音效（渲染层；移动循环 + 攻击一次性） */
@@ -98,6 +100,7 @@ export class BattleScene extends Phaser.Scene {
     this.animActive = null
     this.enemyActing = false
     this.moveWaiter = null
+    this.busy = false
     this.sfx?.stopLooped()
     this.drawGrid()
     this.drawObstacles()
@@ -207,12 +210,13 @@ export class BattleScene extends Phaser.Scene {
     for (const unit of this.state.units) {
       const pos = this.visualPos.get(unit.id) ?? unit.position
       const def = UNIT_DEFS[unit.defId]
-      for (const hex of occupiedHexes({ position: pos, size: unit.size })) {
+      const footprint = occupiedHexes({ position: pos, size: unit.size })
+      for (const hex of footprint) {
         if (!inBattleGrid(this.state, hex)) continue // 防御：1×2 绝不画出边界外
         this.fillHex(this.unitGraphics, hex, SIDE_COLORS[unit.side], 0.85)
-        // 白边框：单位挤在一起时区分谁是谁
-        this.strokeHex(this.unitGraphics, hex, 0xffffff, 2)
       }
+      // 白边框只画外轮廓（1×2 两格中间的共享边不画）
+      this.strokeUnitBorder(this.unitGraphics, footprint, 0xffffff, 2)
       const c1 = this.layout.hexToPixel(pos)
       const c2 = unit.size === 2 ? this.layout.hexToPixel({ q: pos.q + 1, r: pos.r }) : c1
       const cx = (c1.x + c2.x) / 2
@@ -264,9 +268,8 @@ export class BattleScene extends Phaser.Scene {
     const current = state.units.find((u) => u.id === state.currentUnitId)
     if (current) {
       const pos = this.visualPos.get(current.id) ?? current.position
-      for (const hex of occupiedHexes({ position: pos, size: current.size })) {
-        this.strokeHex(this.overlayGraphics, hex, 0xffcc33, 3)
-      }
+      // 黄色高亮只描外轮廓（1×2 两格中间的共享边不画）
+      this.strokeUnitBorder(this.overlayGraphics, occupiedHexes({ position: pos, size: current.size }), 0xffcc33, 3)
       const c = this.layout.hexToPixel(pos)
       this.overlayGraphics.fillStyle(0xffcc33, 1)
       this.overlayGraphics.fillTriangle(c.x, c.y - 40, c.x - 9, c.y - 27, c.x + 9, c.y - 27)
@@ -330,6 +333,7 @@ export class BattleScene extends Phaser.Scene {
           this.store.dispatch('battle/move', { unitId: curId, to: action.to })
           const moved = this.state.units.find((u) => u.id === curId) as BattleUnit
           if (hexKey(moved.position) === hexKey(before.position)) {
+            this.visualPos.delete(curId) // 移动被拒 → 清除动画残留，回原位
             this.store.dispatch('battle/endTurn', { unitId: curId })
           }
         } else if (action.type === 'attack') {
@@ -344,7 +348,7 @@ export class BattleScene extends Phaser.Scene {
           if (this.state.phase === 'combat' && this.state.currentUnitId === curId) {
             this.store.dispatch('battle/endTurn', { unitId: curId })
           }
-          this.flashDamageDealt(hpBefore, posBefore) // 受击闪白（主攻目标 + 反击）
+          await this.resolveMelee(hpBefore, posBefore, curId, action.to) // 主攻闪目标；反击停顿后闪反击方+音效
         } else if (action.type === 'shoot') {
           const hpBefore = new Map(this.state.units.map((u) => [u.id, u.hpLeft] as const))
           const posBefore = new Map(this.state.units.map((u) => [u.id, { pos: u.position, size: u.size }] as const))
@@ -373,7 +377,7 @@ export class BattleScene extends Phaser.Scene {
   }
 
   private endCurrentTurn(): void {
-    if (this.state.phase !== 'combat' || this.currentSide() !== 'player') return
+    if (this.busy || this.state.phase !== 'combat' || this.currentSide() !== 'player') return
     this.store.dispatch('battle/endTurn', { unitId: this.state.currentUnitId as string })
     this.refreshViews()
   }
@@ -417,7 +421,8 @@ export class BattleScene extends Phaser.Scene {
     this.hover.swordTargetId = null
     this.hover.blinkId = null
     this.hover.cursorKind = 'none'
-    if (!current || state.phase !== 'combat' || current.side !== 'player') {
+    // busy（结算中）→ 不显示刀剑/弓/移动等"可操作"光标，保持默认指针
+    if (this.busy || !current || state.phase !== 'combat' || current.side !== 'player') {
       this.drawHoverLayer()
       return
     }
@@ -497,6 +502,8 @@ export class BattleScene extends Phaser.Scene {
 
   private drawHoverLayer(): void {
     this.hoverGraphics.clear()
+    // 结算中：不画刀剑/弓箭/残影等"可操作"光标图形（hover 状态保留，供 handleClick 判断）
+    if (this.busy) return
     const h = this.hover
     // 目的地残影：同色（蓝）静态更亮，指示去向（不闪烁；可达区才闪烁）
     if (h.ghostHex) {
@@ -581,7 +588,17 @@ export class BattleScene extends Phaser.Scene {
   }
 
   private async handleClick(hex: Axial): Promise<void> {
-    if (this.animActive || this.animQueue.length > 0) return
+    // 动画/结算中不可操作下一单位（busy 覆盖冲锋+攻击+反击停顿+闪白）
+    if (this.animActive || this.animQueue.length > 0 || this.busy) return
+    this.busy = true
+    try {
+      await this.doHandleClick(hex)
+    } finally {
+      this.busy = false
+    }
+  }
+
+  private async doHandleClick(hex: Axial): Promise<void> {
     const state = this.state
     const current = state.units.find((u) => u.id === state.currentUnitId)
     if (!current || current.side !== 'player') return
@@ -595,7 +612,7 @@ export class BattleScene extends Phaser.Scene {
       if (path.length > 0) await this.animateMove(current.id, path) // 先冲锋动画，落刀再结算
       this.sfx?.playOnce('melee attack') // 近战（含远程兵近战）落刀音效
       this.store.dispatch('battle/attack', { unitId: current.id, targetId, to })
-      this.flashDamageDealt(hpBefore, posBefore)
+      await this.resolveMelee(hpBefore, posBefore, current.id, to) // 主攻闪目标；反击停顿后闪反击方+音效
       this.refreshViews()
       return
     }
@@ -652,15 +669,43 @@ export class BattleScene extends Phaser.Scene {
   private flashDamageDealt(
     hpBefore: Map<string, number>,
     posBefore: Map<string, { pos: Axial; size: 1 | 2 }>,
-    duration = 350
+    duration = 350,
+    exclude?: Set<string>
   ): void {
     for (const [id, prev] of hpBefore) {
+      if (exclude?.has(id)) continue
       const after = this.state.units.find((u) => u.id === id)
       const damaged = after ? after.hpLeft < prev : true // 不在 units 里 = 本动作被消灭
       if (damaged) {
         const p = posBefore.get(id)
         if (p) this.playHitFlash(p.pos, p.size, duration)
       }
+    }
+  }
+
+  /**
+   * 近战攻击结算（含反击）：先闪主攻目标；若攻击方被反击掉血，停顿后闪反击方 + 音效。
+   * 主攻音效由调用方在 dispatch 前播放。
+   */
+  private async resolveMelee(
+    hpBefore: Map<string, number>,
+    posBefore: Map<string, { pos: Axial; size: 1 | 2 }>,
+    attackerId: string,
+    attackerDest: Axial
+  ): Promise<void> {
+    // 攻击结算后立即刷新：移动单位显示在落点，反击停顿期间不会"瞬移回原位"
+    this.drawUnits()
+    // 主攻：闪目标（排除攻击者自身）
+    this.flashDamageDealt(hpBefore, posBefore, 350, new Set([attackerId]))
+    // 反击：攻击者掉血（或被打灭）→ 停顿 → 闪反击方 + 音效
+    const after = this.state.units.find((u) => u.id === attackerId)
+    const hurt = after ? after.hpLeft < (hpBefore.get(attackerId) ?? 0) : true
+    if (hurt) {
+      await this.sleep(this.actionGapMs)
+      this.sfx?.playOnce('melee attack')
+      // 反击闪在攻击者【冲锋后落点】（而非移动前位置）
+      const size = after?.size ?? posBefore.get(attackerId)?.size ?? 1
+      this.playHitFlash(attackerDest, size)
     }
   }
 
@@ -688,6 +733,23 @@ export class BattleScene extends Phaser.Scene {
     }
     g.lineStyle(width, color, 1)
     g.strokePoints(pts, true)
+  }
+
+  /** 只描单位占地【外轮廓】：1×2 两格中间的共享边不画（邻格在占地内的边跳过） */
+  private strokeUnitBorder(g: Phaser.GameObjects.Graphics, footprint: Axial[], color: number, width: number): void {
+    const keys = new Set(footprint.map(hexKey))
+    g.lineStyle(width, color, 1)
+    for (const hex of footprint) {
+      for (let d = 0; d < 6; d++) {
+        const nb = hexNeighbor(hex, d as HexDir)
+        if (keys.has(hexKey(nb))) continue // 内部共享边跳过
+        const c1 = (6 - d) % 6
+        const c2 = (c1 + 1) % 6
+        const p1 = this.layout.cornerAt(hex, c1)
+        const p2 = this.layout.cornerAt(hex, c2)
+        g.lineBetween(p1.x, p1.y, p2.x, p2.y)
+      }
+    }
   }
 
   private makeCornerButton(x: number, y: number, label: string, onClick: () => void): void {
@@ -760,7 +822,7 @@ export class BattleScene extends Phaser.Scene {
         this.animActive.idx++
         if (this.animActive.idx >= this.animActive.path.length) {
           const done = this.animActive
-          this.visualPos.delete(done.unitId)
+          // 不删 visualPos：单位保留在落点，避免完成帧画回"原位"闪一下（状态在调用方 dispatch 后才更新）
           this.animActive = null
           this.sfx?.stopLooped() // 移动结束 → 停循环音效
           done.resolve()
