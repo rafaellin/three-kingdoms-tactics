@@ -641,9 +641,9 @@ export class BattleScene extends Phaser.Scene {
     const reachable = battleReachableArea(current, state)
     const mx = pointer.worldX
     const my = pointer.worldY
-    // 三落位中心在 x=-s√3 / 0 / +s√3（s=36 时 ±62px），相邻中心间距 s√3；
-    // 边界取半间距 s√3/2（≈31px）→ 鼠标选「水平最近」的落位，左/中/右三区均分
-    const SIDE_TOL = (this.layout.size * Math.sqrt(3)) / 2
+    // 中间区（P2）阈值：用户试下来 3px 左右手感最好（1px 太窄选不到 P2，31px 则 P1/P3 选不到）。
+    // 战斗布局 size 固定 36，故用像素常量即可。
+    const SIDE_TOL = 3
     let best: { targetId: string; dest: Axial; score: number } | null = null
     for (const dest of reachable) {
       // 攻击方在该落点的体格（1×2 = 主格+东邻格）：任一体格贴敌都算够得着 → 刀剑画在该体格边界
