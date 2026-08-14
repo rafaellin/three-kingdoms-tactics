@@ -45,6 +45,7 @@
 - 提交信息清晰描述改动；改动前先跑 `pnpm test`。
 - **typecheck 时机**：日常每轮代码修改后**不要**跑 `pnpm typecheck`（费时），仅在 git commit 前检查一次；`pnpm test`（core 单测）每轮改动后照跑。
 - **PRD 同步（不可破坏）**：每次开发（新增/修改功能、完成或放弃某项）后，务必把 `PRD.md` §15 开发状态 / §16 待完成 的 todo list 与代码实际保持一致——完成的勾 `[x]`、未完成的保持 `[ ]` 并写明差距；永远让 PRD 反映当前实现，不允许文档与代码脱节。改动功能前也先看 PRD 对应项，避免做偏。
+- **subagent 模型**：除非 plugin / skill / subagent 明确定义了 model，否则 fork 出去的 subagent 沿用会话同样的 model（不要另行覆盖成别的模型——本项目用 deepseek，会话默认即便宜快速的模型）。
 
 ## 常用命令
 
