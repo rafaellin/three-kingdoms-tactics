@@ -55,7 +55,8 @@ export function makeButton(
   btn.setInteractive({ useHandCursor: true })
   btn.on('pointerover', () => btn.setStyle({ backgroundColor: css(hover) }))
   btn.on('pointerout', () => btn.setStyle({ backgroundColor: css(background) }))
-  btn.on('pointerdown', () => {
+  btn.on('pointerdown', (p: Phaser.Input.Pointer) => {
+    if (p.button !== 0) return // 仅左键触发（右键/中键不触发按钮）
     btn.setScale(0.96)
     onClick()
   })

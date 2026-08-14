@@ -5,7 +5,7 @@ import { gotoBattle, gotoBooted, MENU_BATTLE } from './helpers'
  * 战斗 e2e：主菜单入口 + startBattle 确定性交互（刀剑冲锋/反击、远程满额/半额、移动即行动、信息面板、胜负循环）。
  * 模型无多模态：断言一律程序化（window.__game.getState()）；截图仅供人工目检。
  */
-const MODAL = { confirm: { x: 1010, y: 620 }, cancel: { x: 910, y: 620 }, close: { x: 960, y: 620 } }
+const MODAL = { confirm: { x: 1090, y: 620 }, cancel: { x: 830, y: 620 }, close: { x: 960, y: 620 } }
 const RETURN = { x: 960, y: 580 }
 
 interface UnitState {

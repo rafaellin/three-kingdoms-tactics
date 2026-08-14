@@ -502,14 +502,18 @@ export class BattleScene extends Phaser.Scene {
     this.store.dispatch('battle/defend', { unitId: this.state.currentUnitId as string })
     this.refreshViews()
   }
+  /** 弹窗关闭时同步重置输入状态（Modal onClose 钩子，同步于 close() 内调用）：
+   *  清 activeModal、吞掉一次尾随 pointerup、复位拖拽——防止关闭后的 pointerup 泄漏成地图操作 */
+  private resetModalInput(): void {
+    this.activeModal = null
+    this.swallowUp = true
+    this.dragging = false
+  }
   private openSkillPopup(): void {
     if (this.activeModal) return
     if (!this.canPlayerAct()) return
     this.activeModal = { open: true, title: '技能', message: '技能系统开发中' }
-    void openInfo(this, { title: '技能', message: '技能系统开发中' }).then(() => {
-      this.activeModal = null
-      this.swallowUp = true
-    })
+    void openInfo(this, { title: '技能', message: '技能系统开发中', onClose: () => this.resetModalInput() })
   }
   private async confirmEnd(kind: 'surrendered' | 'fled' | 'negotiated'): Promise<void> {
     if (!this.canPlayerAct()) return
@@ -519,9 +523,7 @@ export class BattleScene extends Phaser.Scene {
       : kind === 'fled' ? '确定要弃军逃跑吗？'
       : `支付 ${bail} 金钱议和，确定吗？`
     this.activeModal = { open: true, title: kind === 'negotiated' ? '议和' : '确认', message: msg }
-    const ok = await openConfirm(this, { title: this.activeModal.title, message: msg, confirmLabel: '确定', cancelLabel: '取消' })
-    this.activeModal = null
-    this.swallowUp = true
+    const ok = await openConfirm(this, { title: this.activeModal.title, message: msg, confirmLabel: '确定', cancelLabel: '取消', onClose: () => this.resetModalInput() })
     if (!ok || this.state.phase !== 'combat') return
     const cmd = kind === 'surrendered' ? 'battle/surrender' : kind === 'fled' ? 'battle/flee' : 'battle/negotiate'
     this.store.dispatch(cmd)
@@ -542,6 +544,8 @@ export class BattleScene extends Phaser.Scene {
     // 若场景启动时指针仍按下，说明该 pointerup 属于旧场景的点击：吞掉它（只吞一次）。
     let swallowStaleUp = this.input.activePointer.isDown
     this.input.on('pointerdown', (p: Phaser.Input.Pointer) => {
+      // 弹窗打开期间 / 非左键 → 不处理任何地图输入（防 modal 按钮 pointerdown 泄漏成拖拽）
+      if (this.activeModal || p.button !== 0) return
       // 点在 UI 控件（跳过/撤退/BGM 音量条等）上 → 不启动地图拖拽（与 pointerup 一致）
       if (this.input.hitTestPointer(p).length > 0) return
       // 记录按下点：用于区分「点击」与「拖拽平移相机」
@@ -550,7 +554,9 @@ export class BattleScene extends Phaser.Scene {
       this.lastPointer = { x: p.x, y: p.y }
     })
     this.input.on('pointerup', (p: Phaser.Input.Pointer) => {
-      if (this.swallowUp || swallowStaleUp) {
+      if (p.button !== 0) return
+      // 弹窗打开期间或刚关闭（activeModal 仍非 null / swallowUp 已同步置位）→ 吞掉本次 pointerup，防触发地图操作
+      if (this.activeModal || this.swallowUp || swallowStaleUp) {
         this.swallowUp = false
         swallowStaleUp = false
         return
@@ -565,6 +571,7 @@ export class BattleScene extends Phaser.Scene {
       this.handleClick(this.layout.pixelToHex(p.worldX, p.worldY))
     })
     this.input.on('pointermove', (p: Phaser.Input.Pointer) => {
+      if (this.activeModal) return // 弹窗期间不处理 hover/拖拽
       if (this.dragging) {
         // 拖拽平移相机（战场 zoom=1，直接按像素位移）
         this.cameras.main.scrollX -= p.x - this.lastPointer.x

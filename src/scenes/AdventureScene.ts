@@ -654,6 +654,7 @@ export class AdventureScene extends Phaser.Scene {
   private setupInput(): void {
     const cam = this.cameras.main
     this.input.on('pointerdown', (p: Phaser.Input.Pointer) => {
+      if (p.button !== 0) return // 仅左键触发地图交互
       // 仅在 Map 区启动拖拽；HUD / 工具栏区不触发地图交互
       if (!this.isInMapZone(p.y)) return
       this.dragging = true
@@ -672,6 +673,7 @@ export class AdventureScene extends Phaser.Scene {
       if (this.isInMapZone(p.y)) this.updateHover(p)
     })
     this.input.on('pointerup', (p: Phaser.Input.Pointer) => {
+      if (p.button !== 0) return // 仅左键触发地图交互
       this.dragging = false
       // 仅在 Map 区处理点击；位移过小视为点击（而非拖拽平移）
       if (!this.isInMapZone(p.y)) return
