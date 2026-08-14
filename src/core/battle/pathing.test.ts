@@ -21,7 +21,7 @@ function makeState(
     units,
     obstacles,
     general: { player: { name: 'P', atkBonus: 0, defBonus: 0 }, enemy: { name: 'E', atkBonus: 0, defBonus: 0 } },
-    turn: 1, order: units.map((u) => u.id), currentUnitId: units[0]?.id ?? null, selectedUnitId: null, phase: 'combat', log: []
+    turn: 1, completedQueue: [], normalQueue: units.map((u) => u.id), waitQueue: [], currentUnitId: units[0]?.id ?? null, selectedUnitId: null, phase: 'combat', log: []
   }
 }
 

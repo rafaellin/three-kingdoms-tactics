@@ -59,8 +59,12 @@ export interface BattleState {
   units: BattleUnit[]
   general: Record<Side, { name: string; atkBonus: number; defBonus: number }>
   turn: number
-  /** 本回合按速度降序的 unitId 行动序列 */
-  order: string[]
+  /** 本回合已完成行动的单位 id（按完成先后追加） */
+  completedQueue: string[]
+  /** 正常行动队列（effectiveSpeed 降序；队首=下一个行动） */
+  normalQueue: string[]
+  /** 等待队列（effectiveSpeed 升序；正常队列清空后才行动；队首=最慢） */
+  waitQueue: string[]
   currentUnitId: string | null
   /** 渲染层选中（高亮）；e2e 断言用 */
   selectedUnitId: string | null

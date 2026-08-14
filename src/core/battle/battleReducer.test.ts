@@ -32,7 +32,7 @@ describe('battle/init', () => {
     expect(mil?.hpLeft).toBe(300)
     // 骑兵 speed9 > 弓兵5 > 民兵4 → 行动序 [cavalry, archer, militia]
     const cavalryId = s.units.find((u) => u.defId === 'cavalry')?.id
-    expect(s.order[0]).toBe(cavalryId)
+    expect(s.normalQueue[0]).toBe(cavalryId)
     expect(s.currentUnitId).toBe(cavalryId)
   })
   test('玩家单位在左 (q=0)、敌方在右 (q=cols-2)', () => {
@@ -53,7 +53,7 @@ describe('battle/init', () => {
 describe('battle/endTurn 回合推进', () => {
   test('行动完跳到下一单位；全动完 turn+1 重排', () => {
     const store = makeStore()
-    const ids = store.getState().order
+    const ids = store.getState().normalQueue
     for (const id of ids.slice(0, -1)) {
       store.dispatch('battle/endTurn', { unitId: id })
       expect(store.getState().currentUnitId).toBe(ids[ids.indexOf(id) + 1])
@@ -69,7 +69,7 @@ describe('battle/endTurn 回合推进', () => {
       player: { side: 'player', generalName: 'P', atkBonus: 0, defBonus: 0, units: [{ defId: 'militia', count: 1 }] },
       enemy: { side: 'enemy', generalName: 'E', atkBonus: 0, defBonus: 0, units: [{ defId: 'militia', count: 1 }] }
     })
-    expect(store.getState().order[0]).toBe('p0')
+    expect(store.getState().normalQueue[0]).toBe('p0')
   })
   test('非当前单位 endTurn 为 no-op', () => {
     const store = makeStore()
@@ -327,14 +327,14 @@ describe('battle/speedMod（中途速度变化重排）', () => {
   test('初始：骑兵9 最先，同速4 玩家先行', () => {
     const s = mk().getState()
     expect(s.currentUnitId).toBe('p0')
-    expect(s.order).toEqual(['p0', 'p1', 'p2', 'e0'])
+    expect(s.normalQueue).toEqual(['p0', 'p1', 'p2', 'e0'])
   })
 
   test('减速：p1 掉到 e0 之后（未行动段按 effectiveSpeed 重排），当前单位不变', () => {
     const store = mk()
     store.dispatch('battle/speedMod', { unitId: 'p1', delta: -2 }) // p1 速度 4→2
     const s = store.getState()
-    expect(s.order).toEqual(['p0', 'p2', 'e0', 'p1'])
+    expect(s.normalQueue).toEqual(['p0', 'p2', 'e0', 'p1'])
     expect(s.currentUnitId).toBe('p0')
     expect(s.log.some((l) => l.includes('速度-2（现 2）'))).toBe(true)
   })
@@ -343,23 +343,23 @@ describe('battle/speedMod（中途速度变化重排）', () => {
     const store = mk()
     store.dispatch('battle/speedMod', { unitId: 'p2', delta: 5 }) // p2 速度 4→9（与 p0 平速）
     const s = store.getState()
-    expect(s.order[0]).toBe('p0')     // 当前单位仍居首（未被平速单位越过）
-    expect(s.order).toEqual(['p0', 'p2', 'p1', 'e0']) // p2 紧接其后
+    expect(s.normalQueue[0]).toBe('p0')     // 当前单位仍居首（未被平速单位越过）
+    expect(s.normalQueue).toEqual(['p0', 'p2', 'p1', 'e0']) // p2 紧接其后
   })
 
   test('对当前单位改速度：本回合 order/currentUnitId 不动，下回合排序带上修正', () => {
     const store = mk()
     store.dispatch('battle/speedMod', { unitId: 'p0', delta: 5 }) // p0 9→14
-    expect(store.getState().order).toEqual(['p0', 'p1', 'p2', 'e0'])
+    expect(store.getState().normalQueue).toEqual(['p0', 'p1', 'p2', 'e0'])
     expect(store.getState().currentUnitId).toBe('p0')
     // 全员行动完 → turn 2 按新速度重排，p0 仍居首
     for (const id of ['p0', 'p1', 'p2', 'e0']) store.dispatch('battle/endTurn', { unitId: id })
     const s = store.getState()
     expect(s.turn).toBe(2)
-    expect(s.order).toEqual(['p0', 'p1', 'p2', 'e0'])
+    expect(s.normalQueue).toEqual(['p0', 'p1', 'p2', 'e0'])
   })
 
-  test('重排剔除阵亡残留（order 不再含已消灭单位）', () => {
+  test('重排剔除阵亡残留（normalQueue 不再含已消灭单位）', () => {
     const store = makeStore({
       grid: { cols: 3, rows: 3 },
       player: { side: 'player', generalName: 'P', atkBonus: 0, defBonus: 0,
@@ -367,11 +367,38 @@ describe('battle/speedMod（中途速度变化重排）', () => {
       enemy: { side: 'enemy', generalName: 'E', atkBonus: 0, defBonus: 0,
         units: [{ defId: 'militia', count: 1 }, { defId: 'militia', count: 1 }] }
     })
-    expect(store.getState().order).toEqual(['p0', 'p1', 'e0', 'e1'])
+    expect(store.getState().normalQueue).toEqual(['p0', 'p1', 'e0', 'e1'])
     store.dispatch('battle/attack', { unitId: 'p0', targetId: 'e0', to: { q: 0, r: 0 } }) // 原地近战灭 e0（e1 存活 → 战斗继续）
     expect(store.getState().units.find((u) => u.id === 'e0')).toBeUndefined()
-    expect(store.getState().order).toEqual(['p0', 'p1', 'e0', 'e1']) // attack 不推进 → e0 残留
+    // attack 不推进：p0 已落 completedQueue，e0 仍残留 normalQueue
+    expect(store.getState().normalQueue).toEqual(['p1', 'e0', 'e1'])
+    store.dispatch('battle/advance') // 推进到 p1（当前单位回到 normalQueue 内）
+    expect(store.getState().currentUnitId).toBe('p1')
     store.dispatch('battle/speedMod', { unitId: 'p1', delta: 0 }) // 触发重排 → 剔除 e0
-    expect(store.getState().order).toEqual(['p0', 'p1', 'e1'])
+    expect(store.getState().normalQueue).toEqual(['p1', 'e1'])
+  })
+})
+
+describe('三队列（completedQueue/normalQueue/waitQueue）', () => {
+  test('移动即行动后：单位移入 completedQueue，normalQueue 收缩', () => {
+    const store = makeStore()
+    const cur = store.getState().currentUnitId!
+    store.dispatch('battle/move', { unitId: cur, to: { q: 1, r: 0 } })
+    const s = store.getState()
+    expect(s.completedQueue).toEqual([cur])
+    expect(s.normalQueue).not.toContain(cur)
+    expect(s.currentUnitId).toBe(s.normalQueue[0])
+  })
+
+  test('整回合结束：completedQueue 清空、normalQueue 重建、waitQueue 空', () => {
+    const store = makeStore()
+    const ids = store.getState().normalQueue
+    for (const id of ids) store.dispatch('battle/endTurn', { unitId: id })
+    const s = store.getState()
+    expect(s.turn).toBe(2)
+    expect(s.completedQueue).toEqual([])
+    expect(s.waitQueue).toEqual([])
+    expect(s.normalQueue).toHaveLength(ids.length)
+    expect(s.units.every((u) => !u.hasActed)).toBe(true)
   })
 })

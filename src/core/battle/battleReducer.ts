@@ -25,7 +25,9 @@ export function createInitialBattleState(): BattleState {
       enemy: { name: '', atkBonus: 0, defBonus: 0 }
     },
     turn: 1,
-    order: [],
+    completedQueue: [],
+    normalQueue: [],
+    waitQueue: [],
     currentUnitId: null,
     selectedUnitId: null,
     phase: 'combat',
@@ -45,22 +47,20 @@ function sortOrder(units: BattleUnit[]): string[] {
   return [...units].sort(compareUnits).map((u) => u.id)
 }
 
-/**
- * 中途速度变化后重排：已行动段 + 当前单位原样保留，只把当前单位之后的**未行动段**
- * 按 effectiveSpeed 稳定降序重排，并剔除阵亡残留 id。
- * 「加速不越过当前单位」由当前单位不在重排段内自动保证（最多紧接其后）。
- */
-function reorderRemaining(state: BattleState): BattleState['order'] {
-  const curIdx = state.order.indexOf(state.currentUnitId ?? '')
-  if (curIdx < 0) return state.order
+/** 中途速度变化后重排 normalQueue：保留当前单位及之前段，之后剔除阵亡按 effectiveSpeed 降序重排 */
+function reorderNormal(state: BattleState): string[] {
+  const curIdx = state.normalQueue.indexOf(state.currentUnitId ?? '')
+  if (curIdx < 0) return state.normalQueue
   const alive = new Set(state.units.map((u) => u.id))
-  const prefix = state.order.slice(0, curIdx + 1)
-  const tail = state.order.slice(curIdx + 1).filter((id) => alive.has(id))
-  tail.sort((aId, bId) => {
-    const a = state.units.find((u) => u.id === aId) as BattleUnit
-    const b = state.units.find((u) => u.id === bId) as BattleUnit
-    return compareUnits(a, b)
-  })
+  const prefix = state.normalQueue.slice(0, curIdx + 1)
+  const tail = state.normalQueue
+    .slice(curIdx + 1)
+    .filter((id) => alive.has(id))
+    .sort((aId, bId) => {
+      const a = state.units.find((u) => u.id === aId) as BattleUnit
+      const b = state.units.find((u) => u.id === bId) as BattleUnit
+      return compareUnits(a, b)
+    })
   return [...prefix, ...tail]
 }
 
@@ -95,7 +95,9 @@ function init(state: BattleState, payload: { player: BattleArmyConfig; enemy: Ba
       enemy: { name: payload.enemy.generalName, atkBonus: payload.enemy.atkBonus, defBonus: payload.enemy.defBonus }
     },
     turn: 1,
-    order,
+    completedQueue: [],
+    normalQueue: order,
+    waitQueue: [],
     currentUnitId: order[0] ?? null,
     selectedUnitId: null,
     phase: 'combat',
@@ -103,22 +105,57 @@ function init(state: BattleState, payload: { player: BattleArmyConfig; enemy: Ba
   }
 }
 
-/** 找到本回合下一个未行动单位；全部行动完则 turn+1、重置（含 retaliated）、按新状态重排 */
-function advance(state: BattleState): BattleState {
-  for (const id of state.order) {
-    const u = state.units.find((x) => x.id === id)
-    if (u && !u.hasActed) return { ...state, currentUnitId: id, selectedUnitId: null }
+/** 扫 normalQueue → waitQueue，返回第一个存活（仍在 units 中）的未行动单位 */
+function nextUnactedId(state: BattleState): string | null {
+  const alive = new Set(state.units.map((u) => u.id))
+  for (const id of state.normalQueue) if (alive.has(id)) return id
+  for (const id of state.waitQueue) if (alive.has(id)) return id
+  return null
+}
+
+/** 单位完成行动：置 hasActed（+extra），从其所在队列移入 completedQueue */
+function markActed(state: BattleState, unitId: string, extra?: Partial<BattleUnit>): BattleState {
+  const inWait = state.waitQueue.includes(unitId)
+  const units = state.units.map((u) => (u.id === unitId ? { ...u, hasActed: true, ...extra } : u))
+  return {
+    ...state,
+    units,
+    normalQueue: inWait ? state.normalQueue : state.normalQueue.filter((id) => id !== unitId),
+    waitQueue: inWait ? state.waitQueue.filter((id) => id !== unitId) : state.waitQueue,
+    completedQueue: state.completedQueue.includes(unitId) ? state.completedQueue : [...state.completedQueue, unitId]
   }
+}
+
+/** 判定终态（一方全灭 → 置 phase）；未终态原样返回。Task 4 再加 outcome */
+function applyTerminal(state: BattleState): BattleState {
+  const playerAlive = state.units.some((u) => u.side === 'player')
+  const enemyAlive = state.units.some((u) => u.side === 'enemy')
+  if (playerAlive && enemyAlive) return state
+  return { ...state, phase: !enemyAlive ? 'won' : 'lost' }
+}
+
+/** 推进：下一未行动单位；全部行动完则 turn+1、重置（含 retaliated）、按新状态重建 normalQueue */
+function advance(state: BattleState): BattleState {
+  const next = nextUnactedId(state)
+  if (next) return { ...state, currentUnitId: next, selectedUnitId: null }
   const units = state.units.map((u) => ({ ...u, hasActed: false, hasMoved: false, retaliated: false }))
-  const order = sortOrder(units)
-  return { ...state, turn: state.turn + 1, units, order, currentUnitId: order[0] ?? null, selectedUnitId: null }
+  const normalQueue = sortOrder(units)
+  return {
+    ...state,
+    turn: state.turn + 1,
+    units,
+    completedQueue: [],
+    normalQueue,
+    waitQueue: [],
+    currentUnitId: normalQueue[0] ?? null,
+    selectedUnitId: null
+  }
 }
 
 function endTurn(state: BattleState, unitId: string): BattleState {
   const unit = state.units.find((u) => u.id === unitId)
   if (!unit || unit.id !== state.currentUnitId) return state
-  const units = state.units.map((u) => (u.id === unit.id ? { ...u, hasActed: true } : u))
-  return advance({ ...state, units })
+  return advance(markActed(state, unitId))
 }
 
 /**
@@ -131,19 +168,12 @@ function speedMod(state: BattleState, unitId: string, delta: number): BattleStat
   const newMod = (unit.speedMod ?? 0) + delta
   const units = state.units.map((u) => (u.id === unitId ? { ...u, speedMod: newMod } : u))
   const next = { ...state, units }
-  const order = reorderRemaining(next)
+  const normalQueue = reorderNormal(next)
   const log = [
     ...state.log,
     `第${state.turn}回合 ${unitName(state, unit)} 速度${delta >= 0 ? '+' : ''}${delta}（现 ${effectiveSpeed({ ...unit, speedMod: newMod })}）`
   ]
-  return { ...next, order, log }
-}
-
-/** 判定胜负：一方全灭 */
-function phaseOf(units: BattleUnit[]): BattleState['phase'] {
-  if (!units.some((u) => u.side === 'player')) return 'lost'
-  if (!units.some((u) => u.side === 'enemy')) return 'won'
-  return 'combat'
+  return { ...next, normalQueue, log }
 }
 
 function select(state: BattleState, unitId: string | null): BattleState {
@@ -161,11 +191,8 @@ function move(state: BattleState, unitId: string, to: Axial): BattleState {
   const reachable = battleReachableArea(unit, state)
   if (!reachable.some((h) => hexKey(h) === hexKey(to))) return state
   if (!battleFindPath(unit, to, state)) return state
-  const units = state.units.map((u) =>
-    u.id === unitId ? { ...u, position: { ...to }, hasActed: true, hasMoved: true } : u
-  )
-  const log = [...state.log, `第${state.turn}回合 ${unitName(state, unit)} 移动到 (${to.q},${to.r})`]
-  return advance({ ...state, units, log })
+  const next = markActed(state, unitId, { position: { ...to }, hasMoved: true })
+  return advance({ ...next, log: [...state.log, `第${state.turn}回合 ${unitName(state, unit)} 移动到 (${to.q},${to.r})`] })
 }
 
 /** 对 victim 结算 dmg：扣血池 → 折算 count → 死亡则移除。返回更新后的 units */
@@ -202,19 +229,16 @@ function attack(state: BattleState, unitId: string, targetId: string, to?: Axial
   const atkMult = UNIT_DEFS[attacker.defId].range > 1 ? MELEE_ATTACK_MULT : 1
   const dmg = computeDamage({ ...attacker, position: dest }, target, atkGen.atkBonus, defGen.defBonus, atkMult)
   const targetCountBefore = target.count
-  let units = state.units.map((u) =>
-    u.id === attacker.id ? { ...u, position: { ...dest }, hasActed: true, hasMoved: true } : u
-  )
-  units = dealDamage(units, target.id, dmg)
-  const targetAfter = units.find((u) => u.id === target.id)
+  let next = markActed(state, unitId, { position: { ...dest }, hasMoved: true })
+  next = { ...next, units: dealDamage(next.units, target.id, dmg) }
+  const targetAfter = next.units.find((u) => u.id === target.id)
   const killedCount = targetAfter ? targetCountBefore - targetAfter.count : targetCountBefore
   const eliminated = !targetAfter
   const logs = [
     `第${state.turn}回合 ${unitName(state, attacker)} 攻击 ${unitName(state, target)}，` +
     `造成 ${dmg} 点伤害${killedCount > 0 ? `，歼灭 ${killedCount} 个` : ''}（${eliminated ? '消灭' : '全伤'}）`
   ]
-  const phase = phaseOf(units)
-  return { ...state, units, phase, log: [...state.log, ...logs] }
+  return applyTerminal({ ...next, log: [...state.log, ...logs] })
 }
 
 /** 目标是否能反击攻击者（分段结算的判定）：目标存活、未反击、异侧、按体积相邻 */
@@ -245,9 +269,9 @@ function retaliate(state: BattleState, retaliatorId: string, victimId: string): 
     `第${state.turn}回合 ${unitName(state, retaliator)} 反击 ${unitName(state, victim)}，` +
     `造成 ${rDmg} 点伤害${killedCount > 0 ? `，歼灭 ${killedCount} 个` : ''}（${eliminated ? '消灭' : '全伤'}）`
   ]
-  const phase = phaseOf(units)
-  if (phase !== 'combat') return { ...state, units, phase, log: [...state.log, ...logs] }
-  return advance({ ...state, units, log: [...state.log, ...logs] })
+  const s = applyTerminal({ ...state, units, log: [...state.log, ...logs] })
+  if (s.phase !== 'combat') return s
+  return advance(s)
 }
 
 /** 推进到下一个未行动单位（分段结算时主攻后无反击则调用） */
@@ -273,9 +297,9 @@ function shoot(state: BattleState, unitId: string, targetId: string): BattleStat
   const base = computeDamage(attacker, target, atkGen.atkBonus, defGen.defBonus)
   const dmg = Math.round(base * (inRange ? 1 : RANGE_OUT_MULT))
   const targetCountBefore = target.count
-  let units = state.units.map((u) => (u.id === attacker.id ? { ...u, hasActed: true, hasMoved: true } : u))
-  units = dealDamage(units, target.id, dmg)
-  const targetAfter = units.find((u) => u.id === target.id)
+  let next = markActed(state, unitId, { hasMoved: true })
+  next = { ...next, units: dealDamage(next.units, target.id, dmg) }
+  const targetAfter = next.units.find((u) => u.id === target.id)
   const killedCount = targetAfter ? targetCountBefore - targetAfter.count : targetCountBefore
   const eliminated = !targetAfter
   const log = [
@@ -283,9 +307,9 @@ function shoot(state: BattleState, unitId: string, targetId: string): BattleStat
     `第${state.turn}回合 ${unitName(state, attacker)} 射击 ${unitName(state, target)}，` +
     `造成 ${dmg} 点伤害${killedCount > 0 ? `，歼灭 ${killedCount} 个` : ''}（${eliminated ? '消灭' : inRange ? '满额' : '半额'}）`
   ]
-  const phase = phaseOf(units)
-  if (phase !== 'combat') return { ...state, units, phase, log }
-  return advance({ ...state, units, log })
+  const s = applyTerminal({ ...next, log })
+  if (s.phase !== 'combat') return s
+  return advance(s)
 }
 
 export const battleReducer: Reducer<BattleState> = (state, cmd: Command) => {
