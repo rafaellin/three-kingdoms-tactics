@@ -11,7 +11,7 @@ const BAR_H = 88
 
 /**
  * 战斗行动顺序条（渲染层，纯显示）。
- * 贴视口底部的全宽通栏条，方块按 state.order 水平居中排布。
+ * 贴视口底部的通栏条，方块按三段队列（done/normal/wait）在左右两侧按钮区之间水平居中。
  * MVC：视图只读 buildTurnOrderQueue(state) + currentUnitId，无独立队列状态。
  * 不设 setInteractive → 不拦截地图拖拽/滚轮/点击（横条上交互原样传给地图）。
  */
@@ -21,37 +21,41 @@ export class TurnOrderQueue {
   private readonly labels = new Map<string, Phaser.GameObjects.Text>()
   private lastState: BattleState | null = null
   private visible = true
+  private readonly leftW: number
+  private readonly rightW: number
 
-  constructor(private readonly scene: Phaser.Scene) {
+  constructor(private readonly scene: Phaser.Scene, options: { leftW: number; rightW: number }) {
+    this.leftW = options.leftW
+    this.rightW = options.rightW
     this.bar = scene.add.graphics().setDepth(10).setScrollFactor(0)
     this.squares = scene.add.graphics().setDepth(11).setScrollFactor(0)
     this.drawBar()
     scene.scale.on('resize', this.onResize)
   }
 
-  /** 从 state 重绘整个队列（方块底色/大字/黄框高亮/灰态） */
+  /** 从 state 重绘整个队列（三段底色/大字/黄框高亮/灰态） */
   render(state: BattleState): void {
     this.lastState = state
     const entries = buildTurnOrderQueue(state)
-    const w = this.scene.cameras.main.width
+    const cam = this.scene.cameras.main
     const totalW = entries.length * BLOCK + (entries.length - 1) * GAP
-    const startX = w / 2 - totalW / 2
-    const y = this.scene.cameras.main.height - BAR_H / 2
+    const startX = this.leftW + (cam.width - this.leftW - this.rightW) / 2 - totalW / 2
+    const y = cam.height - BAR_H / 2
     this.squares.clear()
     const seen = new Set<string>()
     entries.forEach((e, i) => {
       const x = startX + i * (BLOCK + GAP) + BLOCK / 2
       const x0 = x - BLOCK / 2
       const y0 = y - BLOCK / 2
-      // 底色 = 兵种六边形格子同色（BATTLE_SIDE_COLORS 单源）
-      this.squares.fillStyle(BATTLE_SIDE_COLORS[e.side], 1)
+      // 底色 = 兵种六边形格子同色（BATTLE_SIDE_COLORS 单源）；等待段略暗（同侧色 alpha 0.55）
+      this.squares.fillStyle(BATTLE_SIDE_COLORS[e.side], e.segment === 'wait' ? 0.55 : 1)
       this.squares.fillRect(x0, y0, BLOCK, BLOCK)
-      // 已行动 → 叠半透明黑灰「灰掉」；未行动 → 保持原色
-      if (e.hasActed) {
+      // done 段 → 叠半透明黑灰「灰掉」；normal/wait → 保持原色
+      if (e.segment === 'done') {
         this.squares.fillStyle(0x000000, 0.55)
         this.squares.fillRect(x0, y0, BLOCK, BLOCK)
       }
-      // 当前行动单位 → 黄框高亮（与战场当前单位高亮同色 0xffcc33）；其余细黑描边
+      // 当前行动单位 → 黄框高亮（与战场当前单位高亮同色 0xffcc33）；其余细黑描边（跨段有效）
       if (e.unitId === state.currentUnitId) {
         this.squares.lineStyle(3, 0xffcc33, 1)
         this.squares.strokeRect(x0, y0, BLOCK, BLOCK)
@@ -72,10 +76,10 @@ export class TurnOrderQueue {
       label.setPosition(x, y)
       // 1×1 方块只显示一个汉字：gridLabel 在 1×2 地图格可放全名（如「骑兵」），方块放不下 → 取首字「骑」
       label.setText(UNIT_DEFS[e.defId].gridLabel.charAt(0))
-      label.setColor(e.hasActed ? '#7a808a' : '#ffffff')
+      label.setColor(e.segment === 'done' ? '#7a808a' : '#ffffff')
       seen.add(e.unitId)
     })
-    // 清理已不在队列中的文字对象（单位阵亡 / order 收缩）
+    // 清理已不在队列中的文字对象（单位阵亡 / 队列收缩）
     for (const [id, t] of this.labels) {
       if (!seen.has(id)) {
         t.destroy()

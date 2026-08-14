@@ -4,8 +4,9 @@ import { battleReducer, createInitialBattleState } from '../core/battle/battleRe
 import { planEnemyAction } from '../core/battle/ai'
 import { battleFindPath, battleReachableArea, inBattleGrid } from '../core/battle/pathing'
 import { buildTurnOrderQueue } from '../core/battle/queue'
+import { buildBattleResult, computeBail } from '../core/battle/result'
 import { canRetaliate } from '../core/battle/battleReducer'
-import { occupiedHexes, woundedHp, type BattleArmyConfig, type BattleState, type BattleUnit } from '../core/battle/types'
+import { occupiedHexes, woundedHp, type BattleArmyConfig, type BattleResult, type BattleState, type BattleUnit } from '../core/battle/types'
 import { hexDistance, hexKey, hexNeighbor, HexLayout, type Axial, type HexDir } from '../core/hex/HexGrid'
 import { UNIT_DEFS } from '../data/units'
 import { BATTLE_GRID, BATTLE_OBSTACLES, ENEMY_ARMY, PLAYER_ARMY } from '../data/battleTest'
@@ -13,7 +14,8 @@ import { MainMenuScene } from './MainMenuScene'
 import { getBgmManager } from '../audio/BgmManager'
 import { SfxManager } from '../audio/SfxManager'
 import { BgmControls } from '../ui/BgmControls'
-import { OperationButtons } from '../ui/OperationButtons'
+import { BattleActionButtons } from '../ui/BattleActionButtons'
+import { openConfirm, openInfo } from '../ui/Modal'
 import { TurnOrderQueue } from '../ui/TurnOrderQueue'
 import { fadeAndStart, fadeIn } from '../ui/fade'
 import { BATTLE_SIDE_COLORS } from '../ui/theme'
@@ -73,8 +75,10 @@ export class BattleScene extends Phaser.Scene {
   private dragging = false
   private downPos = { x: 0, y: 0 }
   private lastPointer = { x: 0, y: 0 }
-  private operationButtons: OperationButtons | null = null
+  private actionButtons: BattleActionButtons | null = null
   private turnOrderQueue: TurnOrderQueue | null = null
+  /** 当前打开的弹窗（调试 / e2e 断言用；openConfirm/openInfo 期间非 null） */
+  private activeModal: { open: true; title: string; message: string } | null = null
   /** 受击闪白累计次数（debug / e2e 断言用） */
   private hitFlashCount = 0
   /** 音效（渲染层；移动循环 + 攻击一次性） */
@@ -102,6 +106,7 @@ export class BattleScene extends Phaser.Scene {
     this.logBuffer = []
     this.logFlushed = 0
     this.hitFlashCount = 0
+    this.activeModal = null
     this.hover = { ghostHex: null, swordHex: null, swordAdjHex: null, cursorKind: 'none', swordTargetId: null, blinkId: null }
     this.blinkPhase = 0
     this.unitLabels.clear()
@@ -110,7 +115,9 @@ export class BattleScene extends Phaser.Scene {
     this.store.dispatch('battle/init', {
       player: PLAYER_ARMY,
       enemy: ENEMY_ARMY,
-      grid: { ...BATTLE_GRID, obstacles: BATTLE_OBSTACLES }
+      grid: { ...BATTLE_GRID, obstacles: BATTLE_OBSTACLES },
+      playerGold: 10000,
+      opponentKind: 'faction'
     })
     getBgmManager(this).switchToCategory('battle')
     fadeIn(this)
@@ -120,7 +127,7 @@ export class BattleScene extends Phaser.Scene {
     this.sfx = new SfxManager(this)
     this.events.once('shutdown', () => {
       this.bgmControls?.destroy()
-      this.operationButtons?.destroy()
+      this.actionButtons?.destroy()
       this.turnOrderQueue?.destroy()
     })
   }
@@ -128,7 +135,7 @@ export class BattleScene extends Phaser.Scene {
   /** 直接以指定阵容/网格开局（e2e 确定性交互测试） */
   startBattle(player: BattleArmyConfig, enemy: BattleArmyConfig, grid: { cols: number; rows: number; obstacles?: Axial[] }): void {
     this.store = new CommandLog<BattleState>(createInitialBattleState(), battleReducer)
-    this.store.dispatch('battle/init', { player, enemy, grid })
+    this.store.dispatch('battle/init', { player, enemy, grid, playerGold: 10000, opponentKind: 'faction' })
     this.visualPos.clear()
     this.animQueue.length = 0
     this.animActive = null
@@ -158,6 +165,8 @@ export class BattleScene extends Phaser.Scene {
   update(_time: number, delta: number): void {
     this.blinkPhase += delta * 0.01
     this.updateAnimation(delta)
+    // 每帧刷新两侧行动按钮可用性（busy/phase/队列变化后立即反映，disabled 仅作视觉提示，点击仍由 canPlayerAct 兜底）
+    this.actionButtons?.render(this.state, this.canPlayerAct())
     // 玩家当前单位行动时，可达范围每帧重绘 → 脉动 alpha（闪烁）标识"这是可移动范围"
     if (this.state.phase === 'combat' && this.currentSide() === 'player') {
       this.drawOverlay()
@@ -218,13 +227,20 @@ export class BattleScene extends Phaser.Scene {
       .setDepth(11)
       .setScrollFactor(0)
       .setVisible(false)
-    // 战斗操作按钮组（右下角：跳过行动 / 撤退；后续加 待命/防御）——统一定位、resize 重排、结算整体隐藏
-    this.operationButtons = new OperationButtons(this, [
-      { label: '跳过行动', onClick: () => this.endCurrentTurn() },
-      { label: '撤退', onClick: () => this.surrender() }
-    ])
-    // 行动顺序条（底部通栏：当前回合行动顺序 + 黄框高亮/灰态；纯显示不拦截地图交互）
-    this.turnOrderQueue = new TurnOrderQueue(this)
+    // 战斗行动条两侧按钮组（左=⚙/降/逃/和、右=技/候/守）；中间留白给行动顺序条
+    this.actionButtons = new BattleActionButtons(this, {
+      onSurrender: () => void this.confirmEnd('surrendered'),
+      onFlee: () => void this.confirmEnd('fled'),
+      onNegotiate: () => void this.confirmEnd('negotiated'),
+      onSkill: () => void this.openSkillPopup(),
+      onWait: () => this.tryWait(),
+      onDefend: () => this.tryDefend()
+    })
+    // 行动顺序条（底部通栏：三段队列 done/normal/wait，在两侧按钮区之间水平居中）
+    this.turnOrderQueue = new TurnOrderQueue(this, {
+      leftW: this.actionButtons.getLeftWidth(),
+      rightW: this.actionButtons.getRightWidth()
+    })
     this.scale.on('resize', () => {
       this.centerCamera()
       this.positionResult()
@@ -371,12 +387,23 @@ export class BattleScene extends Phaser.Scene {
     const terminal = this.state.phase !== 'combat'
     this.resultText.setVisible(terminal)
     this.returnButton.setVisible(terminal)
-    // 结算时隐藏战斗操作按钮（跳过行动 / 撤退）
-    this.operationButtons?.setVisible(!terminal)
+    // 结算时隐藏两侧行动按钮与行动顺序条
+    this.actionButtons?.setVisible(!terminal)
     this.turnOrderQueue?.setVisible(!terminal)
     if (terminal) {
-      this.resultText.setText(this.state.phase === 'won' ? '胜利' : '战败')
+      this.resultText.setText(this.resultLabel())
       this.positionResult()
+    }
+  }
+
+  /** 终态结果文字：won→胜利 / lost→战败 / fled→逃跑 / negotiated→议和 */
+  private resultLabel(): string {
+    switch (this.state.phase) {
+      case 'won': return '胜利'
+      case 'lost': return '战败'
+      case 'fled': return '逃跑'
+      case 'negotiated': return '议和'
+      default: return ''
     }
   }
 
@@ -456,15 +483,44 @@ export class BattleScene extends Phaser.Scene {
     return this.state.units.find((x) => x.id === this.state.currentUnitId)?.side ?? null
   }
 
-  private endCurrentTurn(): void {
-    if (this.busy || this.state.phase !== 'combat' || this.currentSide() !== 'player') return
-    this.store.dispatch('battle/endTurn', { unitId: this.state.currentUnitId as string })
-    this.refreshViews()
+  private canPlayerAct(): boolean {
+    return !this.busy && this.state.phase === 'combat' && this.currentSide() === 'player'
   }
 
-  private surrender(): void {
-    this.store.dispatch('battle/surrender')
+  private tryWait(): void {
+    if (!this.canPlayerAct()) return
+    this.store.dispatch('battle/wait', { unitId: this.state.currentUnitId as string })
     this.refreshViews()
+  }
+  private tryDefend(): void {
+    if (!this.canPlayerAct()) return
+    this.store.dispatch('battle/defend', { unitId: this.state.currentUnitId as string })
+    this.refreshViews()
+  }
+  private openSkillPopup(): void {
+    if (!this.canPlayerAct()) return
+    this.activeModal = { open: true, title: '技能', message: '技能系统开发中' }
+    void openInfo(this, { title: '技能', message: '技能系统开发中' }).then(() => {
+      this.activeModal = null
+    })
+  }
+  private async confirmEnd(kind: 'surrendered' | 'fled' | 'negotiated'): Promise<void> {
+    if (!this.canPlayerAct()) return
+    const bail = computeBail(this.state)
+    const msg =
+      kind === 'surrendered' ? '确定要投降吗？'
+      : kind === 'fled' ? '确定要弃军逃跑吗？'
+      : `支付 ${bail} 金钱议和，确定吗？`
+    this.activeModal = { open: true, title: kind === 'negotiated' ? '议和' : '确认', message: msg }
+    const ok = await openConfirm(this, { title: this.activeModal.title, message: msg, confirmLabel: '确定', cancelLabel: '取消' })
+    this.activeModal = null
+    if (!ok || this.state.phase !== 'combat') return
+    const cmd = kind === 'surrendered' ? 'battle/surrender' : kind === 'fled' ? 'battle/flee' : 'battle/negotiate'
+    this.store.dispatch(cmd)
+    this.refreshViews()
+  }
+  getBattleResult(): BattleResult {
+    return buildBattleResult(this.state)
   }
 
   // ---------- 输入 ----------
@@ -509,6 +565,13 @@ export class BattleScene extends Phaser.Scene {
       }
       this.onHover(p)
     })
+    // 键盘快捷键（技=c / 候=w / 守=d）；先 off 再 on，防止 setupInput 重复调用时叠加注册
+    this.input.keyboard?.off('keydown-C')
+    this.input.keyboard?.off('keydown-W')
+    this.input.keyboard?.off('keydown-D')
+    this.input.keyboard?.on('keydown-C', () => this.openSkillPopup())
+    this.input.keyboard?.on('keydown-W', () => this.tryWait())
+    this.input.keyboard?.on('keydown-D', () => this.tryDefend())
   }
 
   private onHover(pointer: Phaser.Input.Pointer): void {
@@ -982,7 +1045,7 @@ export class BattleScene extends Phaser.Scene {
 
   /** 导出当前战斗状态为 JSON（复现 / debug 用）：含 state + 完整 log + 行动序 */
   exportState(): string {
-    return JSON.stringify({ grid: this.state.grid, turn: this.state.turn, order: this.state.order, units: this.state.units, general: this.state.general, phase: this.state.phase, log: this.state.log }, null, 2)
+    return JSON.stringify({ grid: this.state.grid, turn: this.state.turn, normalQueue: this.state.normalQueue, waitQueue: this.state.waitQueue, completedQueue: this.state.completedQueue, units: this.state.units, general: this.state.general, phase: this.state.phase, log: this.state.log }, null, 2)
   }
 
   /** 下载完整 log 为 .log 文件（浏览器 Blob 下载） */
@@ -1040,8 +1103,12 @@ export class BattleScene extends Phaser.Scene {
       selectedUnitId: state.selectedUnitId,
       grid: state.grid,
       obstacles: state.obstacles,
-      order: state.order,
+      normalQueue: state.normalQueue,
+      waitQueue: state.waitQueue,
+      completedQueue: state.completedQueue,
       turnQueue: buildTurnOrderQueue(state),
+      modal: this.activeModal,
+      battleResult: state.phase !== 'combat' ? buildBattleResult(state) : null,
       log: state.log,
       reachable,
       reachableFootprint,
@@ -1059,7 +1126,6 @@ export class BattleScene extends Phaser.Scene {
         camWidth: this.cameras.main.width,
         scaleWidth: this.scale.width,
         buttons: {
-          opButtonsVisible: this.operationButtons?.isVisible() ?? null,
           resultVisible: this.resultText?.visible ?? null
         },
         text: this.resultText

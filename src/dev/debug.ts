@@ -33,6 +33,8 @@ export interface DebugBridge {
   downloadLog(): void
   /** 导出当前战斗状态为 JSON（复现 / debug 用） */
   exportState(): string
+  /** 当前战斗结算结果（JSON 字符串；非战斗/未终态返回 '{}'） */
+  getBattleResult(): string
 }
 
 declare global {
@@ -93,6 +95,9 @@ export function installDevBridge(game: Phaser.Game): DebugBridge {
     },
     exportState() {
       return battle()?.exportState() ?? '{}'
+    },
+    getBattleResult() {
+      return battle()?.getBattleResult() ? JSON.stringify(battle()!.getBattleResult()) : '{}'
     }
   }
   window.__game = bridge
