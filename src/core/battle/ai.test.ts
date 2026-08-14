@@ -48,10 +48,23 @@ describe('planEnemyAction（冲锋/射击）', () => {
     const enemy = unit({ id: 'e0', defId: 'archer', position: { q: 6, r: 0 } })
     expect(planEnemyAction(state(enemy, [foe]))).toEqual({ type: 'shoot', targetId: 'p0' })
   })
-  test('远程：射程外 → 走近', () => {
+  test('远程：射程外 → 仍射击（半额，优先远程不走近）', () => {
+    // archer 射程 6，敌在 (7,0) 距 7 > 6 → 半额射击而非移动/近战
     const foe = unit({ id: 'p0', side: 'player', position: { q: 0, r: 0 } })
     const enemy = unit({ id: 'e0', defId: 'archer', position: { q: 7, r: 0 } })
-    expect(planEnemyAction(state(enemy, [foe])).type).toBe('move')
+    expect(planEnemyAction(state(enemy, [foe]))).toEqual({ type: 'shoot', targetId: 'p0' })
+  })
+  test('远程：全额优先于半额（射程内目标优先，即使血更高）', () => {
+    // archer (6,0) 射程 6：p1 (2,0) 距 4 全额（hp 50）、p0 (13,0) 距 7 半额（hp 5）→ 选全额 p1
+    const inRange = unit({ id: 'p1', side: 'player', position: { q: 2, r: 0 }, hpLeft: 50 })
+    const outRange = unit({ id: 'p0', side: 'player', position: { q: 13, r: 0 }, hpLeft: 5 })
+    const enemy = unit({ id: 'e0', defId: 'archer', position: { q: 6, r: 0 } })
+    expect(planEnemyAction(state(enemy, [inRange, outRange]))).toEqual({ type: 'shoot', targetId: 'p1' })
+  })
+  test('远程：被贴身 → 不能射击 → 原地近战', () => {
+    const foe = unit({ id: 'p0', side: 'player', position: { q: 1, r: 0 } })
+    const enemy = unit({ id: 'e0', defId: 'archer', position: { q: 0, r: 0 } })
+    expect(planEnemyAction(state(enemy, [foe]))).toEqual({ type: 'attack', targetId: 'p0', to: { q: 0, r: 0 } })
   })
   test('够不着 → 向最近敌人移动', () => {
     const foe = unit({ id: 'p0', side: 'player', position: { q: 0, r: 0 } })

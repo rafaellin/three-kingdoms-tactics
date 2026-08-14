@@ -36,12 +36,13 @@ export function planEnemyAction(state: BattleState): EnemyAction {
   const range = def.range
   const pinned = foes.some((f) =>
     occupiedHexes(unit).some((h) => occupiedHexes(f).some((uh) => hexDistance(h, uh) <= 1)))
-  // 远程：射程内且未被贴身且未移动 → 射击（优先低血）
+  // 远程：未被贴身且未移动 → 优先远程射击。全额（射程内目标）优先；射程内无目标时射程外也射（半额）——
+  // 最后才冲锋近战。只对射程内目标优先低血（全额优先于低血）。
   if (range > 1 && !pinned && !unit.hasMoved) {
-    const targetable = foes
-      .filter((t) => occupiedHexes(t).some((h) => hexDistance(unit.position, h) <= range))
-      .sort((a, b) => a.hpLeft - b.hpLeft || (a.id < b.id ? -1 : 1))
-    if (targetable.length > 0) return { type: 'shoot', targetId: (targetable[0] as BattleUnit).id }
+    const inRange = foes.filter((t) => occupiedHexes(t).some((h) => hexDistance(unit.position, h) <= range))
+    const pool = inRange.length > 0 ? inRange : foes
+    const chosen = [...pool].sort((a, b) => a.hpLeft - b.hpLeft || (a.id < b.id ? -1 : 1))[0]
+    if (chosen) return { type: 'shoot', targetId: chosen.id }
   }
   // 近战：够得着 → 冲锋（攻击带落点；优先低血）
   const engageable = foes
