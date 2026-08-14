@@ -5,8 +5,9 @@ import { gotoBattle, gotoBooted, MENU_BATTLE } from './helpers'
  * 战斗 e2e：主菜单入口 + startBattle 确定性交互（刀剑冲锋/反击、远程满额/半额、移动即行动、信息面板、胜负循环）。
  * 模型无多模态：断言一律程序化（window.__game.getState()）；截图仅供人工目检。
  */
-const SKIP = { x: 1820, y: 1040 }
-const SURRENDER = { x: 1880, y: 980 }
+const BAR_Y = 1036
+const BTN = { surrender: { x: 87, y: BAR_Y }, flee: { x: 139, y: BAR_Y }, negotiate: { x: 191, y: BAR_Y }, skill: { x: 1781, y: BAR_Y }, wait: { x: 1833, y: BAR_Y }, defend: { x: 1885, y: BAR_Y } }
+const MODAL = { confirm: { x: 1010, y: 620 }, cancel: { x: 910, y: 620 }, close: { x: 960, y: 620 } }
 const RETURN = { x: 960, y: 580 }
 
 interface UnitState {
@@ -22,6 +23,7 @@ interface UnitState {
   hasActed: boolean
   hasMoved: boolean
   retaliated: boolean
+  defending?: boolean
   woundedHp: number
   screen: { x: number; y: number }
 }
@@ -53,8 +55,12 @@ interface DebugGameState {
   hitFlashCount?: number
   textOk?: boolean
   units?: UnitState[]
-  order?: string[]
-  turnQueue?: { unitId: string; side: string; defId: string; hasActed: boolean }[]
+  normalQueue?: string[]
+  waitQueue?: string[]
+  completedQueue?: string[]
+  turnQueue?: { unitId: string; side: string; defId: string; hasActed: boolean; segment: 'done' | 'normal' | 'wait' }[]
+  modal?: { open: boolean; title: string; message: string } | null
+  battleResult?: { outcome: string } | null
 }
 
 const getState = (page: Page): Promise<DebugGameState> =>
@@ -424,7 +430,7 @@ test('AI 攻击被我方反击打死：反击段结算前敌方仍存活（分�
     { side: 'player', generalName: 'P', atkBonus: 0, defBonus: 0, units: [{ defId: 'swordsman', count: 20 }] },
     { side: 'enemy', generalName: 'E', atkBonus: 0, defBonus: 0, units: [{ defId: 'militia', count: 4 }] },
     { cols: 3, rows: 3 }) // p0 刀兵 (0,0) 与 e0 民兵 (1,0) 贴身
-  await page.mouse.click(SKIP.x, SKIP.y) // 跳过玩家 → 敌方贴身攻击 → 我方反击秒杀敌方
+  await page.mouse.click(BTN.defend.x, BTN.defend.y) // 守结束玩家行动 → 敌方贴身攻击 → 我方反击秒杀敌方
   // 敌方主攻已 dispatch、反击还没结算：敌方应仍存活（分段结算）
   await page.waitForFunction(() => {
     const s = (window as { __game?: { getState(): DebugGameState } }).__game?.getState()
@@ -509,7 +515,7 @@ test('默认战斗：反复跳过 → AI 冲锋/射击 → 战败 → 返回主�
   let guard = 0
   let s: DebugGameState = await getState(page)
   while (s.phase === 'combat' && guard++ < 120) {
-    await page.mouse.click(SKIP.x, SKIP.y)
+    await page.mouse.click(BTN.defend.x, BTN.defend.y)
     await page.waitForTimeout(80)
     s = await getState(page)
   }
@@ -522,7 +528,7 @@ test('默认战斗：反复跳过 → AI 冲锋/射击 → 战败 → 返回主�
   })
 })
 
-test('撤退后重新进入：战斗状态/相机/拖拽状态全部重置（无跨场景残留）', async ({ page }) => {
+test('降后重新进入：战斗状态/相机/拖拽状态全部重置（无跨场景残留）', async ({ page }) => {
   await gotoBattle(page)
   await waitBattleReady(page)
   await setAnimationSpeed(page, 0)
@@ -535,11 +541,16 @@ test('撤退后重新进入：战斗状态/相机/拖拽状态全部重置（无
   await page.mouse.down()
   await page.mouse.move(1100, 640, { steps: 5 })
   await page.mouse.up()
-  // 撤退 → 结果界面 → 返回主菜单
-  await page.mouse.click(SURRENDER.x, SURRENDER.y)
+  // 降 → 确认弹窗 → 确认 → 结果界面 → 返回主菜单
+  await page.mouse.click(BTN.surrender.x, BTN.surrender.y)
   await page.waitForFunction(() => {
     const st = (window as { __game?: { getState(): DebugGameState } }).__game?.getState()
-    return st?.phase === 'lost'
+    return st?.modal?.open === true && st?.modal?.title === '确认'
+  })
+  await page.mouse.click(MODAL.confirm.x, MODAL.confirm.y)
+  await page.waitForFunction(() => {
+    const st = (window as { __game?: { getState(): DebugGameState } }).__game?.getState()
+    return st?.phase === 'lost' && st?.battleResult?.outcome === 'surrendered'
   })
   await page.mouse.click(RETURN.x, RETURN.y)
   await page.waitForFunction(() => {
@@ -566,12 +577,12 @@ test('撤退后重新进入：战斗状态/相机/拖拽状态全部重置（无
   expect(camAfter.scrollY).toBe(camBefore.scrollY)
 })
 
-test('行动顺序条：队列 = state.order 派生，首格=当前单位，开局全员未行动', async ({ page }) => {
+test('行动顺序条：队列 = state.normalQueue 派生，首格=当前单位，开局全员未行动', async ({ page }) => {
   await gotoBattle(page)
   await waitBattleReady(page)
   const s = await getState(page)
   const q = s.turnQueue!
-  expect(q.map((e) => e.unitId)).toEqual(s.order)
+  expect(q.map((e) => e.unitId)).toEqual(s.normalQueue)
   expect(q[0]!.unitId).toBe(s.currentUnitId) // 骑兵 speed9 最先行动
   expect(q.filter((e) => e.side === 'player')).toHaveLength(4)
   expect(q.every((e) => !e.hasActed)).toBe(true)
@@ -608,8 +619,8 @@ test('行动顺序条：整回合结束按剩余部队当前速度重排', async
   let s = await getState(page)
   expect(s.currentUnitId).toBe('p0')
   expect(s.turnQueue!.map((e) => e.unitId)).toEqual(['p0', 'p1', 'e0'])
-  await page.mouse.click(SKIP.x, SKIP.y) // 跳过 p0
-  await page.mouse.click(SKIP.x, SKIP.y) // 跳过 p1 → 轮到 e0（AI 自动行动）
+  await page.mouse.click(BTN.defend.x, BTN.defend.y) // 守结束 p0
+  await page.mouse.click(BTN.defend.x, BTN.defend.y) // 守结束 p1 → 轮到 e0（AI 自动行动）
   await page.waitForFunction(() => {
     const st = (window as { __game?: { getState(): DebugGameState } }).__game?.getState()
     return st?.turn === 2
@@ -671,4 +682,73 @@ test('行动顺序条：中途减速/加速 → 队列重排（当前单位不�
   await applySpeedMod('p2', 5)
   expect((await getState(page)).turnQueue!.map((e) => e.unitId)).toEqual(['p0', 'p2', 'p1', 'e0'])
   await page.screenshot({ path: 'screenshots/battle-turn-order-speedmod.png' })
+})
+
+test('等待：点【候】→ 单位入 waitQueue（turnQueue 显示 wait 段，等待不算行动）', async ({ page }) => {
+  await gotoBattle(page)
+  await waitBattleReady(page)
+  await setAnimationSpeed(page, 0)
+  const before = await getState(page)
+  const waited = before.currentUnitId!
+  await page.mouse.click(BTN.wait.x, BTN.wait.y)
+  const s = await getState(page)
+  expect(s.waitQueue).toHaveLength(1)
+  expect(s.waitQueue).toContain(waited)
+  expect(s.turnQueue!.find((e) => e.unitId === waited)!.segment).toBe('wait')
+  expect(s.completedQueue).toHaveLength(0) // 等待不算行动
+})
+
+test('防御：点【守】→ defending=true + hasActed + 落 completedQueue', async ({ page }) => {
+  await gotoBattle(page)
+  await waitBattleReady(page)
+  await setAnimationSpeed(page, 0)
+  const before = await getState(page)
+  const defender = before.currentUnitId!
+  await page.mouse.click(BTN.defend.x, BTN.defend.y)
+  const s = await getState(page)
+  const unit = s.units!.find((u) => u.id === defender)!
+  expect(unit.defending).toBe(true)
+  expect(unit.hasActed).toBe(true)
+  expect(s.completedQueue).toContain(defender)
+})
+
+test('技能：点【技】→ 弹窗出现（modal.open=true），可关闭', async ({ page }) => {
+  await gotoBattle(page)
+  await waitBattleReady(page)
+  await setAnimationSpeed(page, 0)
+  await page.mouse.click(BTN.skill.x, BTN.skill.y)
+  await page.waitForFunction(() => {
+    const st = (window as { __game?: { getState(): DebugGameState } }).__game?.getState()
+    return st?.modal?.open === true
+  })
+  await page.mouse.click(MODAL.close.x, MODAL.close.y) // 关闭按钮（openInfo 用居中 close 按钮）
+  await page.waitForFunction(() => {
+    const st = (window as { __game?: { getState(): DebugGameState } }).__game?.getState()
+    return st?.modal == null
+  })
+})
+
+test('议和：点【和】→ 弹窗文案含保释金 → 确认 → phase=negotiated + battleResult', async ({ page }) => {
+  await gotoBattle(page)
+  await waitBattleReady(page)
+  await setAnimationSpeed(page, 0)
+  // 用最小阵容开局：保释金远低于 playerGold=10000，议和确定可执行（默认 8 单位阵容保释金会超 10000）
+  await startBattle(page,
+    { side: 'player', generalName: 'P', atkBonus: 0, defBonus: 0, units: [{ defId: 'militia', count: 5 }] },
+    { side: 'enemy', generalName: 'E', atkBonus: 0, defBonus: 0, units: [{ defId: 'militia', count: 5 }] },
+    { cols: 5, rows: 3 })
+  await page.mouse.click(BTN.negotiate.x, BTN.negotiate.y)
+  await page.waitForFunction(() => {
+    const st = (window as { __game?: { getState(): DebugGameState } }).__game?.getState()
+    return st?.modal?.open === true
+  })
+  const s = await getState(page)
+  expect(s.modal?.message).toContain('支付')
+  expect(s.modal?.message).toContain('议和')
+  await page.mouse.click(MODAL.confirm.x, MODAL.confirm.y)
+  await page.waitForFunction(() => {
+    const st = (window as { __game?: { getState(): DebugGameState } }).__game?.getState()
+    return st?.phase === 'negotiated'
+  })
+  expect((await getState(page)).battleResult?.outcome).toBe('negotiated')
 })

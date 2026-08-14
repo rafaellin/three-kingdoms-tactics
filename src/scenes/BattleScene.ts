@@ -1159,6 +1159,7 @@ export class BattleScene extends Phaser.Scene {
         hasActed: u.hasActed,
         hasMoved: u.hasMoved,
         retaliated: u.retaliated,
+        defending: u.defending,
         woundedHp: woundedHp(u),
         screen: screen(u.position)
       }))
