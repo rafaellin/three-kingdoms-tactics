@@ -31,6 +31,10 @@ export interface BattleUnit {
   hasMoved: boolean
   /** 本回合是否已反击（每回合重置；近战引发，每回合一次） */
   retaliated: boolean
+  /** 攻防修正（点数/百分比，来自技能/buff；叠加在武将属性加成之上，见 damage.ts） */
+  mods?: { atk?: number; def?: number; atkPct?: number; defPct?: number }
+  /** 是否处于防御状态（battle/defend 置位，+DEFEND_BONUS 防御；下次行动清除） */
+  defending?: boolean
 }
 
 export interface BattleUnitConfig {

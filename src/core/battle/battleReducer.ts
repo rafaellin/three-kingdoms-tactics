@@ -6,7 +6,7 @@
 import { type Command, type Reducer } from '../events/CommandLog'
 import { hexDistance, hexKey, type Axial } from '../hex/HexGrid'
 import { UNIT_DEFS } from '../../data/units'
-import { computeDamage, MELEE_ATTACK_MULT, RANGE_OUT_MULT } from './damage'
+import { computeDamage, DEFEND_BONUS, MELEE_ATTACK_MULT, RANGE_OUT_MULT } from './damage'
 import { battleFindPath, battleReachableArea } from './pathing'
 import { effectiveSpeed, occupiedHexes, type BattleArmyConfig, type BattleState, type BattleUnit } from './types'
 
@@ -129,7 +129,7 @@ function nextUnactedId(state: BattleState): string | null {
 /** 单位完成行动：置 hasActed（+extra），从其所在队列移入 completedQueue */
 function markActed(state: BattleState, unitId: string, extra?: Partial<BattleUnit>): BattleState {
   const inWait = state.waitQueue.includes(unitId)
-  const units = state.units.map((u) => (u.id === unitId ? { ...u, hasActed: true, ...extra } : u))
+  const units = state.units.map((u) => (u.id === unitId ? { ...u, hasActed: true, defending: false, ...extra } : u))
   return {
     ...state,
     units,
@@ -209,6 +209,15 @@ function wait(state: BattleState, unitId: string): BattleState {
   })
   const next = { ...state, normalQueue: state.normalQueue.filter((id) => id !== unitId), waitQueue }
   return advance(next)
+}
+
+/** 防御：置 defending=true（+DEFEND_BONUS 防御，下次行动清除），hasActed=true 并 advance */
+function defend(state: BattleState, unitId: string): BattleState {
+  const unit = state.units.find((u) => u.id === unitId)
+  if (!unit || unit.id !== state.currentUnitId || state.phase !== 'combat') return state
+  const next = markActed(state, unitId, { defending: true })
+  const log = [...state.log, `第${state.turn}回合 ${unitName(state, unit)} 原地防御（防御 +${DEFEND_BONUS}）`]
+  return advance({ ...next, log })
 }
 
 function select(state: BattleState, unitId: string | null): BattleState {
@@ -371,6 +380,8 @@ export const battleReducer: Reducer<BattleState> = (state, cmd: Command) => {
       return endTurn(state, (cmd.payload as { unitId: string }).unitId)
     case 'battle/wait':
       return wait(state, (cmd.payload as { unitId: string }).unitId)
+    case 'battle/defend':
+      return defend(state, (cmd.payload as { unitId: string }).unitId)
     case 'battle/speedMod': {
       const payload = cmd.payload as { unitId: string; delta: number }
       return speedMod(state, payload.unitId, payload.delta)

@@ -8,9 +8,12 @@ const unit = (over: Partial<BattleUnit>): BattleUnit => ({
 })
 
 describe('伤害公式（HOMM3 式攻防修正）', () => {
-  test('实际攻防 = 兵种基础 + 武将加成', () => {
-    expect(computeActualAttack('militia', 30)).toBe(34)   // 4 + 30
-    expect(computeActualDefense('militia', 27)).toBe(31)  // 4 + 27
+  test('实际攻防 = 兵种基础 + 武将加成（mods/defending 可选）', () => {
+    expect(computeActualAttack('militia', 30)).toBe(34)   // (4 + 30 + 0) × 1
+    expect(computeActualDefense('militia', 27)).toBe(31)  // (4 + 27 + 0 + 0) × 1
+    // 新签名：mods 点数/百分比 与 defending +2 生效
+    expect(computeActualAttack('militia', 30, { atk: 1, atkPct: 0.1 })).toBeCloseTo(38.5)   // (4+30+1)×1.1
+    expect(computeActualDefense('militia', 27, { def: 1, defPct: 0.1 }, true)).toBeCloseTo(37.4) // (4+27+1+2)×1.1
   })
   test('基础伤害 × count × 修正，含舍入', () => {
     // 民兵伤害区间 1~3 中值 2；count 10；atkBonus 30 → 攻 34，defBonus 27 → 防 31，差 3

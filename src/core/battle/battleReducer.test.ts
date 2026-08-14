@@ -2,6 +2,7 @@ import { describe, expect, test } from 'vitest'
 import { CommandLog } from '../events/CommandLog'
 import { hexKey } from '../hex/HexGrid'
 import { battleReducer, canRetaliate, createInitialBattleState } from './battleReducer'
+import { computeActualAttack, computeActualDefense } from './damage'
 import type { BattleArmyConfig, BattleState } from './types'
 
 const TEST_GRID = { cols: 13, rows: 9 }
@@ -474,5 +475,52 @@ describe('battle/wait 等待队列', () => {
     store.dispatch('battle/wait', { unitId: 'e1' })   // 已等待过 → no-op
     expect(store.getState().currentUnitId).toBe('e1')
     expect(store.getState().waitQueue).toEqual(['e1', 'p1', 'p0'])
+  })
+})
+
+describe('battle/defend + 加成链', () => {
+  test('defend：defending=true、hasActed=true、落 completedQueue、log', () => {
+    const store = makeStore({
+      grid: { cols: 3, rows: 3 },
+      player: { side: 'player', generalName: 'P', atkBonus: 0, defBonus: 0, units: [{ defId: 'militia', count: 10 }] },
+      enemy: { side: 'enemy', generalName: 'E', atkBonus: 0, defBonus: 0, units: [{ defId: 'swordsman', count: 10 }] }
+    })
+    store.dispatch('battle/defend', { unitId: 'p0' })
+    const s = store.getState()
+    const p0 = s.units.find((u) => u.id === 'p0')!
+    expect(p0.defending).toBe(true)
+    expect(p0.hasActed).toBe(true)
+    expect(s.completedQueue).toEqual(['p0'])
+    expect(s.currentUnitId).toBe('e0') // 同速（民兵4=刀兵4）玩家先行，p0 已行动 → e0 当前
+  })
+
+  test('defend +2 防御减少所受伤害；下次行动后过期', () => {
+    // p0 民兵防4 defend → 防4+2=6；e0 刀兵攻6 → 差0 → ×1.0 → 伤 round(10×4×1.0)=40
+    // 未 defend 时差+2 → ×1.1 → 44
+    const store = makeStore({
+      grid: { cols: 3, rows: 3 },
+      player: { side: 'player', generalName: 'P', atkBonus: 0, defBonus: 0, units: [{ defId: 'militia', count: 10 }] },
+      enemy: { side: 'enemy', generalName: 'E', atkBonus: 0, defBonus: 0, units: [{ defId: 'swordsman', count: 10 }] }
+    })
+    store.dispatch('battle/defend', { unitId: 'p0' })
+    store.dispatch('battle/attack', { unitId: 'e0', targetId: 'p0', to: { q: 1, r: 0 } }) // e0(1,0) 原地攻击贴身的 p0
+    let s = store.getState()
+    expect(s.units.find((u) => u.id === 'p0')!.hpLeft).toBe(60) // 100 - 40（+2 防减伤）
+    // p0 未反击、主攻不自动推进 → 手动 battle/advance 开新回合
+    store.dispatch('battle/advance')
+    s = store.getState()
+    expect(s.turn).toBe(2)
+    expect(s.units.find((u) => u.id === 'p0')!.defending).toBe(true) // 跨回合保留
+    expect(s.currentUnitId).toBe('p0') // 同速玩家先行
+    store.dispatch('battle/endTurn', { unitId: 'p0' }) // p0 下次行动 → defending 清除
+    expect(store.getState().units.find((u) => u.id === 'p0')!.defending).toBe(false)
+  })
+
+  test('加成链：mods 点数 + 百分比 + defending +2', () => {
+    expect(computeActualDefense('militia', 0, undefined, true)).toBe(6)      // 4+0+0+2
+    expect(computeActualDefense('militia', 0, { def: 3 }, true)).toBe(9)     // (4+3+2)×1
+    expect(computeActualDefense('militia', 0, { def: 3, defPct: 0.5 }, true)).toBe(13.5) // (4+3+2)×1.5
+    expect(computeActualDefense('militia', 0, { defPct: 0.1 }, false)).toBeCloseTo(4.4)
+    expect(computeActualAttack('swordsman', 6, { atk: 2, atkPct: 0.1 })).toBeCloseTo(15.4) // (6+6+2)×1.1
   })
 })

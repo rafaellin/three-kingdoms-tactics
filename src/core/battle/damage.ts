@@ -11,18 +11,26 @@ export const ATK_DEF_MODIFIER = 0.05
 export const ATK_DEF_CAP = 3
 export const MELEE_ATTACK_MULT = 0.3 // 远程兵近战时攻击取值倍率
 export const RANGE_OUT_MULT = 0.5 // 射程外远程伤害倍率（作用于最终伤害）
+export const DEFEND_BONUS = 2 // 防御指令带来的固定防御加成
 
-export function computeActualAttack(defId: UnitDefId, atkBonus: number): number {
-  return UNIT_DEFS[defId].attack + atkBonus
+export function computeActualAttack(defId: UnitDefId, atkBonus: number, mods?: { atk?: number; atkPct?: number }): number {
+  const base = UNIT_DEFS[defId].attack + atkBonus + (mods?.atk ?? 0)
+  return base * (1 + (mods?.atkPct ?? 0))
 }
 
-export function computeActualDefense(defId: UnitDefId, defBonus: number): number {
-  return UNIT_DEFS[defId].defense + defBonus
+export function computeActualDefense(
+  defId: UnitDefId,
+  defBonus: number,
+  mods?: { def?: number; defPct?: number },
+  defending = false
+): number {
+  const base = UNIT_DEFS[defId].defense + defBonus + (mods?.def ?? 0) + (defending ? DEFEND_BONUS : 0)
+  return base * (1 + (mods?.defPct ?? 0))
 }
 
 export function computeDamage(attacker: BattleUnit, target: BattleUnit, atkBonus: number, defBonus: number, attackMult = 1): number {
-  const att = computeActualAttack(attacker.defId, atkBonus) * attackMult
-  const def = computeActualDefense(target.defId, defBonus)
+  const att = computeActualAttack(attacker.defId, atkBonus, attacker.mods) * attackMult
+  const def = computeActualDefense(target.defId, defBonus, target.mods, target.defending)
   const diff = Math.max(-ATK_DEF_CAP, Math.min(ATK_DEF_CAP, att - def))
   const mid = (UNIT_DEFS[attacker.defId].minDamage + UNIT_DEFS[attacker.defId].maxDamage) / 2
   return Math.max(1, Math.round(attacker.count * mid * (1 + ATK_DEF_MODIFIER * diff)))
