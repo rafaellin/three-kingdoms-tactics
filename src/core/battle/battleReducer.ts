@@ -1,13 +1,14 @@
 /**
  * 战斗 reducer：纯函数，经独立 CommandLog 驱动 BattleState。
  * 相同命令序列 + 相同初始状态 ⇒ 相同终态（确定性）。MVP 无随机。
- * 命令：battle/init | battle/select | battle/move | battle/attack | battle/shoot | battle/endTurn | battle/surrender | battle/speedMod
+ * 命令：battle/init | battle/select | battle/move | battle/attack | battle/shoot | battle/endTurn | battle/wait | battle/defend | battle/surrender | battle/flee | battle/negotiate | battle/retaliate | battle/advance | battle/speedMod
  */
 import { type Command, type Reducer } from '../events/CommandLog'
 import { hexDistance, hexKey, type Axial } from '../hex/HexGrid'
 import { UNIT_DEFS } from '../../data/units'
 import { computeDamage, DEFEND_BONUS, MELEE_ATTACK_MULT, RANGE_OUT_MULT } from './damage'
 import { battleFindPath, battleReachableArea } from './pathing'
+import { computeBail } from './result'
 import { effectiveSpeed, occupiedHexes, type BattleArmyConfig, type BattleState, type BattleUnit } from './types'
 
 /** 标准化 log 单位名：`武将的兵种`（如「关羽的骑兵」） */
@@ -31,6 +32,7 @@ export function createInitialBattleState(): BattleState {
     currentUnitId: null,
     selectedUnitId: null,
     phase: 'combat',
+    outcome: null,
     log: []
   }
 }
@@ -77,7 +79,7 @@ function reorderWait(state: BattleState, tailAsc: boolean): string[] {
   return curIdx >= 0 ? [...state.waitQueue.slice(0, curIdx + 1), ...tail] : tail
 }
 
-function init(state: BattleState, payload: { player: BattleArmyConfig; enemy: BattleArmyConfig; grid: { cols: number; rows: number; obstacles?: Axial[] } }): BattleState {
+function init(state: BattleState, payload: { player: BattleArmyConfig; enemy: BattleArmyConfig; grid: { cols: number; rows: number; obstacles?: Axial[] }; playerGold?: number; opponentKind?: 'faction' | 'wild' }): BattleState {
   const mk = (cfg: BattleArmyConfig, qBase: number): BattleUnit[] =>
     cfg.units.map((u, i) => {
       const def = UNIT_DEFS[u.defId]
@@ -114,6 +116,10 @@ function init(state: BattleState, payload: { player: BattleArmyConfig; enemy: Ba
     currentUnitId: order[0] ?? null,
     selectedUnitId: null,
     phase: 'combat',
+    outcome: null,
+    enter: payload.playerGold !== undefined && payload.opponentKind !== undefined
+      ? { playerGold: payload.playerGold, opponentKind: payload.opponentKind }
+      : undefined,
     log: [`战斗开始：${payload.player.generalName} vs ${payload.enemy.generalName}`]
   }
 }
@@ -139,12 +145,13 @@ function markActed(state: BattleState, unitId: string, extra?: Partial<BattleUni
   }
 }
 
-/** 判定终态（一方全灭 → 置 phase）；未终态原样返回。Task 4 再加 outcome */
+/** 判定终态（一方全灭 → 置 phase + outcome）；未终态原样返回 */
 function applyTerminal(state: BattleState): BattleState {
   const playerAlive = state.units.some((u) => u.side === 'player')
   const enemyAlive = state.units.some((u) => u.side === 'enemy')
   if (playerAlive && enemyAlive) return state
-  return { ...state, phase: !enemyAlive ? 'won' : 'lost' }
+  const won = !enemyAlive
+  return { ...state, phase: won ? 'won' : 'lost', outcome: won ? 'won' : 'lost' }
 }
 
 /** 推进：下一未行动单位；全部行动完则 turn+1、重置（含 retaliated）、按新状态重建 normalQueue */
@@ -218,6 +225,20 @@ function defend(state: BattleState, unitId: string): BattleState {
   const next = markActed(state, unitId, { defending: true })
   const log = [...state.log, `第${state.turn}回合 ${unitName(state, unit)} 原地防御（防御 +${DEFEND_BONUS}）`]
   return advance({ ...next, log })
+}
+
+/** 逃跑：弃军返回驻城（phase=fled、outcome=fled、部队清零由 buildBattleResult 处理） */
+function flee(state: BattleState): BattleState {
+  return { ...state, phase: 'fled', outcome: 'fled', log: [...state.log, '逃跑：弃军返回驻城'] }
+}
+
+/** 议和：仅 faction 对手且玩家金钱足够支付保释金时可议和；否则拒绝（no-op） */
+function negotiate(state: BattleState): BattleState {
+  const enter = state.enter
+  if (!enter || enter.opponentKind === 'wild') return state
+  const bail = computeBail(state)
+  if (enter.playerGold < bail) return state
+  return { ...state, phase: 'negotiated', outcome: 'negotiated', log: [...state.log, `议和：支付 ${bail} 金钱，保留部队`] }
 }
 
 function select(state: BattleState, unitId: string | null): BattleState {
@@ -393,7 +414,11 @@ export const battleReducer: Reducer<BattleState> = (state, cmd: Command) => {
     case 'battle/advance':
       return advanceTurn(state)
     case 'battle/surrender':
-      return { ...state, phase: 'lost', log: [...state.log, '投降'] }
+      return { ...state, phase: 'lost', outcome: 'surrendered', log: [...state.log, '投降'] }
+    case 'battle/flee':
+      return flee(state)
+    case 'battle/negotiate':
+      return negotiate(state)
     default:
       return state
   }

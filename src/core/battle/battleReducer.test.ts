@@ -13,12 +13,14 @@ const TEST_ARMIES = {
     units: [{ defId: 'archer', count: 8 }] }
 }
 
-function makeStore(opts?: { player?: BattleArmyConfig; enemy?: BattleArmyConfig; grid?: { cols: number; rows: number; obstacles?: { q: number; r: number }[] } }) {
+function makeStore(opts?: { player?: BattleArmyConfig; enemy?: BattleArmyConfig; grid?: { cols: number; rows: number; obstacles?: { q: number; r: number }[] }; enter?: { playerGold: number; opponentKind: 'faction' | 'wild' } }) {
   const store = new CommandLog<BattleState>(createInitialBattleState(), battleReducer)
   store.dispatch('battle/init', {
     player: opts?.player ?? TEST_ARMIES.player,
     enemy: opts?.enemy ?? TEST_ARMIES.enemy,
-    grid: opts?.grid ?? TEST_GRID
+    grid: opts?.grid ?? TEST_GRID,
+    playerGold: opts?.enter?.playerGold,
+    opponentKind: opts?.enter?.opponentKind
   })
   return store
 }
@@ -522,5 +524,40 @@ describe('battle/defend + 加成链', () => {
     expect(computeActualDefense('militia', 0, { def: 3, defPct: 0.5 }, true)).toBe(13.5) // (4+3+2)×1.5
     expect(computeActualDefense('militia', 0, { defPct: 0.1 }, false)).toBeCloseTo(4.4)
     expect(computeActualAttack('swordsman', 6, { atk: 2, atkPct: 0.1 })).toBeCloseTo(15.4) // (6+6+2)×1.1
+  })
+})
+
+describe('降/逃/和', () => {
+  const mkEnter = (enter?: Partial<{ playerGold: number; opponentKind: 'faction' | 'wild' }>) =>
+    makeStore({ enter: { playerGold: 10000, opponentKind: 'faction', ...enter } })
+
+  test('surrender：phase=lost、outcome=surrendered', () => {
+    const store = mkEnter()
+    store.dispatch('battle/surrender')
+    const s = store.getState()
+    expect(s.phase).toBe('lost')
+    expect(s.outcome).toBe('surrendered')
+  })
+  test('flee：phase=fled、outcome=fled', () => {
+    const store = mkEnter()
+    store.dispatch('battle/flee')
+    const s = store.getState()
+    expect(s.phase).toBe('fled')
+    expect(s.outcome).toBe('fled')
+  })
+  test('negotiate：金钱足够且非野怪 → phase=negotiated', () => {
+    const store = mkEnter()
+    store.dispatch('battle/negotiate')
+    expect(store.getState().phase).toBe('negotiated')
+  })
+  test('negotiate：金钱不足 → 拒绝', () => {
+    const store = mkEnter({ playerGold: 0 })
+    store.dispatch('battle/negotiate')
+    expect(store.getState().phase).toBe('combat')
+  })
+  test('negotiate：野怪不可议和 → 拒绝', () => {
+    const store = mkEnter({ opponentKind: 'wild' })
+    store.dispatch('battle/negotiate')
+    expect(store.getState().phase).toBe('combat')
   })
 })

@@ -9,6 +9,27 @@ import type { Axial } from '../hex/HexGrid'
 
 export type Side = 'player' | 'enemy'
 
+/** 战斗阶段：combat 进行中；won/lost 自然胜败；fled 逃跑；negotiated 议和 */
+export type Phase = 'combat' | 'won' | 'lost' | 'fled' | 'negotiated'
+
+/** 战斗最终结果（探索层据此决定后续；generalCaptured：降=true、逃/和=false、自然=null） */
+export type BattleOutcome = 'won' | 'lost' | 'surrendered' | 'fled' | 'negotiated'
+
+/** 进入战斗时的参数（玩家金币 / 对手类型；议和保释金与可议和判定用） */
+export interface BattleEnterParams {
+  playerGold: number
+  opponentKind: 'faction' | 'wild'
+}
+
+/** 战斗结算结果（交给探索层：结果 / 剩余部队 / 经验 / 金币结算 / 俘虏） */
+export interface BattleResult {
+  outcome: BattleOutcome
+  remainingTroops: { defId: UnitDefId; count: number }[]
+  expGained: number
+  goldSettlement: number
+  generalCaptured: boolean | null
+}
+
 export interface BattleUnit {
   id: string
   side: Side
@@ -72,7 +93,11 @@ export interface BattleState {
   currentUnitId: string | null
   /** 渲染层选中（高亮）；e2e 断言用 */
   selectedUnitId: string | null
-  phase: 'combat' | 'won' | 'lost'
+  phase: Phase
+  /** 战斗最终结果（终态/降/逃/和 写入；combat 中为 null） */
+  outcome: BattleOutcome | null
+  /** 进入战斗时的参数（玩家金币 / 对手类型；battle/init 带入，议和判定用） */
+  enter?: BattleEnterParams
   log: string[]
 }
 
