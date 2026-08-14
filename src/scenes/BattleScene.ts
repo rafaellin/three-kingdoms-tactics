@@ -3,6 +3,7 @@ import { CommandLog } from '../core/events/CommandLog'
 import { battleReducer, createInitialBattleState } from '../core/battle/battleReducer'
 import { planEnemyAction } from '../core/battle/ai'
 import { battleFindPath, battleReachableArea, inBattleGrid } from '../core/battle/pathing'
+import { buildTurnOrderQueue } from '../core/battle/queue'
 import { canRetaliate } from '../core/battle/battleReducer'
 import { occupiedHexes, woundedHp, type BattleArmyConfig, type BattleState, type BattleUnit } from '../core/battle/types'
 import { hexDistance, hexKey, hexNeighbor, HexLayout, type Axial, type HexDir } from '../core/hex/HexGrid'
@@ -13,6 +14,7 @@ import { getBgmManager } from '../audio/BgmManager'
 import { SfxManager } from '../audio/SfxManager'
 import { BgmControls } from '../ui/BgmControls'
 import { OperationButtons } from '../ui/OperationButtons'
+import { TurnOrderQueue } from '../ui/TurnOrderQueue'
 import { fadeAndStart, fadeIn } from '../ui/fade'
 import { BATTLE_SIDE_COLORS } from '../ui/theme'
 
@@ -72,6 +74,7 @@ export class BattleScene extends Phaser.Scene {
   private downPos = { x: 0, y: 0 }
   private lastPointer = { x: 0, y: 0 }
   private operationButtons: OperationButtons | null = null
+  private turnOrderQueue: TurnOrderQueue | null = null
   /** 受击闪白累计次数（debug / e2e 断言用） */
   private hitFlashCount = 0
   /** 音效（渲染层；移动循环 + 攻击一次性） */
@@ -118,6 +121,7 @@ export class BattleScene extends Phaser.Scene {
     this.events.once('shutdown', () => {
       this.bgmControls?.destroy()
       this.operationButtons?.destroy()
+      this.turnOrderQueue?.destroy()
     })
   }
 
@@ -213,6 +217,8 @@ export class BattleScene extends Phaser.Scene {
       { label: '跳过行动', onClick: () => this.endCurrentTurn() },
       { label: '撤退', onClick: () => this.surrender() }
     ])
+    // 行动顺序条（底部通栏：当前回合行动顺序 + 黄框高亮/灰态；纯显示不拦截地图交互）
+    this.turnOrderQueue = new TurnOrderQueue(this)
     this.scale.on('resize', () => {
       this.centerCamera()
       this.positionResult()
@@ -361,16 +367,23 @@ export class BattleScene extends Phaser.Scene {
     this.returnButton.setVisible(terminal)
     // 结算时隐藏战斗操作按钮（跳过行动 / 撤退）
     this.operationButtons?.setVisible(!terminal)
+    this.turnOrderQueue?.setVisible(!terminal)
     if (terminal) {
       this.resultText.setText(this.state.phase === 'won' ? '胜利' : '战败')
       this.positionResult()
     }
   }
 
-  private refreshViews(): void {
+  /** 一次性同步全部战场视图（单位/高亮/行动顺序条/log 结算）；玩家与敌方 AI 行动后共用 */
+  private syncViews(): void {
     this.drawUnits()
     this.drawOverlay()
+    this.turnOrderQueue?.render(this.state)
     this.updateLogAndResult()
+  }
+
+  private refreshViews(): void {
+    this.syncViews()
     this.stepEnemyAi().catch((err) => console.error('stepEnemyAi failed:', err))
   }
 
@@ -426,9 +439,7 @@ export class BattleScene extends Phaser.Scene {
         } else {
           this.store.dispatch('battle/endTurn', { unitId: curId })
         }
-        this.drawUnits()
-        this.drawOverlay()
-        this.updateLogAndResult()
+        this.syncViews()
       }
     } finally {
       this.enemyActing = false
@@ -1024,6 +1035,7 @@ export class BattleScene extends Phaser.Scene {
       grid: state.grid,
       obstacles: state.obstacles,
       order: state.order,
+      turnQueue: buildTurnOrderQueue(state),
       log: state.log,
       reachable,
       reachableFootprint,
