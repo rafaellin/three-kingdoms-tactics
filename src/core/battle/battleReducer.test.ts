@@ -402,3 +402,77 @@ describe('三队列（completedQueue/normalQueue/waitQueue）', () => {
     expect(s.units.every((u) => !u.hasActed)).toBe(true)
   })
 })
+
+describe('battle/wait 等待队列', () => {
+  const mkWait = () =>
+    makeStore({
+      grid: { cols: 7, rows: 3 },
+      player: { side: 'player', generalName: 'P', atkBonus: 0, defBonus: 0,
+        units: [
+          { defId: 'cavalry', count: 8, speed: 9 },   // A p0
+          { defId: 'archer', count: 10, speed: 5 },   // B p1
+          { defId: 'militia', count: 10, speed: 4 }   // C p2
+        ] },
+      enemy: { side: 'enemy', generalName: 'E', atkBonus: 0, defBonus: 0,
+        units: [
+          { defId: 'militia', count: 10, speed: 3 },  // X e0
+          { defId: 'militia', count: 10, speed: 2 },  // Y e1
+          { defId: 'militia', count: 10, speed: 1 }   // Z e2
+        ] }
+    })
+
+  test('等待：当前单位移入 waitQueue 升序、normalQueue 收缩、不置 hasActed', () => {
+    const store = mkWait()
+    expect(store.getState().normalQueue).toEqual(['p0', 'p1', 'p2', 'e0', 'e1', 'e2'])
+    store.dispatch('battle/wait', { unitId: 'p0' })
+    let s = store.getState()
+    expect(s.waitQueue).toEqual(['p0'])
+    expect(s.normalQueue).toEqual(['p1', 'p2', 'e0', 'e1', 'e2'])
+    expect(s.currentUnitId).toBe('p1')
+    expect(s.units.find((u) => u.id === 'p0')!.hasActed).toBe(false)
+    // B 等待 → 升序插入：B(5) 在 A(9) 前 → [B, A]
+    store.dispatch('battle/wait', { unitId: 'p1' })
+    s = store.getState()
+    expect(s.waitQueue).toEqual(['p1', 'p0'])
+    expect(s.normalQueue).toEqual(['p2', 'e0', 'e1', 'e2'])
+  })
+
+  test('用户例子全流程：AB等待→BA、X减速A→AB、Y等待→YAB、Y减速B→YBA', () => {
+    const store = mkWait()
+    store.dispatch('battle/wait', { unitId: 'p0' })   // A 等待
+    store.dispatch('battle/wait', { unitId: 'p1' })   // B 等待
+    expect(store.getState().waitQueue).toEqual(['p1', 'p0'])      // B,A
+    expect(store.getState().normalQueue).toEqual(['p2', 'e0', 'e1', 'e2'])
+    store.dispatch('battle/endTurn', { unitId: 'p2' })            // C 行动
+    expect(store.getState().normalQueue).toEqual(['e0', 'e1', 'e2'])
+    // X(e0) 行动时减速 A → A(4) 比 B(5) 慢 → wait 段整体升序重排 [A,B]
+    store.dispatch('battle/speedMod', { unitId: 'p0', delta: -5 })
+    store.dispatch('battle/endTurn', { unitId: 'e0' })
+    expect(store.getState().waitQueue).toEqual(['p0', 'p1'])      // A,B
+    // Y(e1) 等待 → 升序插入 Y(2) → Y,A,B
+    store.dispatch('battle/wait', { unitId: 'e1' })
+    expect(store.getState().waitQueue).toEqual(['e1', 'p0', 'p1']) // Y,A,B
+    expect(store.getState().normalQueue).toEqual(['e2'])
+    // Z(e2) 行动 → normal 空 → wait 段开始，current=Y
+    store.dispatch('battle/endTurn', { unitId: 'e2' })
+    expect(store.getState().normalQueue).toEqual([])
+    expect(store.getState().currentUnitId).toBe('e1')
+    // Y 行动时减速 B → B(1) 比 A(4)、Y(2) 都慢 → 保留当前 Y，尾部升序 → [Y,B,A]
+    store.dispatch('battle/speedMod', { unitId: 'p1', delta: -4 })
+    expect(store.getState().waitQueue).toEqual(['e1', 'p1', 'p0']) // Y,B,A
+  })
+
+  test('已等待单位再行动时不能再次等待（在 waitQueue 的当前单位 wait → no-op）', () => {
+    const store = mkWait()
+    store.dispatch('battle/wait', { unitId: 'p0' })
+    store.dispatch('battle/wait', { unitId: 'p1' })
+    store.dispatch('battle/endTurn', { unitId: 'p2' })
+    store.dispatch('battle/endTurn', { unitId: 'e0' })
+    store.dispatch('battle/wait', { unitId: 'e1' })
+    store.dispatch('battle/endTurn', { unitId: 'e2' })
+    expect(store.getState().currentUnitId).toBe('e1') // wait 段队首
+    store.dispatch('battle/wait', { unitId: 'e1' })   // 已等待过 → no-op
+    expect(store.getState().currentUnitId).toBe('e1')
+    expect(store.getState().waitQueue).toEqual(['e1', 'p1', 'p0'])
+  })
+})

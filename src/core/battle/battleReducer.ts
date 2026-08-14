@@ -64,6 +64,19 @@ function reorderNormal(state: BattleState): string[] {
   return [...prefix, ...tail]
 }
 
+/** 重排 waitQueue：保留 prefix（当前单位及之前）不动，之后剔除阵亡按升序（tailAsc=true）重排 */
+function reorderWait(state: BattleState, tailAsc: boolean): string[] {
+  const curIdx = state.waitQueue.indexOf(state.currentUnitId ?? '')
+  const alive = new Set(state.units.map((u) => u.id))
+  const tail = (curIdx >= 0 ? state.waitQueue.slice(curIdx + 1) : state.waitQueue).filter((id) => alive.has(id))
+  tail.sort((aId, bId) => {
+    const a = state.units.find((u) => u.id === aId) as BattleUnit
+    const b = state.units.find((u) => u.id === bId) as BattleUnit
+    return tailAsc ? compareUnits(b, a) : compareUnits(a, b)
+  })
+  return curIdx >= 0 ? [...state.waitQueue.slice(0, curIdx + 1), ...tail] : tail
+}
+
 function init(state: BattleState, payload: { player: BattleArmyConfig; enemy: BattleArmyConfig; grid: { cols: number; rows: number; obstacles?: Axial[] } }): BattleState {
   const mk = (cfg: BattleArmyConfig, qBase: number): BattleUnit[] =>
     cfg.units.map((u, i) => {
@@ -161,6 +174,7 @@ function endTurn(state: BattleState, unitId: string): BattleState {
 /**
  * 中途速度修正（减速/加速技能入口）：给单位叠加速度修正 → 重排当前单位之后的未行动段。
  * 不改 currentUnitId；speedMod 跨回合保留（下一回合排序自然带上修正）。
+ * 受影响单位在 waitQueue：若当前单位也在 waitQueue（等待段正在行动）→ 保留当前，尾部升序；否则整体升序。
  */
 function speedMod(state: BattleState, unitId: string, delta: number): BattleState {
   const unit = state.units.find((u) => u.id === unitId)
@@ -168,12 +182,33 @@ function speedMod(state: BattleState, unitId: string, delta: number): BattleStat
   const newMod = (unit.speedMod ?? 0) + delta
   const units = state.units.map((u) => (u.id === unitId ? { ...u, speedMod: newMod } : u))
   const next = { ...state, units }
-  const normalQueue = reorderNormal(next)
+  let order = next.normalQueue
+  let waitOrder = next.waitQueue
+  if (state.waitQueue.includes(unitId)) {
+    // 受影响在 waitQueue：若当前单位也在 waitQueue（等待段正在行动）→ 保留当前，尾部升序；否则整体升序
+    waitOrder = reorderWait(next, true)
+  } else if (state.normalQueue.includes(unitId)) {
+    order = reorderNormal(next)
+  }
   const log = [
     ...state.log,
     `第${state.turn}回合 ${unitName(state, unit)} 速度${delta >= 0 ? '+' : ''}${delta}（现 ${effectiveSpeed({ ...unit, speedMod: newMod })}）`
   ]
-  return { ...next, normalQueue, log }
+  return { ...next, normalQueue: order, waitQueue: waitOrder, log }
+}
+
+/** 等待：当前单位从 normalQueue 移入 waitQueue（升序插入）。已在 waitQueue 则 no-op */
+function wait(state: BattleState, unitId: string): BattleState {
+  const unit = state.units.find((u) => u.id === unitId)
+  if (!unit || unit.id !== state.currentUnitId || state.phase !== 'combat') return state
+  if (state.waitQueue.includes(unitId)) return state
+  const waitQueue = [...state.waitQueue, unitId].sort((aId, bId) => {
+    const a = state.units.find((u) => u.id === aId) as BattleUnit
+    const b = state.units.find((u) => u.id === bId) as BattleUnit
+    return compareUnits(b, a) // 升序：慢的在前
+  })
+  const next = { ...state, normalQueue: state.normalQueue.filter((id) => id !== unitId), waitQueue }
+  return advance(next)
 }
 
 function select(state: BattleState, unitId: string | null): BattleState {
@@ -334,6 +369,8 @@ export const battleReducer: Reducer<BattleState> = (state, cmd: Command) => {
     }
     case 'battle/endTurn':
       return endTurn(state, (cmd.payload as { unitId: string }).unitId)
+    case 'battle/wait':
+      return wait(state, (cmd.payload as { unitId: string }).unitId)
     case 'battle/speedMod': {
       const payload = cmd.payload as { unitId: string; delta: number }
       return speedMod(state, payload.unitId, payload.delta)
