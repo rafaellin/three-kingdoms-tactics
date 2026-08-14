@@ -6,7 +6,7 @@
 import type { Axial } from '../core/hex/HexGrid'
 import type { BattleArmyConfig } from '../core/battle/types'
 
-export const BATTLE_GRID = { cols: 13, rows: 9 } as const
+export const BATTLE_GRID = { cols: 15, rows: 11 } as const
 
 /** 固定测试图障碍：避开出生行/出生格，连通性单测锁定 */
 export const BATTLE_OBSTACLES: Axial[] = [
