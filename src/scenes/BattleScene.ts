@@ -488,16 +488,19 @@ export class BattleScene extends Phaser.Scene {
   }
 
   private tryWait(): void {
+    if (this.activeModal) return
     if (!this.canPlayerAct()) return
     this.store.dispatch('battle/wait', { unitId: this.state.currentUnitId as string })
     this.refreshViews()
   }
   private tryDefend(): void {
+    if (this.activeModal) return
     if (!this.canPlayerAct()) return
     this.store.dispatch('battle/defend', { unitId: this.state.currentUnitId as string })
     this.refreshViews()
   }
   private openSkillPopup(): void {
+    if (this.activeModal) return
     if (!this.canPlayerAct()) return
     this.activeModal = { open: true, title: '技能', message: '技能系统开发中' }
     void openInfo(this, { title: '技能', message: '技能系统开发中' }).then(() => {

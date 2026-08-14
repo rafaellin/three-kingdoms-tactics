@@ -8,9 +8,11 @@ import type { BattleResult, BattleState } from './types'
 
 export const BAIL_RATIO = 1.5
 
-/** 保释金 = 剩余部队金币价值 × BAIL_RATIO（round） */
+/** 保释金 = 我方剩余部队金币价值 × BAIL_RATIO（round）；仅统计玩家侧（敌方部队不计入） */
 export function computeBail(state: BattleState): number {
-  const value = state.units.reduce((sum, u) => sum + u.count * UNIT_DEFS[u.defId].cost.gold, 0)
+  const value = state.units
+    .filter((u) => u.side === 'player')
+    .reduce((sum, u) => sum + u.count * UNIT_DEFS[u.defId].cost.gold, 0)
   return Math.round(value * BAIL_RATIO)
 }
 
@@ -19,7 +21,7 @@ export function buildBattleResult(state: BattleState): BattleResult {
   const zeroed = outcome === 'surrendered' || outcome === 'fled'
   return {
     outcome,
-    remainingTroops: zeroed ? [] : state.units.map((u) => ({ defId: u.defId, count: u.count })),
+    remainingTroops: zeroed ? [] : state.units.filter((u) => u.side === 'player').map((u) => ({ defId: u.defId, count: u.count })),
     expGained: 0, // 经验系统将来填（仅战胜）
     goldSettlement: outcome === 'negotiated' ? -computeBail(state) : 0,
     generalCaptured: outcome === 'surrendered' ? true : outcome === 'fled' || outcome === 'negotiated' ? false : null

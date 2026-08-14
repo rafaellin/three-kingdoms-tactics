@@ -17,20 +17,20 @@ function mkState(over: Partial<BattleState>): BattleState {
 }
 
 describe('computeBail', () => {
-  test('150% 剩余部队金币价值：民兵30×50 + 骑兵8×200 = 1500+1600=3100 → 4650', () => {
-    expect(computeBail(mkState({}))).toBe(4650)
+  test('150% 玩家剩余部队金币价值：民兵30×50 = 1500 → 2250（敌方骑兵 8×200 不计入）', () => {
+    expect(computeBail(mkState({}))).toBe(2250)
   })
-  test('阵亡单位不计入（units 只剩存活）', () => {
-    expect(computeBail(mkState({ units: mkState({}).units.filter((u) => u.id === 'p0') }))).toBe(Math.round(30 * 50 * 1.5))
+  test('阵亡玩家单位不计入：玩家全灭（units 只剩敌方）→ 保释金 0', () => {
+    expect(computeBail(mkState({ units: mkState({}).units.filter((u) => u.side === 'enemy') }))).toBe(0)
   })
 })
 
 describe('buildBattleResult', () => {
-  test('议和：outcome=negotiated、goldSettlement=-bail、部队保留、generalCaptured=false', () => {
+  test('议和：outcome=negotiated、goldSettlement=-bail、我方部队保留、generalCaptured=false', () => {
     const r = buildBattleResult(mkState({ phase: 'negotiated', outcome: 'negotiated' }))
     expect(r.outcome).toBe('negotiated')
-    expect(r.goldSettlement).toBe(-4650)
-    expect(r.remainingTroops).toHaveLength(2)
+    expect(r.goldSettlement).toBe(-2250)
+    expect(r.remainingTroops).toEqual([{ defId: 'militia', count: 30 }])
     expect(r.generalCaptured).toBe(false)
     expect(r.expGained).toBe(0)
   })

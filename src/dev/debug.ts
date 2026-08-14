@@ -97,7 +97,11 @@ export function installDevBridge(game: Phaser.Game): DebugBridge {
       return battle()?.exportState() ?? '{}'
     },
     getBattleResult() {
-      return battle()?.getBattleResult() ? JSON.stringify(battle()!.getBattleResult()) : '{}'
+      const scene = battle()
+      if (!scene) return '{}'
+      const debug = scene.getDebugState()
+      if (!debug.phase || debug.phase === 'combat') return '{}'
+      return JSON.stringify(scene.getBattleResult())
     }
   }
   window.__game = bridge

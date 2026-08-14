@@ -124,11 +124,13 @@ function init(state: BattleState, payload: { player: BattleArmyConfig; enemy: Ba
   }
 }
 
-/** 扫 normalQueue → waitQueue，返回第一个存活（仍在 units 中）的未行动单位 */
+/** 扫 normalQueue → waitQueue，返回第一个存活（仍在 units 中）且未行动的未行动单位 */
 function nextUnactedId(state: BattleState): string | null {
-  const alive = new Set(state.units.map((u) => u.id))
-  for (const id of state.normalQueue) if (alive.has(id)) return id
-  for (const id of state.waitQueue) if (alive.has(id)) return id
+  const byId = new Map(state.units.map((u) => [u.id, u] as const))
+  for (const id of [...state.normalQueue, ...state.waitQueue]) {
+    const unit = byId.get(id)
+    if (unit && !unit.hasActed) return id
+  }
   return null
 }
 

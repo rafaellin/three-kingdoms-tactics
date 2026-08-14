@@ -39,7 +39,7 @@
 - 保留单位级 `hasActed`（守卫/防御过期语义），与队列同步：行动 → `hasActed=true` + 追加进 `completedQueue`。
 - `advance()`：扫 `normalQueue`（跳阵亡）→ 扫 `waitQueue`（跳阵亡）→ 返回下一未行动单位；两者皆空 → 新回合。
 - **新回合**：units 重置 `hasActed/hasMoved/retaliated`（**`defending` 跨回合保留**，见 §3）；`completedQueue=[]`、`normalQueue=sortOrder(units)`（降序）、`waitQueue=[]`。
-- **阵亡剔除**：`dealDamage` 移除单位时，从三个队列同步剔除其 id（提供 `pruneDead(state)` 辅助）。
+- **阵亡剔除**：死亡单位 id 留在队列中，读取时（`nextUnactedId` / `buildTurnOrderQueue` / 重排 `reorderNormal`/`reorderWait`）过滤；`advance` 跨回合重建。
 
 视图投影（`src/core/battle/queue.ts`）：
 
@@ -140,7 +140,7 @@ interface BattleResult {
 
 **接线**：
 - `battle/init` payload 扩展：`playerGold?: number`、`opponentKind?: 'faction' | 'wild'`，存入 `state.enter`。
-- **战斗测试模式**注入 `playerGold=10000`、`opponentKind='faction'`（可议和），让降/逃/和全部可测。**注：默认战斗测试阵容下保释金 = round(9860×1.5) = 14790 > 注入 10000，议和按钮实际禁用；仅小规模自定阵容（如 e2e 5v5 民兵）下可测。保释金语义（含敌方部队 vs 仅我方）待探索层接线时确认，见 `docs/FUTURE-WORK.md`。**
+- **战斗测试模式**注入 `playerGold=10000`、`opponentKind='faction'`（可议和），让降/逃/和全部可测。**注：保释金只算我方剩余部队（2026-08-14 用户确认）；默认战斗测试阵容下保释金 = round(5500×1.5) = 8250 < 注入 10000，议和按钮可用。**
 - `BattleScene.getBattleResult(): BattleResult`（终态时生成）；dev bridge 暴露 `getBattleResult()` 供 e2e / 调试断言。
 
 ### 5. UI：行动队列行整合
