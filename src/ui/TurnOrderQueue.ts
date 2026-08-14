@@ -70,7 +70,8 @@ export class TurnOrderQueue {
         this.labels.set(e.unitId, label)
       }
       label.setPosition(x, y)
-      label.setText(UNIT_DEFS[e.defId].gridLabel)
+      // 1×1 方块只显示一个汉字：gridLabel 在 1×2 地图格可放全名（如「骑兵」），方块放不下 → 取首字「骑」
+      label.setText(UNIT_DEFS[e.defId].gridLabel.charAt(0))
       label.setColor(e.hasActed ? '#7a808a' : '#ffffff')
       seen.add(e.unitId)
     })
