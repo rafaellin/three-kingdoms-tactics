@@ -69,7 +69,7 @@ test('BGM：开始游戏 → 探索 playlist 自动播放（无需点击）→ s
   expect((await getBgm(page)).volume).toBe(0)
 })
 
-test('BGM：战斗测试 → battle 分类 + 左下角控件交互（音量滑块/上一首）', async ({ page }) => {
+test('BGM：战斗测试 → battle 分类 + 右上角控件交互（音量滑块/上一首）', async ({ page }) => {
   await gotoBattle(page)
   await waitBgmPlaying(page)
   const getControls = () =>

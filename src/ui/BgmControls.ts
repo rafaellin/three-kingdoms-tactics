@@ -8,12 +8,17 @@ export interface BgmControlsHooks {
 
 /**
  * BGM 播放控件（渲染层共享组件）：上一首 / 曲名 / 下一首 / 音量按钮 + 音量滑块。
- * 左下角固定，scrollFactor(0) 不随相机缩放。
+ * 右上角固定（右对齐整行），scrollFactor(0) 不随相机缩放——底部让位给战斗行动顺序条 / 未来状态条。
  * destroy() 注销 BGM 曲目监听与 resize 监听（Phaser 对象随场景 shutdown 自动销毁）。
  */
 export class BgmControls {
   private static readonly SLIDER_W = 120
   private static readonly SLIDER_H = 8
+  /** 右上角边距（px）：右缘留白 / 顶缘留白（与 Battle logText 顶缘 24 对齐） */
+  private static readonly TOP_X = 40
+  private static readonly TOP_Y = 24
+  /** 按钮水平间距（px） */
+  private static readonly GAP = 6
 
   private readonly prevBtn: Phaser.GameObjects.Text
   private readonly label: Phaser.GameObjects.Text
@@ -31,16 +36,16 @@ export class BgmControls {
   ) {
     const wrap = <T extends Phaser.GameObjects.GameObject>(obj: T): T =>
       hooks?.onCreateObject ? hooks.onCreateObject(obj) : obj
-    const y = scene.cameras.main.height - 56
     const btnStyle = { fontFamily: 'sans-serif', fontSize: '20px', color: '#ffffff', backgroundColor: '#33415c' }
     const labelStyle = { fontFamily: 'sans-serif', fontSize: '18px', color: '#ffffff', backgroundColor: '#1a1f2e' }
 
-    this.prevBtn = wrap(scene.add.text(16, y, '<', btnStyle).setDepth(12).setScrollFactor(0).setPadding(14, 8).setInteractive({ useHandCursor: true }))
-    this.label = wrap(scene.add.text(this.prevBtn.x + this.prevBtn.width + 6, y, '', labelStyle).setDepth(12).setScrollFactor(0).setPadding(14, 8))
-    this.nextBtn = wrap(scene.add.text(this.label.x + this.label.width + 6, y, '>', btnStyle).setDepth(12).setScrollFactor(0).setPadding(14, 8).setInteractive({ useHandCursor: true }))
-    this.volumeBtn = wrap(scene.add.text(this.nextBtn.x + this.nextBtn.width + 6, y, '\u{1F50A}', btnStyle).setDepth(12).setScrollFactor(0).setPadding(14, 8).setInteractive({ useHandCursor: true }))
-    // x=0 是临时占位，refresh() 中立即修正为 volumeBtn 右侧
-    this.slider = wrap(scene.add.graphics().setPosition(0, y + 12).setDepth(13).setScrollFactor(0).setVisible(false))
+    // 统一右上角布局：先以 (0,0) 占位创建，末尾 refresh() → repositionRow() 右对齐排布
+    this.prevBtn = wrap(scene.add.text(0, 0, '<', btnStyle).setDepth(12).setScrollFactor(0).setPadding(14, 8).setInteractive({ useHandCursor: true }))
+    this.label = wrap(scene.add.text(0, 0, '', labelStyle).setDepth(12).setScrollFactor(0).setPadding(14, 8))
+    this.nextBtn = wrap(scene.add.text(0, 0, '>', btnStyle).setDepth(12).setScrollFactor(0).setPadding(14, 8).setInteractive({ useHandCursor: true }))
+    this.volumeBtn = wrap(scene.add.text(0, 0, '\u{1F50A}', btnStyle).setDepth(12).setScrollFactor(0).setPadding(14, 8).setInteractive({ useHandCursor: true }))
+    // 滑块：位置由 repositionRow() 统一排布（从音量钮向左展开，避免顶出屏幕右缘）
+    this.slider = wrap(scene.add.graphics().setPosition(0, 0).setDepth(13).setScrollFactor(0).setVisible(false))
 
     this.prevBtn.on('pointerdown', () => { this.bgm.prevTrack(); this.refresh() })
     this.nextBtn.on('pointerdown', () => { this.bgm.nextTrack(); this.refresh() })
@@ -57,13 +62,20 @@ export class BgmControls {
     this.scene.scale.off('resize', this.onResize)
   }
 
+  /** 右上角右对齐整行（Text origin 均为 (0,0)：x/y = 左上角）。滑块从音量钮向左展开，避免顶出屏幕右缘。 */
+  private readonly repositionRow = (): void => {
+    const cam = this.scene.cameras.main
+    const right = cam.width - BgmControls.TOP_X
+    const y = BgmControls.TOP_Y
+    this.volumeBtn.setPosition(right - this.volumeBtn.width, y)
+    this.nextBtn.setPosition(this.volumeBtn.x - BgmControls.GAP - this.nextBtn.width, y)
+    this.label.setPosition(this.nextBtn.x - BgmControls.GAP - this.label.width, y)
+    this.prevBtn.setPosition(this.label.x - BgmControls.GAP - this.prevBtn.width, y)
+    this.slider.setPosition(this.volumeBtn.x - 8 - BgmControls.SLIDER_W, this.volumeBtn.y + 12)
+  }
+
   private readonly onResize = (): void => {
-    const y = this.scene.cameras.main.height - 56
-    this.prevBtn.setY(y)
-    this.label.setY(y)
-    this.nextBtn.setY(y)
-    this.volumeBtn.setY(y)
-    this.slider.setPosition(this.volumeBtn.x + this.volumeBtn.width + 8, y + 12)
+    this.repositionRow()
     if (this.sliderVisible) this.drawSlider()
   }
 
@@ -72,15 +84,12 @@ export class BgmControls {
     const track = this.bgm.getCurrentTrack()
     const playing = this.bgm.getState().playing
     this.label.setText(track && playing ? `\u{266A} ${track}` : '')
-    this.label.setX(this.prevBtn.x + this.prevBtn.width + 6)
-    this.nextBtn.setX(this.label.x + this.label.width + 6)
-    this.volumeBtn.setX(this.nextBtn.x + this.nextBtn.width + 6)
     const v = this.bgm.getVolume()
     if (v <= 0) this.volumeBtn.setText('\u{1F507}')       // 🔇
     else if (v <= 0.33) this.volumeBtn.setText('\u{1F508}') // 🔈
     else if (v <= 0.66) this.volumeBtn.setText('\u{1F509}') // 🔉
     else this.volumeBtn.setText('\u{1F50A}')                // 🔊
-    this.slider.setPosition(this.volumeBtn.x + this.volumeBtn.width + 8, this.volumeBtn.y + 12)
+    this.repositionRow() // 曲名 / 音量图标宽度变化后重新右对齐
     this.drawSlider()
   }
 
