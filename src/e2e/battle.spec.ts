@@ -5,7 +5,7 @@ import { gotoBattle, gotoBooted, MENU_BATTLE } from './helpers'
  * 战斗 e2e：主菜单入口 + startBattle 确定性交互（刀剑冲锋/反击、远程满额/半额、移动即行动、信息面板、胜负循环）。
  * 模型无多模态：断言一律程序化（window.__game.getState()）；截图仅供人工目检。
  */
-const SKIP = { x: 1880, y: 1040 }
+const SKIP = { x: 1820, y: 1040 }
 const SURRENDER = { x: 1880, y: 980 }
 const RETURN = { x: 960, y: 580 }
 
@@ -53,6 +53,8 @@ interface DebugGameState {
   hitFlashCount?: number
   textOk?: boolean
   units?: UnitState[]
+  order?: string[]
+  turnQueue?: { unitId: string; side: string; defId: string; hasActed: boolean }[]
 }
 
 const getState = (page: Page): Promise<DebugGameState> =>
@@ -562,4 +564,82 @@ test('撤退后重新进入：战斗状态/相机/拖拽状态全部重置（无
   const camAfter = (await getState(page)).camera!
   expect(camAfter.scrollX).toBe(camBefore.scrollX)
   expect(camAfter.scrollY).toBe(camBefore.scrollY)
+})
+
+test('行动顺序条：队列 = state.order 派生，首格=当前单位，开局全员未行动', async ({ page }) => {
+  await gotoBattle(page)
+  await waitBattleReady(page)
+  const s = await getState(page)
+  const q = s.turnQueue!
+  expect(q.map((e) => e.unitId)).toEqual(s.order)
+  expect(q[0]!.unitId).toBe(s.currentUnitId) // 骑兵 speed9 最先行动
+  expect(q.filter((e) => e.side === 'player')).toHaveLength(4)
+  expect(q.every((e) => !e.hasActed)).toBe(true)
+  await page.screenshot({ path: 'screenshots/battle-turn-order-bar.png' })
+})
+
+test('行动顺序条：行动后该格灰掉（hasActed），高亮移到下一单位', async ({ page }) => {
+  await gotoBattle(page)
+  await waitBattleReady(page)
+  await setAnimationSpeed(page, 0)
+  await startBattle(page,
+    { side: 'player', generalName: 'P', atkBonus: 0, defBonus: 0, units: [{ defId: 'militia', count: 50 }, { defId: 'militia', count: 50 }] },
+    { side: 'enemy', generalName: 'E', atkBonus: 0, defBonus: 0, units: [{ defId: 'militia', count: 50 }] },
+    { cols: 7, rows: 3 }) // 同速 → order=[p0,p1,e0]，p0 先动
+  let s = await getState(page)
+  expect(s.currentUnitId).toBe('p0')
+  const reach = s.reachable!.find((h) => h.q === 1 && h.r === 0)!
+  await page.mouse.click(reach.screen.x, reach.screen.y) // p0 移动即行动
+  s = await getState(page)
+  const q = s.turnQueue!
+  expect(q.map((e) => e.unitId)).toEqual(['p0', 'p1', 'e0']) // 本回合 order 不变
+  expect(q.find((e) => e.unitId === 'p0')!.hasActed).toBe(true) // 灰掉
+  expect(s.currentUnitId).toBe('p1') // 高亮移到下一格
+})
+
+test('行动顺序条：整回合结束按剩余部队当前速度重排', async ({ page }) => {
+  await gotoBattle(page)
+  await waitBattleReady(page)
+  await setAnimationSpeed(page, 0)
+  await startBattle(page,
+    { side: 'player', generalName: 'P', atkBonus: 0, defBonus: 0, units: [{ defId: 'cavalry', count: 8 }, { defId: 'militia', count: 10 }] },
+    { side: 'enemy', generalName: 'E', atkBonus: 0, defBonus: 0, units: [{ defId: 'militia', count: 20 }] },
+    { cols: 7, rows: 3 }) // p0 骑兵 speed9、p1 民兵 speed4、e0 民兵 speed4（同速玩家先行）
+  let s = await getState(page)
+  expect(s.currentUnitId).toBe('p0')
+  expect(s.turnQueue!.map((e) => e.unitId)).toEqual(['p0', 'p1', 'e0'])
+  await page.mouse.click(SKIP.x, SKIP.y) // 跳过 p0
+  await page.mouse.click(SKIP.x, SKIP.y) // 跳过 p1 → 轮到 e0（AI 自动行动）
+  await page.waitForFunction(() => {
+    const st = (window as { __game?: { getState(): DebugGameState } }).__game?.getState()
+    return st?.turn === 2
+  })
+  s = await getState(page)
+  expect(s.turn).toBe(2)
+  expect(s.turnQueue!.map((e) => e.unitId)).toEqual(['p0', 'p1', 'e0']) // 按速度重排，骑兵仍居首
+  expect(s.turnQueue!.every((e) => !e.hasActed)).toBe(true)
+  expect(s.currentUnitId).toBe('p0') // 高亮回到队首
+})
+
+test('行动顺序条不拦截地图交互：横条上拖拽平移相机、点击不触发行动', async ({ page }) => {
+  await gotoBattle(page)
+  await waitBattleReady(page)
+  await setAnimationSpeed(page, 0)
+  const cam0 = (await getState(page)).camera!
+  const barY = 1080 - 44 // 通栏条中心（BAR_H=88）
+  // 在横条上起手拖拽 → 相机仍平移（横条非 interactive）
+  await page.mouse.move(960, barY)
+  await page.mouse.down()
+  await page.mouse.move(1040, barY + 20, { steps: 5 })
+  await page.mouse.up()
+  const cam1 = (await getState(page)).camera!
+  expect(cam1.scrollX).not.toBe(cam0.scrollX)
+  expect(cam1.scrollY).not.toBe(cam0.scrollY)
+  // 点击横条 → 无移动/选中/行动（底部坐标换算为界外 hex → 自然 no-op）
+  const before = await getState(page)
+  await page.mouse.click(960, barY)
+  const after = await getState(page)
+  expect(after.currentUnitId).toBe(before.currentUnitId)
+  expect(after.selectedUnitId).toBeNull()
+  for (const u of after.units!) expect(u.hasActed).toBe(false)
 })
