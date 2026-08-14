@@ -36,3 +36,6 @@ export const FONT_DISPLAY = 'MaShanZheng-display'
 
 /** 印章字体 key（= assets/fonts/LXGW-WenKai-seal.woff2；霞鹜文楷含繁体「戰」，马善政 GB2312 无繁体） */
 export const FONT_SEAL = 'LXGW-WenKai-seal'
+
+/** 战斗双方势力色（单位六边形格与行动顺序条方块共用；保证两处底色一致） */
+export const BATTLE_SIDE_COLORS = { player: 0x33aa44, enemy: 0xcc3333 } as const

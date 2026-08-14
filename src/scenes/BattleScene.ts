@@ -14,8 +14,8 @@ import { SfxManager } from '../audio/SfxManager'
 import { BgmControls } from '../ui/BgmControls'
 import { OperationButtons } from '../ui/OperationButtons'
 import { fadeAndStart, fadeIn } from '../ui/fade'
+import { BATTLE_SIDE_COLORS } from '../ui/theme'
 
-const SIDE_COLORS = { player: 0x33aa44, enemy: 0xcc3333 } as const
 const GRID_COLOR = 0x1a2333
 const GRID_LINE = 0x0b0f18
 const REACHABLE_FILL = 0x66ccff
@@ -264,7 +264,7 @@ export class BattleScene extends Phaser.Scene {
       const footprint = occupiedHexes({ position: pos, size: unit.size })
       for (const hex of footprint) {
         if (!inBattleGrid(this.state, hex)) continue // 防御：1×2 绝不画出边界外
-        this.fillHex(this.unitGraphics, hex, SIDE_COLORS[unit.side], 0.85)
+        this.fillHex(this.unitGraphics, hex, BATTLE_SIDE_COLORS[unit.side], 0.85)
       }
       // 白边框只画外轮廓（1×2 两格中间的共享边不画）
       this.strokeUnitBorder(this.unitGraphics, footprint, 0xffffff, 2)
