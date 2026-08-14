@@ -633,14 +633,21 @@ export class BattleScene extends Phaser.Scene {
       this.drawHoverLayer()
       return
     }
-    // 近战：扫描可达落点与其相邻敌军的共享边界，命中最近者
+    // 近战：扫描可达落点与其相邻敌军的共享边界。
+    // 1×2 从下方攻击 1×1 时，P1/P2/P3 三个落位的共享边界在屏幕上会重合（P3 的右格边 ≈ P2 的左格边），
+    // 单纯按「边界距离最近」会恒选中间位、选不到偏左/偏右的落位。改为按「鼠标相对目标中心的水平侧」
+    // 匹配「落点单位相对目标的水平侧」：鼠标在目标左下偏左 → 选落点偏左的 P3（右格攻击）；
+    // 正下方 → P2（中间）；右下偏右 → P1（左格攻击）。落点均来自 battleReachableArea（已在移动范围内且无障碍）。
     const reachable = battleReachableArea(current, state)
     const mx = pointer.worldX
     const my = pointer.worldY
-    let edgeHit: { targetId: string; dist: number; dest: Axial } | null = null
+    const SIDE_TOL = 1 // 像素：相对目标中心视为「正中」的容差
+    let best: { targetId: string; dest: Axial; score: number } | null = null
     for (const dest of reachable) {
       // 攻击方在该落点的体格（1×2 = 主格+东邻格）：任一体格贴敌都算够得着 → 刀剑画在该体格边界
-      for (const bodyHex of occupiedHexes({ position: dest, size: current.size })) {
+      const destFoot = occupiedHexes({ position: dest, size: current.size })
+      const dcx = destFoot.reduce((s, h) => s + this.layout.hexToPixel(h).x, 0) / destFoot.length
+      for (const bodyHex of destFoot) {
         for (let d = 0; d < 6; d++) {
           const nb = hexNeighbor(bodyHex, d as HexDir)
           const foe = state.units.find((u) => u.side !== current.side && occupiedHexes(u).some((h) => hexKey(h) === hexKey(nb)))
@@ -650,18 +657,24 @@ export class BattleScene extends Phaser.Scene {
           const p1 = this.layout.cornerAt(bodyHex, c1)
           const p2 = this.layout.cornerAt(bodyHex, c2)
           const dist = this.distToSegment(mx, my, p1.x, p1.y, p2.x, p2.y)
-          if (dist <= EDGE_HIT_TOLERANCE && (!edgeHit || dist < edgeHit.dist)) {
-            edgeHit = { targetId: foe.id, dist, dest }
-          }
+          if (dist > EDGE_HIT_TOLERANCE) continue
+          const tFoot = occupiedHexes(foe)
+          const tcx = tFoot.reduce((s, h) => s + this.layout.hexToPixel(h).x, 0) / tFoot.length
+          const mouseSide = mx < tcx - SIDE_TOL ? -1 : mx > tcx + SIDE_TOL ? 1 : 0
+          const destSide = dcx < tcx - SIDE_TOL ? -1 : dcx > tcx + SIDE_TOL ? 1 : 0
+          // 匹配分：同侧 2 > 有一侧正中 1 > 异侧 0；分高优先，同分按边界距离近者
+          const match = mouseSide === destSide ? 2 : mouseSide === 0 || destSide === 0 ? 1 : 0
+          const score = match * 1000 - dist
+          if (!best || score > best.score) best = { targetId: foe.id, dest, score }
         }
       }
     }
-    if (edgeHit) {
+    if (best) {
       this.hover.cursorKind = 'sword'
-      this.hover.swordTargetId = edgeHit.targetId
-      this.hover.swordHex = edgeHit.dest
-      this.hover.ghostHex = hexKey(edgeHit.dest) === hexKey(current.position) ? null : edgeHit.dest
-      this.hover.blinkId = edgeHit.targetId
+      this.hover.swordTargetId = best.targetId
+      this.hover.swordHex = best.dest
+      this.hover.ghostHex = hexKey(best.dest) === hexKey(current.position) ? null : best.dest
+      this.hover.blinkId = best.targetId
     } else {
       const ghost = reachable.find((h) => hexKey(h) === hexKey(hex)) ?? null
       this.hover.ghostHex = ghost
