@@ -27,6 +27,11 @@ export function openModal(scene: Phaser.Scene, opts: ModalOptions): Promise<bool
       .setScrollFactor(0)
       .setInteractive()
     created.push(overlay)
+    // 遮罩「外点取消」防抖（Leak B）：降/逃/和 在 pointerdown 打开弹窗，同一次点击的收尾
+    // pointerup 会落在刚创建的遮罩上——只有 pointerdown 也落在遮罩上才算真正的「外点」，
+    // 否则（打开弹窗的那次点击）不关闭。
+    let overlayDown = false
+    overlay.on('pointerdown', () => { overlayDown = true })
     const panel = scene.add
       .rectangle(cx, cy, 460, 240, COLORS.nightInk, 0.96)
       .setStrokeStyle(2, COLORS.gilt, 1)
@@ -53,11 +58,11 @@ export function openModal(scene: Phaser.Scene, opts: ModalOptions): Promise<bool
       const confirm = makeButton(scene, cx + 50, cy + 80, opts.confirmLabel ?? '确定', () => close(true), { minWidth: 120, fontSize: 18 }).setDepth(32).setScrollFactor(0)
       const cancel = makeButton(scene, cx - 50, cy + 80, opts.cancelLabel ?? '取消', () => close(false), { minWidth: 120, fontSize: 18 }).setDepth(32).setScrollFactor(0)
       created.push(confirm, cancel)
-      overlay.on('pointerup', () => close(false))
+      overlay.on('pointerup', () => { if (overlayDown) { overlayDown = false; close(false) } })
     } else {
       const btn = makeButton(scene, cx, cy + 80, opts.closeLabel ?? '关闭', () => close(), { minWidth: 120, fontSize: 18 }).setDepth(32).setScrollFactor(0)
       created.push(btn)
-      overlay.on('pointerup', () => close())
+      overlay.on('pointerup', () => { if (overlayDown) { overlayDown = false; close() } })
     }
   })
 }

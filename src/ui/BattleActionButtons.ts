@@ -11,9 +11,11 @@ export interface BattleActionButtonsCallbacks {
   onDefend(): void
 }
 
-const BTN_W = 46
-const BTN_H = 30
-const GAP = 6
+export type ActionButtonKey = 'settings' | 'surrender' | 'flee' | 'negotiate' | 'skill' | 'wait' | 'defend'
+
+const BTN_W = 80
+const BTN_H = 80
+const GAP = 8
 const PAD = 12
 
 /**
@@ -36,9 +38,9 @@ export class BattleActionButtons {
       .setVisible(false)
     const mkBtn = (label: string, onClick: () => void): Phaser.GameObjects.Text =>
       scene.add
-        .text(0, 0, label, { fontFamily: 'sans-serif', fontSize: '16px', color: '#ffffff', backgroundColor: '#33415c', fixedWidth: BTN_W, align: 'center' })
+        .text(0, 0, label, { fontFamily: 'sans-serif', fontSize: '28px', color: '#ffffff', backgroundColor: '#33415c', fixedWidth: BTN_W, align: 'center' })
         .setOrigin(0, 0.5)
-        .setPadding(0, 8)
+        .setPadding(0, 22)
         .setDepth(12)
         .setScrollFactor(0)
         .setInteractive({ useHandCursor: true })
@@ -56,8 +58,8 @@ export class BattleActionButtons {
     ]
     leftSpecs.forEach((s) => this.left.push(mkBtn(s.label, s.onClick)))
     rightSpecs.forEach((s) => this.right.push(mkBtn(s.label, s.onClick)))
-    // 降/逃/和 hover 提示
-    const tooltips: Record<string, string> = { 降: '投降', 逃: '逃跑', 和: '议和' }
+    // 降/逃/和/技/候/守 hover 提示（技/候/守 附快捷键）
+    const tooltips: Record<string, string> = { 降: '投降', 逃: '逃跑', 和: '议和', 技: '技能 (c)', 候: '等待 (w)', 守: '防御 (d)' }
     for (const b of [...this.left.slice(1), ...this.right]) {
       b.on('pointerover', () => {
         const tip = tooltips[b.text]
@@ -112,6 +114,11 @@ export class BattleActionButtons {
   }
   getRightWidth(): number {
     return PAD * 2 + this.right.length * BTN_W + (this.right.length - 1) * GAP
+  }
+  /** 各按钮中心坐标（debug / e2e 断言用；origin 左锚 → 中心 x = b.x + BTN_W/2，y = b.y 即垂直中心） */
+  getCenters(): { key: ActionButtonKey; x: number; y: number }[] {
+    const keys: ActionButtonKey[] = ['settings', 'surrender', 'flee', 'negotiate', 'skill', 'wait', 'defend']
+    return this.all().map((b, i) => ({ key: keys[i] as ActionButtonKey, x: b.x + BTN_W / 2, y: b.y }))
   }
   setVisible(v: boolean): void {
     for (const b of this.all()) b.setVisible(v)

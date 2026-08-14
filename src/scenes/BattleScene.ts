@@ -79,6 +79,8 @@ export class BattleScene extends Phaser.Scene {
   private turnOrderQueue: TurnOrderQueue | null = null
   /** 当前打开的弹窗（调试 / e2e 断言用；openConfirm/openInfo 期间非 null） */
   private activeModal: { open: true; title: string; message: string } | null = null
+  /** 弹窗关闭后吞掉一次尾随 pointerup（modal 按钮 pointerdown 关闭后，其 pointerup 会泄漏成地图点击） */
+  private swallowUp = false
   /** 受击闪白累计次数（debug / e2e 断言用） */
   private hitFlashCount = 0
   /** 音效（渲染层；移动循环 + 攻击一次性） */
@@ -107,6 +109,7 @@ export class BattleScene extends Phaser.Scene {
     this.logFlushed = 0
     this.hitFlashCount = 0
     this.activeModal = null
+    this.swallowUp = false
     this.hover = { ghostHex: null, swordHex: null, swordAdjHex: null, cursorKind: 'none', swordTargetId: null, blinkId: null }
     this.blinkPhase = 0
     this.unitLabels.clear()
@@ -505,6 +508,7 @@ export class BattleScene extends Phaser.Scene {
     this.activeModal = { open: true, title: '技能', message: '技能系统开发中' }
     void openInfo(this, { title: '技能', message: '技能系统开发中' }).then(() => {
       this.activeModal = null
+      this.swallowUp = true
     })
   }
   private async confirmEnd(kind: 'surrendered' | 'fled' | 'negotiated'): Promise<void> {
@@ -517,6 +521,7 @@ export class BattleScene extends Phaser.Scene {
     this.activeModal = { open: true, title: kind === 'negotiated' ? '议和' : '确认', message: msg }
     const ok = await openConfirm(this, { title: this.activeModal.title, message: msg, confirmLabel: '确定', cancelLabel: '取消' })
     this.activeModal = null
+    this.swallowUp = true
     if (!ok || this.state.phase !== 'combat') return
     const cmd = kind === 'surrendered' ? 'battle/surrender' : kind === 'fled' ? 'battle/flee' : 'battle/negotiate'
     this.store.dispatch(cmd)
@@ -545,7 +550,8 @@ export class BattleScene extends Phaser.Scene {
       this.lastPointer = { x: p.x, y: p.y }
     })
     this.input.on('pointerup', (p: Phaser.Input.Pointer) => {
-      if (swallowStaleUp) {
+      if (this.swallowUp || swallowStaleUp) {
+        this.swallowUp = false
         swallowStaleUp = false
         return
       }
@@ -1111,6 +1117,10 @@ export class BattleScene extends Phaser.Scene {
       completedQueue: state.completedQueue,
       turnQueue: buildTurnOrderQueue(state),
       modal: this.activeModal,
+      // 底部行动条各按钮中心坐标（e2e 点击用；方形按钮放大后 x 中心位移，从 debug state 读而非硬编码）
+      actionButtons: Object.fromEntries(
+        (this.actionButtons?.getCenters() ?? []).map((c) => [c.key, { x: c.x, y: c.y }])
+      ),
       battleResult: state.phase !== 'combat' ? buildBattleResult(state) : null,
       log: state.log,
       reachable,

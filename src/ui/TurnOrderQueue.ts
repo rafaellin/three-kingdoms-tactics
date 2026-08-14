@@ -47,8 +47,8 @@ export class TurnOrderQueue {
       const x = startX + i * (BLOCK + GAP) + BLOCK / 2
       const x0 = x - BLOCK / 2
       const y0 = y - BLOCK / 2
-      // 底色 = 兵种六边形格子同色（BATTLE_SIDE_COLORS 单源）；等待段略暗（同侧色 alpha 0.55）
-      this.squares.fillStyle(BATTLE_SIDE_COLORS[e.side], e.segment === 'wait' ? 0.55 : 1)
+      // 底色 = 兵种六边形格子同色（BATTLE_SIDE_COLORS 单源）；等待段与正常段同色（仅位置区分）
+      this.squares.fillStyle(BATTLE_SIDE_COLORS[e.side], 1)
       this.squares.fillRect(x0, y0, BLOCK, BLOCK)
       // done 段 → 叠半透明黑灰「灰掉」；normal/wait → 保持原色
       if (e.segment === 'done') {
