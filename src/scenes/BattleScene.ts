@@ -79,8 +79,10 @@ export class BattleScene extends Phaser.Scene {
   private turnOrderQueue: TurnOrderQueue | null = null
   /** 当前打开的弹窗（调试 / e2e 断言用；openConfirm/openInfo 期间非 null） */
   private activeModal: { open: true; title: string; message: string } | null = null
-  /** 弹窗关闭后吞掉一次尾随 pointerup（modal 按钮 pointerdown 关闭后，其 pointerup 会泄漏成地图点击） */
-  private swallowUp = false
+  /** 弹窗关闭后到手势收尾（下一次 pointerup）前的输入锁：挡住本次点击残余的 down/move/up，
+   *  防止 modal 按钮 pointerdown 关闭弹窗后（gameobjectdown 先于 scene pointerdown 派发、activeModal 已清空、
+   *  命中为空）scene 侧把 dragging 置 true / 触发地图操作。 */
+  private modalGestureLock = false
   /** 受击闪白累计次数（debug / e2e 断言用） */
   private hitFlashCount = 0
   /** 音效（渲染层；移动循环 + 攻击一次性） */
@@ -109,7 +111,7 @@ export class BattleScene extends Phaser.Scene {
     this.logFlushed = 0
     this.hitFlashCount = 0
     this.activeModal = null
-    this.swallowUp = false
+    this.modalGestureLock = false
     this.hover = { ghostHex: null, swordHex: null, swordAdjHex: null, cursorKind: 'none', swordTargetId: null, blinkId: null }
     this.blinkPhase = 0
     this.unitLabels.clear()
@@ -506,7 +508,7 @@ export class BattleScene extends Phaser.Scene {
    *  清 activeModal、吞掉一次尾随 pointerup、复位拖拽——防止关闭后的 pointerup 泄漏成地图操作 */
   private resetModalInput(): void {
     this.activeModal = null
-    this.swallowUp = true
+    this.modalGestureLock = true // 锁住本次点击残余事件，直到下一次 pointerup 解锁
     this.dragging = false
   }
   private openSkillPopup(): void {
@@ -544,8 +546,8 @@ export class BattleScene extends Phaser.Scene {
     // 若场景启动时指针仍按下，说明该 pointerup 属于旧场景的点击：吞掉它（只吞一次）。
     let swallowStaleUp = this.input.activePointer.isDown
     this.input.on('pointerdown', (p: Phaser.Input.Pointer) => {
-      // 弹窗打开期间 / 非左键 → 不处理任何地图输入（防 modal 按钮 pointerdown 泄漏成拖拽）
-      if (this.activeModal || p.button !== 0) return
+      // 弹窗打开期间 / 弹窗刚关闭（modalGestureLock）/ 非左键 → 不处理任何地图输入（防 modal 按钮泄漏成拖拽）
+      if (this.activeModal || this.modalGestureLock || p.button !== 0) return
       // 点在 UI 控件（跳过/撤退/BGM 音量条等）上 → 不启动地图拖拽（与 pointerup 一致）
       if (this.input.hitTestPointer(p).length > 0) return
       // 记录按下点：用于区分「点击」与「拖拽平移相机」
@@ -555,9 +557,13 @@ export class BattleScene extends Phaser.Scene {
     })
     this.input.on('pointerup', (p: Phaser.Input.Pointer) => {
       if (p.button !== 0) return
-      // 弹窗打开期间或刚关闭（activeModal 仍非 null / swallowUp 已同步置位）→ 吞掉本次 pointerup，防触发地图操作
-      if (this.activeModal || this.swallowUp || swallowStaleUp) {
-        this.swallowUp = false
+      // 弹窗打开期间或弹窗刚关闭的手势收尾（modalGestureLock）→ 吞掉本次 pointerup，防触发地图操作；
+      // 手势收尾（up）时解锁，下一按压恢复地图交互
+      if (this.activeModal || this.modalGestureLock) {
+        if (!p.isDown) this.modalGestureLock = false
+        return
+      }
+      if (swallowStaleUp) {
         swallowStaleUp = false
         return
       }
@@ -571,7 +577,7 @@ export class BattleScene extends Phaser.Scene {
       this.handleClick(this.layout.pixelToHex(p.worldX, p.worldY))
     })
     this.input.on('pointermove', (p: Phaser.Input.Pointer) => {
-      if (this.activeModal) return // 弹窗期间不处理 hover/拖拽
+      if (this.activeModal || this.modalGestureLock) return // 弹窗期间 / 手势锁 → 不处理 hover/拖拽
       if (this.dragging) {
         // 拖拽平移相机（战场 zoom=1，直接按像素位移）
         this.cameras.main.scrollX -= p.x - this.lastPointer.x
