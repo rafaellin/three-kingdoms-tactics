@@ -314,3 +314,64 @@ describe('battle/shoot（远程）', () => {
     expect(s.phase).toBe('won')
   })
 })
+
+describe('battle/speedMod（中途速度变化重排）', () => {
+  const mk = () =>
+    makeStore({
+      grid: { cols: 7, rows: 3 },
+      player: { side: 'player', generalName: 'P', atkBonus: 0, defBonus: 0,
+        units: [{ defId: 'cavalry', count: 8 }, { defId: 'militia', count: 10 }, { defId: 'militia', count: 10 }] },
+      enemy: { side: 'enemy', generalName: 'E', atkBonus: 0, defBonus: 0, units: [{ defId: 'militia', count: 20 }] }
+    })
+
+  test('初始：骑兵9 最先，同速4 玩家先行', () => {
+    const s = mk().getState()
+    expect(s.currentUnitId).toBe('p0')
+    expect(s.order).toEqual(['p0', 'p1', 'p2', 'e0'])
+  })
+
+  test('减速：p1 掉到 e0 之后（未行动段按 effectiveSpeed 重排），当前单位不变', () => {
+    const store = mk()
+    store.dispatch('battle/speedMod', { unitId: 'p1', delta: -2 }) // p1 速度 4→2
+    const s = store.getState()
+    expect(s.order).toEqual(['p0', 'p2', 'e0', 'p1'])
+    expect(s.currentUnitId).toBe('p0')
+    expect(s.log.some((l) => l.includes('速度-2（现 2）'))).toBe(true)
+  })
+
+  test('加速：p2 上移到紧接当前单位之后，不越过 p0', () => {
+    const store = mk()
+    store.dispatch('battle/speedMod', { unitId: 'p2', delta: 5 }) // p2 速度 4→9（与 p0 平速）
+    const s = store.getState()
+    expect(s.order[0]).toBe('p0')     // 当前单位仍居首（未被平速单位越过）
+    expect(s.order).toEqual(['p0', 'p2', 'p1', 'e0']) // p2 紧接其后
+  })
+
+  test('对当前单位改速度：本回合 order/currentUnitId 不动，下回合排序带上修正', () => {
+    const store = mk()
+    store.dispatch('battle/speedMod', { unitId: 'p0', delta: 5 }) // p0 9→14
+    expect(store.getState().order).toEqual(['p0', 'p1', 'p2', 'e0'])
+    expect(store.getState().currentUnitId).toBe('p0')
+    // 全员行动完 → turn 2 按新速度重排，p0 仍居首
+    for (const id of ['p0', 'p1', 'p2', 'e0']) store.dispatch('battle/endTurn', { unitId: id })
+    const s = store.getState()
+    expect(s.turn).toBe(2)
+    expect(s.order).toEqual(['p0', 'p1', 'p2', 'e0'])
+  })
+
+  test('重排剔除阵亡残留（order 不再含已消灭单位）', () => {
+    const store = makeStore({
+      grid: { cols: 3, rows: 3 },
+      player: { side: 'player', generalName: 'P', atkBonus: 0, defBonus: 0,
+        units: [{ defId: 'militia', count: 50 }, { defId: 'militia', count: 10 }] },
+      enemy: { side: 'enemy', generalName: 'E', atkBonus: 0, defBonus: 0,
+        units: [{ defId: 'militia', count: 1 }, { defId: 'militia', count: 1 }] }
+    })
+    expect(store.getState().order).toEqual(['p0', 'p1', 'e0', 'e1'])
+    store.dispatch('battle/attack', { unitId: 'p0', targetId: 'e0', to: { q: 0, r: 0 } }) // 原地近战灭 e0（e1 存活 → 战斗继续）
+    expect(store.getState().units.find((u) => u.id === 'e0')).toBeUndefined()
+    expect(store.getState().order).toEqual(['p0', 'p1', 'e0', 'e1']) // attack 不推进 → e0 残留
+    store.dispatch('battle/speedMod', { unitId: 'p1', delta: 0 }) // 触发重排 → 剔除 e0
+    expect(store.getState().order).toEqual(['p0', 'p1', 'e1'])
+  })
+})

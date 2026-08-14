@@ -1,14 +1,14 @@
 /**
  * 战斗 reducer：纯函数，经独立 CommandLog 驱动 BattleState。
  * 相同命令序列 + 相同初始状态 ⇒ 相同终态（确定性）。MVP 无随机。
- * 命令：battle/init | battle/select | battle/move | battle/attack | battle/shoot | battle/endTurn | battle/surrender
+ * 命令：battle/init | battle/select | battle/move | battle/attack | battle/shoot | battle/endTurn | battle/surrender | battle/speedMod
  */
 import { type Command, type Reducer } from '../events/CommandLog'
 import { hexDistance, hexKey, type Axial } from '../hex/HexGrid'
 import { UNIT_DEFS } from '../../data/units'
 import { computeDamage, MELEE_ATTACK_MULT, RANGE_OUT_MULT } from './damage'
 import { battleFindPath, battleReachableArea } from './pathing'
-import { occupiedHexes, type BattleArmyConfig, type BattleState, type BattleUnit } from './types'
+import { effectiveSpeed, occupiedHexes, type BattleArmyConfig, type BattleState, type BattleUnit } from './types'
 
 /** 标准化 log 单位名：`武将的兵种`（如「关羽的骑兵」） */
 function unitName(state: BattleState, unit: Pick<BattleUnit, 'side' | 'defId'>): string {
@@ -33,16 +33,35 @@ export function createInitialBattleState(): BattleState {
   }
 }
 
+/** 速度比较（降序）：有效速度 → 同速攻方（玩家）先行 → id 稳定序 */
+function compareUnits(a: BattleUnit, b: BattleUnit): number {
+  const sp = effectiveSpeed(b) - effectiveSpeed(a)
+  if (sp !== 0) return sp
+  if (a.side !== b.side) return a.side === 'player' ? -1 : 1
+  return a.id < b.id ? -1 : a.id > b.id ? 1 : 0
+}
+
 function sortOrder(units: BattleUnit[]): string[] {
-  return [...units]
-    .sort((a, b) => {
-      const sp = (b.speed ?? UNIT_DEFS[b.defId].speed) - (a.speed ?? UNIT_DEFS[a.defId].speed)
-      if (sp !== 0) return sp
-      // 同速 → 攻方（玩家）先行；仍相同按 id 稳定序
-      if (a.side !== b.side) return a.side === 'player' ? -1 : 1
-      return a.id < b.id ? -1 : a.id > b.id ? 1 : 0
-    })
-    .map((u) => u.id)
+  return [...units].sort(compareUnits).map((u) => u.id)
+}
+
+/**
+ * 中途速度变化后重排：已行动段 + 当前单位原样保留，只把当前单位之后的**未行动段**
+ * 按 effectiveSpeed 稳定降序重排，并剔除阵亡残留 id。
+ * 「加速不越过当前单位」由当前单位不在重排段内自动保证（最多紧接其后）。
+ */
+function reorderRemaining(state: BattleState): BattleState['order'] {
+  const curIdx = state.order.indexOf(state.currentUnitId ?? '')
+  if (curIdx < 0) return state.order
+  const alive = new Set(state.units.map((u) => u.id))
+  const prefix = state.order.slice(0, curIdx + 1)
+  const tail = state.order.slice(curIdx + 1).filter((id) => alive.has(id))
+  tail.sort((aId, bId) => {
+    const a = state.units.find((u) => u.id === aId) as BattleUnit
+    const b = state.units.find((u) => u.id === bId) as BattleUnit
+    return compareUnits(a, b)
+  })
+  return [...prefix, ...tail]
 }
 
 function init(state: BattleState, payload: { player: BattleArmyConfig; enemy: BattleArmyConfig; grid: { cols: number; rows: number; obstacles?: Axial[] } }): BattleState {
@@ -100,6 +119,24 @@ function endTurn(state: BattleState, unitId: string): BattleState {
   if (!unit || unit.id !== state.currentUnitId) return state
   const units = state.units.map((u) => (u.id === unit.id ? { ...u, hasActed: true } : u))
   return advance({ ...state, units })
+}
+
+/**
+ * 中途速度修正（减速/加速技能入口）：给单位叠加速度修正 → 重排当前单位之后的未行动段。
+ * 不改 currentUnitId；speedMod 跨回合保留（下一回合排序自然带上修正）。
+ */
+function speedMod(state: BattleState, unitId: string, delta: number): BattleState {
+  const unit = state.units.find((u) => u.id === unitId)
+  if (!unit || state.phase !== 'combat') return state
+  const newMod = (unit.speedMod ?? 0) + delta
+  const units = state.units.map((u) => (u.id === unitId ? { ...u, speedMod: newMod } : u))
+  const next = { ...state, units }
+  const order = reorderRemaining(next)
+  const log = [
+    ...state.log,
+    `第${state.turn}回合 ${unitName(state, unit)} 速度${delta >= 0 ? '+' : ''}${delta}（现 ${effectiveSpeed({ ...unit, speedMod: newMod })}）`
+  ]
+  return { ...next, order, log }
 }
 
 /** 判定胜负：一方全灭 */
@@ -273,6 +310,10 @@ export const battleReducer: Reducer<BattleState> = (state, cmd: Command) => {
     }
     case 'battle/endTurn':
       return endTurn(state, (cmd.payload as { unitId: string }).unitId)
+    case 'battle/speedMod': {
+      const payload = cmd.payload as { unitId: string; delta: number }
+      return speedMod(state, payload.unitId, payload.delta)
+    }
     case 'battle/retaliate': {
       const payload = cmd.payload as { retaliatorId: string; victimId: string }
       return retaliate(state, payload.retaliatorId, payload.victimId)

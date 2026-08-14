@@ -15,6 +15,8 @@ export interface BattleUnit {
   defId: UnitDefId
   /** 速度覆盖（可选；缺省用 UNIT_DEFS[defId].speed；测试/配置用） */
   speed?: number
+  /** 战斗内速度修正（减速/加速技能入口；跨回合保留，叠加在 speed/兵种速度之上，见 effectiveSpeed） */
+  speedMod?: number
   /** 当前 stack 数量（受创后按 命×count 池折算，见 reducer） */
   count: number
   /** 主体格（轴向坐标；size=2 时为左侧格） */
@@ -74,4 +76,9 @@ export function occupiedHexes(unit: Pick<BattleUnit, 'position' | 'size'>): Axia
 /** 受伤士兵剩余血量：hpLeft - (count-1)×单兵血量 */
 export function woundedHp(unit: Pick<BattleUnit, 'hpLeft' | 'count' | 'defId'>): number {
   return unit.hpLeft - (unit.count - 1) * UNIT_DEFS[unit.defId].hp
+}
+
+/** 有效速度：配置/兵种速度 + 战斗内修正（speedMod）；回合排序与中途重排统一用它 */
+export function effectiveSpeed(unit: Pick<BattleUnit, 'defId' | 'speed' | 'speedMod'>): number {
+  return (unit.speed ?? UNIT_DEFS[unit.defId].speed) + (unit.speedMod ?? 0)
 }
