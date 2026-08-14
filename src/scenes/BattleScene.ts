@@ -143,6 +143,12 @@ export class BattleScene extends Phaser.Scene {
     this.setupBattle()
   }
 
+  /** 中途速度修正（dev/e2e 钩子；减速/加速技能将来由此接线） */
+  applySpeedMod(unitId: string, delta: number): void {
+    this.store.dispatch('battle/speedMod', { unitId, delta })
+    this.refreshViews()
+  }
+
   private setupBattle(): void {
     this.centerCamera()
     this.setupInput()

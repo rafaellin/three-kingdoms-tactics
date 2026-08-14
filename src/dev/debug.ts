@@ -25,6 +25,8 @@ export interface DebugBridge {
   setSfxVolume(volume: number): void
   /** 直接以指定阵容/网格开局（e2e 确定性交互测试） */
   startBattle(player: BattleArmyConfig, enemy: BattleArmyConfig, grid: { cols: number; rows: number; obstacles?: Axial[] }): void
+  /** 中途速度修正（dev/e2e 钩子；减速/加速技能接线点） */
+  applySpeedMod(unitId: string, delta: number): void
   /** 完整 battle log 文本（标准化格式，每行一条） */
   getLog(): string
   /** 下载完整 battle log 为 .log 文件 */
@@ -79,6 +81,9 @@ export function installDevBridge(game: Phaser.Game): DebugBridge {
     },
     startBattle(player, enemy, grid) {
       battle()?.startBattle(player, enemy, grid)
+    },
+    applySpeedMod(unitId, delta) {
+      battle()?.applySpeedMod(unitId, delta)
     },
     getLog() {
       return battle()?.getFullLog() ?? ''

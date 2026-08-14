@@ -643,3 +643,32 @@ test('行动顺序条不拦截地图交互：横条上拖拽平移相机、点�
   expect(after.selectedUnitId).toBeNull()
   for (const u of after.units!) expect(u.hasActed).toBe(false)
 })
+
+test('行动顺序条：中途减速/加速 → 队列重排（当前单位不被越过）', async ({ page }) => {
+  await gotoBattle(page)
+  await waitBattleReady(page)
+  await setAnimationSpeed(page, 0)
+  // p0 骑兵9 / p1 p2 民兵4 / e0 民兵4（同速玩家先行）
+  await startBattle(page,
+    { side: 'player', generalName: 'P', atkBonus: 0, defBonus: 0, units: [{ defId: 'cavalry', count: 8 }, { defId: 'militia', count: 10 }, { defId: 'militia', count: 10 }] },
+    { side: 'enemy', generalName: 'E', atkBonus: 0, defBonus: 0, units: [{ defId: 'militia', count: 20 }] },
+    { cols: 7, rows: 3 })
+  const applySpeedMod = (id: string, delta: number) =>
+    page.evaluate(([unitId, d]) => (window as { __game?: { applySpeedMod?(unitId: string, delta: number): void } }).__game?.applySpeedMod?.(unitId, d), [id, delta] as const)
+  let s = await getState(page)
+  expect(s.currentUnitId).toBe('p0')
+  expect(s.turnQueue!.map((e) => e.unitId)).toEqual(['p0', 'p1', 'p2', 'e0'])
+  // 减速 e0 → e0 本就最后，序不动
+  await applySpeedMod('e0', -2)
+  expect((await getState(page)).turnQueue!.map((e) => e.unitId)).toEqual(['p0', 'p1', 'p2', 'e0'])
+  // 减速 p1（现 2）→ p1 与 e0 同速，玩家先行 → 落到 e0 之后
+  await applySpeedMod('p1', -2)
+  expect((await getState(page)).turnQueue!.map((e) => e.unitId)).toEqual(['p0', 'p2', 'p1', 'e0'])
+  // 加速 p1 +5（现 7）→ 上移到紧接当前 p0 之后
+  await applySpeedMod('p1', 5)
+  expect((await getState(page)).turnQueue!.map((e) => e.unitId)).toEqual(['p0', 'p1', 'p2', 'e0'])
+  // 加速 p2 +5（现 9，与 p0 平速）→ 仍不能越过当前单位，紧接其后
+  await applySpeedMod('p2', 5)
+  expect((await getState(page)).turnQueue!.map((e) => e.unitId)).toEqual(['p0', 'p2', 'p1', 'e0'])
+  await page.screenshot({ path: 'screenshots/battle-turn-order-speedmod.png' })
+})
