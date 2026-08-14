@@ -484,7 +484,7 @@ export class BattleScene extends Phaser.Scene {
   }
 
   private canPlayerAct(): boolean {
-    return !this.busy && this.state.phase === 'combat' && this.currentSide() === 'player'
+    return !this.busy && this.state.phase === 'combat' && this.currentSide() === 'player' && !this.activeModal
   }
 
   private tryWait(): void {

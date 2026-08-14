@@ -732,7 +732,7 @@ test('议和：点【和】→ 弹窗文案含保释金 → 确认 → phase=neg
   await gotoBattle(page)
   await waitBattleReady(page)
   await setAnimationSpeed(page, 0)
-  // 用最小阵容开局：保释金远低于 playerGold=10000，议和确定可执行（默认 8 单位阵容保释金会超 10000）
+  // 用最小阵容开局：保释金（仅我方部队 ×1.5）远低于 playerGold=10000，议和确定可执行
   await startBattle(page,
     { side: 'player', generalName: 'P', atkBonus: 0, defBonus: 0, units: [{ defId: 'militia', count: 5 }] },
     { side: 'enemy', generalName: 'E', atkBonus: 0, defBonus: 0, units: [{ defId: 'militia', count: 5 }] },
