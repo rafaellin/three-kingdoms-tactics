@@ -20,7 +20,7 @@ export interface GeneralBase {
   passives: { name: string; level: number }[]
 }
 
-export const GENERAL_BASES: Record<'g-guan' | 'g-lvbu', GeneralBase> = {
+export const GENERAL_BASES: Record<'g-guan' | 'g-lvbu' | 'g-zhoucang' | 'g-sunqian' | 'g-kongxiu', GeneralBase> = {
   'g-guan': {
     id: 'g-guan', name: '关羽', faction: 'shu', type: '全能',
     base: { atk: 18, def: 16, int: 14, pol: 18, cha: 22 },
@@ -32,5 +32,23 @@ export const GENERAL_BASES: Record<'g-guan' | 'g-lvbu', GeneralBase> = {
     base: { atk: 20, def: 18, int: 10, pol: 8, cha: 12 },
     lv20: { atk: 100, def: 80, int: 30, pol: 20, cha: 40 },
     passives: [{ name: '狂暴', level: 1 }]
+  },
+  'g-zhoucang': {
+    id: 'g-zhoucang', name: '周仓', faction: 'shu', type: '战将',
+    base: { atk: 14, def: 16, int: 6, pol: 6, cha: 10 },
+    lv20: { atk: 80, def: 78, int: 30, pol: 30, cha: 45 },
+    passives: []
+  },
+  'g-sunqian': {
+    id: 'g-sunqian', name: '孙乾', faction: 'shu', type: '智将',
+    base: { atk: 8, def: 10, int: 18, pol: 16, cha: 14 },
+    lv20: { atk: 40, def: 45, int: 80, pol: 78, cha: 60 },
+    passives: []
+  },
+  'g-kongxiu': {
+    id: 'g-kongxiu', name: '孔秀', faction: 'wei', type: '战将',
+    base: { atk: 12, def: 14, int: 8, pol: 8, cha: 8 },
+    lv20: { atk: 70, def: 68, int: 30, pol: 30, cha: 30 },
+    passives: []
   }
 }

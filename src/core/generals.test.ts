@@ -37,3 +37,29 @@ describe('deriveStats 双锚点线性插值（base → lv20）', () => {
     expect(deriveStats(GUAN, -5)).toEqual(deriveStats(GUAN, 1))
   })
 })
+
+describe('新武将：周仓/孙乾/孔秀', () => {
+  test('base/lv20 存在且 5 级可推导', () => {
+    expect(GENERAL_BASES['g-zhoucang']).toBeDefined()
+    expect(GENERAL_BASES['g-sunqian']).toBeDefined()
+    expect(GENERAL_BASES['g-kongxiu']).toBeDefined()
+    const zhou = deriveStats(GENERAL_BASES['g-zhoucang'], 5)
+    expect(zhou.atk).toBeGreaterThan(0)
+    expect(zhou.def).toBeGreaterThan(0)
+  })
+
+  test('周仓 Lv1/Lv20 精确命中双锚点', () => {
+    expect(deriveStats(GENERAL_BASES['g-zhoucang'], 1)).toEqual({ atk: 14, def: 16, int: 6, pol: 6, cha: 10 })
+    expect(deriveStats(GENERAL_BASES['g-zhoucang'], 20)).toEqual({ atk: 80, def: 78, int: 30, pol: 30, cha: 45 })
+  })
+
+  test('孙乾 Lv1/Lv20 精确命中双锚点', () => {
+    expect(deriveStats(GENERAL_BASES['g-sunqian'], 1)).toEqual({ atk: 8, def: 10, int: 18, pol: 16, cha: 14 })
+    expect(deriveStats(GENERAL_BASES['g-sunqian'], 20)).toEqual({ atk: 40, def: 45, int: 80, pol: 78, cha: 60 })
+  })
+
+  test('孔秀 Lv1/Lv20 精确命中双锚点', () => {
+    expect(deriveStats(GENERAL_BASES['g-kongxiu'], 1)).toEqual({ atk: 12, def: 14, int: 8, pol: 8, cha: 8 })
+    expect(deriveStats(GENERAL_BASES['g-kongxiu'], 20)).toEqual({ atk: 70, def: 68, int: 30, pol: 30, cha: 30 })
+  })
+})
