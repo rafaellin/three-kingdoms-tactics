@@ -38,10 +38,6 @@ export interface SetupPayload {
   mapSeed: number
   /** 多英雄初始位置（每武将一英雄；MVP 单英雄） */
   heroStarts: { generalId: string; position: Axial }[]
-  /** 兼容旧单英雄 payload（旧 bootstrap/测试仍可传）；新代码统一用 heroStarts */
-  heroStart?: Axial
-  heroGeneralId?: string
-  heroFaction?: FactionId
 }
 
 export interface FactionResourcesPayload {
@@ -82,18 +78,12 @@ function setup(state: GameState, payload: SetupPayload): GameState {
     qun: { ...ZERO_RESOURCES }
   }
   for (const f of payload.factions) resources[f.id] = { ...f.resources }
-  // 多英雄：优先 payload.heroStarts；缺省回退到旧单英雄字段（兼容旧 payload）
-  const heroStarts =
-    payload.heroStarts.length > 0
-      ? payload.heroStarts
-      : payload.heroGeneralId
-        ? [{ generalId: payload.heroGeneralId, position: payload.heroStart ?? { q: 0, r: 0 } }]
-        : []
-  const heroes: HeroUnit[] = heroStarts.map((hs) => {
+  // 多英雄：直接读 payload.heroStarts（每武将一英雄）
+  const heroes: HeroUnit[] = payload.heroStarts.map((hs) => {
     const general = payload.generals.find((g) => g.id === hs.generalId)
     return {
       generalId: hs.generalId,
-      faction: general?.faction ?? payload.heroFaction ?? (payload.turnOrder[0] as FactionId),
+      faction: general?.faction ?? (payload.turnOrder[0] as FactionId),
       position: { ...hs.position },
       movementLeft: BASE_MAX_MOVEMENT,
       maxMovement: BASE_MAX_MOVEMENT,
