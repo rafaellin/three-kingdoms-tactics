@@ -151,8 +151,12 @@ export class AdventureScene extends Phaser.Scene {
   private townPanel: TownPanel | null = null
   /** 弹窗刚关闭的手势锁：吞掉一次尾随 pointerup，防关闭后的点击泄漏成地图操作（与 BattleScene 同机制） */
   private modalGestureLock = false
-  /** 资源点详情 tag（悬停资源点显示：名称 + 每日产出/一次性 + 状态） */
-  private nodeDetailText!: Phaser.GameObjects.Text
+  /** 悬停格 tooltip（通用「格信息」：地形/移动消耗/资源点/城池/守将/杂兵/武将；Task 5 由资源点详情扩展） */
+  private hexTooltipText!: Phaser.GameObjects.Text
+  /** 升级提示（战斗返回后参战英雄 level 变化检测到 → 待弹；技能 2 选 1 因技能系统未做只留 hook） */
+  private levelUpNotice: { heroId: string; name: string; level: number; shown: boolean } | null = null
+  /** 升级提示弹窗打开中：屏蔽地图输入 / 结束回合（与 victoryModalOpen 同机制） */
+  private levelUpModalOpen = false
   /** 右侧武将/城池列表面板（屏幕固定；Task 4：点击切换英雄 / 打开城池面板 / 下一个(h)；Task 3：含「结束回合」按钮） */
   private rightPanel: RightPanel | null = null
   /** 底部当前武将信息条（屏幕固定；Task 4：名字/等级/移动力/带部队列表） */
@@ -227,9 +231,11 @@ export class AdventureScene extends Phaser.Scene {
     // 读主菜单传入的模式/战役（fadeAndStart → scene.start 的 data）；战斗回流也带 mode/campaignId
     this.mode = data?.mode ?? undefined
     this.campaignId = (data?.campaignId as 'dongling') ?? 'dongling'
-    // 场景实例被 scene.start 复用：重置跨场景残留的胜利面板状态（每次 create 允许重新弹一次）
+    // 场景实例被 scene.start 复用：重置跨场景残留的胜利面板/升级提示状态（每次 create 允许重新弹一次）
     this.victoryPanelShown = false
     this.victoryModalOpen = false
+    this.levelUpNotice = null
+    this.levelUpModalOpen = false
     // BGM 管理器先创建（createLayers 中 BGM 控件依赖它）
     this.bgm = getBgmManager(this)
     fadeIn(this)
@@ -245,6 +251,9 @@ export class AdventureScene extends Phaser.Scene {
       this.buildStore()
     }
     if (data?.result && data.heroId) {
+      // 升级提示接口（spec §8）：resolveBattle 前后比较参战英雄 level——升了 → 记录待弹「升級！」。
+      // 技能 2 选 1 界面因技能系统未做不实现（skillSlots 递增的 skillOffer 事件位未来接，见 PRD §16）。
+      const levelBefore = this.state.generals.find((g) => g.id === data.heroId)?.level
       this.store.dispatch('campaign/resolveBattle', {
         result: data.result,
         garrisonId: data.garrisonId,
@@ -253,6 +262,10 @@ export class AdventureScene extends Phaser.Scene {
         playerId: data.playerId,
         targetPosition: data.targetPosition
       })
+      const after = this.state.generals.find((g) => g.id === data.heroId)
+      if (after && levelBefore !== undefined && after.level > levelBefore) {
+        this.levelUpNotice = { heroId: data.heroId, name: after.name, level: after.level, shown: false }
+      }
     }
     // 右侧武将/城池列表（依赖 store 已就绪；首帧由 refreshViews 渲染）
     this.rightPanel = new RightPanel(this, {
@@ -268,8 +281,8 @@ export class AdventureScene extends Phaser.Scene {
     this.statusBar = new StatusBar(this)
     this.refreshViews()
     this.setupInput()
-    // 战役胜利判定（resolveBattle 已写回 outcome）：达成 → 弹胜利面板（Task 9）
-    this.maybeShowVictoryPanel()
+    // 战斗返回后的弹层串行：升级提示（若有）→ 胜利面板（Task 5 接口预留 + Task 9）
+    this.maybeShowPostBattleNotice()
     // 地图中心（世界原点）居中到屏幕中心。视口 1920×1080 → scroll(-960,-540)
     this.cameras.main.centerOn(0, 0)
     this.bgm.switchToCategory('explore')
@@ -289,7 +302,7 @@ export class AdventureScene extends Phaser.Scene {
 
   /** 结束回合：dispatch game/advanceTurn，推进到下一势力（跨周自动结算） */
   private endTurn(): void {
-    if (this.busy || this.townPanel || this.victoryModalOpen) return
+    if (this.busy || this.townPanel || this.victoryModalOpen || this.levelUpModalOpen) return
     this.store.dispatch('game/advanceTurn')
     this.refreshViews()
   }
@@ -299,7 +312,7 @@ export class AdventureScene extends Phaser.Scene {
    * 顺序 = state.heroes 数组序（战役 = 关羽→周仓→孙乾→…循环）；无选中时落到列表第一个。
    */
   private nextHero(): void {
-    if (this.busy || this.townPanel || this.victoryModalOpen) return
+    if (this.busy || this.townPanel || this.victoryModalOpen || this.levelUpModalOpen) return
     const state = this.state
     const player = currentPlayer(state)
     if (!player) return
@@ -383,6 +396,12 @@ export class AdventureScene extends Phaser.Scene {
     this.sfx?.setVolume(v)
   }
 
+  /** 注入武将经验（dev bridge / e2e：升级提示回归用；走 core general/gainXp 确定性命令） */
+  grantXp(generalId: string, amount: number): void {
+    this.store.dispatch('general/gainXp', { generalId, amount })
+    this.refreshViews()
+  }
+
   /** 等待移动动画结束（供 e2e 轮询） */
   async waitForMove(): Promise<void> {
     while (this.busy) {
@@ -464,8 +483,8 @@ export class AdventureScene extends Phaser.Scene {
         .setDepth(10)
         .setScrollFactor(0)
     )
-    // 资源点详情 tag（默认隐藏；悬停资源点显示）
-    this.nodeDetailText = this.uiOnly(
+    // 悬停格 tooltip（默认隐藏；悬停任意已探索格显示地形/驻军等，Task 5 通用「格信息」）
+    this.hexTooltipText = this.uiOnly(
       this.add
         .text(0, 0, '', {
           fontFamily: 'sans-serif',
@@ -999,8 +1018,8 @@ export class AdventureScene extends Phaser.Scene {
   private setupInput(): void {
     const cam = this.cameras.main
     this.input.on('pointerdown', (p: Phaser.Input.Pointer) => {
-      // 城池面板/胜利面板打开期间 / 面板刚关闭的手势锁 / 非左键 → 不处理地图输入（防面板按钮泄漏成地图拖拽/点击）
-      if (this.townPanel || this.victoryModalOpen || this.modalGestureLock || p.button !== 0) return
+      // 城池面板/胜利面板/升级提示打开期间 / 面板刚关闭的手势锁 / 非左键 → 不处理地图输入（防面板按钮泄漏成地图拖拽/点击）
+      if (this.townPanel || this.victoryModalOpen || this.levelUpModalOpen || this.modalGestureLock || p.button !== 0) return
       // 仅在 Map 区启动拖拽；HUD / 工具栏 / 右侧面板区不触发地图交互
       if (!this.isInMapZone(p.y, p.x)) return
       this.dragging = true
@@ -1008,7 +1027,7 @@ export class AdventureScene extends Phaser.Scene {
       this.lastPointer = { x: p.x, y: p.y }
     })
     this.input.on('pointermove', (p: Phaser.Input.Pointer) => {
-      if (this.townPanel || this.victoryModalOpen || this.modalGestureLock) return // 面板期间 / 手势锁 → 不处理拖拽/悬停
+      if (this.townPanel || this.victoryModalOpen || this.levelUpModalOpen || this.modalGestureLock) return // 面板期间 / 手势锁 → 不处理拖拽/悬停
       if (this.dragging) {
         const dx = (p.x - this.lastPointer.x) / cam.zoom
         const dy = (p.y - this.lastPointer.y) / cam.zoom
@@ -1022,7 +1041,7 @@ export class AdventureScene extends Phaser.Scene {
     this.input.on('pointerup', (p: Phaser.Input.Pointer) => {
       if (p.button !== 0) return // 仅左键触发地图交互
       // 面板打开期间或面板刚关闭的手势收尾 → 吞掉本次 pointerup，防触发地图操作；手势收尾（up）时解锁
-      if (this.townPanel || this.victoryModalOpen || this.modalGestureLock) {
+      if (this.townPanel || this.victoryModalOpen || this.levelUpModalOpen || this.modalGestureLock) {
         if (!p.isDown) this.modalGestureLock = false
         return
       }
@@ -1053,12 +1072,16 @@ export class AdventureScene extends Phaser.Scene {
     if (curKey === (inMap ? hexKey(hex) : null)) return
     this.hoverHex = inMap ? hex : null
     this.drawOverlay()
-    // 悬停资源点 → 显示详情 tooltip（名称 + 每日产出/一次性 + 状态）
-    this.updateNodeTooltip(p, inMap ? hex : null)
+    // 悬停任意已探索格 → 通用「格信息」tooltip（地形/消耗/资源点/城池/守将/杂兵/武将）
+    this.updateHexTooltip(p, inMap ? hex : null)
   }
 
-  /** 悬停资源点 → tooltip：`名称  每日产出 +N木（已占领）` / `名称  一次性 +30金 +5木` */
-  private updateNodeTooltip(pointer: Phaser.Input.Pointer, hex: Axial | null): void {
+  /**
+   * 悬停任意已探索格 → 通用「格信息 tooltip」（spec §4）：地形名 + 移动消耗（或不可通过），
+   * 附加资源点 / 城池 / 存活守将 / 未歼灭杂兵 / 格上武将。多行文本，每行一条；无驻军平地 → 只显示地形名。
+   * 未探索区域不可见 → 不显示（迷雾中的地形/驻军不泄露信息）。
+   */
+  private updateHexTooltip(pointer: Phaser.Input.Pointer, hex: Axial | null): void {
     this.hideNodeTooltip()
     if (!hex) return
     const state = this.state
@@ -1066,26 +1089,69 @@ export class AdventureScene extends Phaser.Scene {
     const map = state.map
     if (!hero || !map) return
     const k = hexKey(hex)
-    const type = map.nodes?.[k]
-    if (!type) return
-    // 未探索区域的资源点不可见 → 不显示
+    // 未探索区域不可见 → 不显示
     if ((state.visibility[hero.playerId] ?? {})[k] === 'unexplored') return
-    const def = RESOURCE_NODE_DEFS[type]
-    const node = state.nodeStates[k]
-    const isMineType = Boolean(def.dailyBonus)
-    // 已拾取的宝箱已从地图移除 → 悬停不再显示
-    if (!isMineType && node?.visited) return
-    const desc = isMineType
-      ? `每日产出 +${this.formatBonus(def.dailyBonus)}`
-      : `一次性 ${this.formatBonus(def.oneTime)}`
-    const status = isMineType ? (node?.owner !== null ? '已占领' : '无主，走近占领') : '走近拾取'
-    this.nodeDetailText.setText(`${def.name}  ${desc}（${status}）`)
-    this.nodeDetailText.setPosition(pointer.x + 12, pointer.y - 8)
-    this.nodeDetailText.setVisible(true)
+    const lines: string[] = []
+    // 地形 + 移动消耗：`森林 1.5` / `山脉 不可通过`
+    const terrain = getTerrain(map.terrain[k] ?? 'plain')
+    const costStr = Number.isFinite(terrain.moveCost) ? String(terrain.moveCost) : '不可通过'
+    lines.push(`${terrain.name} ${costStr}`)
+    // 资源点（矿：每日产出/已占领；宝箱：一次性/拾取）
+    const type = map.nodes?.[k]
+    if (type) {
+      const node = state.nodeStates[k]
+      const def = RESOURCE_NODE_DEFS[type]
+      const isMineType = Boolean(def.dailyBonus)
+      // 已拾取的宝箱已从地图移除 → 不再显示
+      if (isMineType || !node?.visited) {
+        const desc = isMineType
+          ? `每日产出 +${this.formatBonus(def.dailyBonus)}`
+          : `一次性 ${this.formatBonus(def.oneTime)}`
+        const status = isMineType ? (node?.owner !== null ? '已占领' : '无主，走近占领') : '走近拾取'
+        lines.push(`${def.name}  ${desc}（${status}）`)
+      }
+    }
+    // 城池：城名 LvN + 驻军/驻城/访问武将
+    const town = state.towns.find((t) => hexKey(t.position) === k)
+    if (town) {
+      lines.push(`${town.name} Lv${town.level}`)
+      if (town.garrisonGeneralId) {
+        const g = state.generals.find((x) => x.id === town.garrisonGeneralId)
+        lines.push(`驻城：${g?.name ?? town.garrisonGeneralId}`)
+      }
+      if (town.visitorGeneralId) {
+        const g = state.generals.find((x) => x.id === town.visitorGeneralId)
+        lines.push(`访问：${g?.name ?? town.visitorGeneralId}`)
+      }
+      if (town.garrison.length > 0) lines.push(`驻军 ${town.garrison.length}队`)
+    }
+    // 存活守将：`守将 孔秀（2队）`
+    const garrison = state.garrisons.find((g) => g.alive && hexKey(g.position) === k)
+    if (garrison) {
+      const name =
+        state.generals.find((g) => g.id === garrison.generalId)?.name ??
+        GENERAL_BASES[garrison.generalId as keyof typeof GENERAL_BASES]?.name ??
+        garrison.generalId
+      lines.push(`守将 ${name}（${garrison.units.length}队）`)
+    }
+    // 未歼灭杂兵：`野怪（1队）`
+    const neutral = state.neutrals.find((n) => !n.defeated && hexKey(n.position) === k)
+    if (neutral) {
+      lines.push(`野怪（${neutral.units.length}队）`)
+    }
+    // 格上武将（含访问武将叠城）
+    for (const h of state.heroes) {
+      if (hexKey(h.position) !== k) continue
+      const name = state.generals.find((g) => g.id === h.generalId)?.name ?? h.generalId
+      lines.push(name)
+    }
+    this.hexTooltipText.setText(lines.join('\n'))
+    this.hexTooltipText.setPosition(pointer.x + 12, pointer.y - 8)
+    this.hexTooltipText.setVisible(true)
   }
 
   private hideNodeTooltip(): void {
-    this.nodeDetailText.setVisible(false)
+    this.hexTooltipText.setVisible(false)
   }
 
   /** `Partial<Resources>` → `金+30 木+5`（正数全列，省略零） */
@@ -1242,6 +1308,33 @@ export class AdventureScene extends Phaser.Scene {
     }).then(() => fadeAndStart(this, MainMenuScene.KEY))
   }
 
+  /**
+   * 战斗返回后的弹层串行（spec §8 接口预留）：先弹升级提示（若有），关闭后再判胜利面板，
+   * 避免两个 openInfo 弹层叠放。升级提示 = `升級！` 含新等级；技能 2 选 1 界面因技能系统未做
+   * 不实现（注释标明 hook：未来 skillSlots 递增 → skillOffer 事件 → 2 选 1 UI）。
+   * guard：levelUpNotice.shown 防重复（每次 create 只弹一次）。
+   */
+  private maybeShowPostBattleNotice(): void {
+    if (this.levelUpNotice && !this.levelUpNotice.shown) {
+      const { name, level } = this.levelUpNotice
+      this.levelUpNotice = { ...this.levelUpNotice, shown: true }
+      this.levelUpModalOpen = true
+      this.dragging = false
+      void openInfo(this, {
+        title: '升級！',
+        message: `${name} 提升至 Lv${level}`,
+        closeLabel: '好',
+        onClose: () => {
+          this.levelUpModalOpen = false
+          this.modalGestureLock = true
+          this.dragging = false
+        }
+      }).then(() => this.maybeShowVictoryPanel())
+      return
+    }
+    this.maybeShowVictoryPanel()
+  }
+
   /** 打开城池界面：传 getState 读最新 core 状态，动作接线到 reducer 命令 + 重绘面板 + 刷新地图 */
   private openTownPanel(townId: string): void {
     if (this.townPanel) return
@@ -1390,6 +1483,10 @@ export class AdventureScene extends Phaser.Scene {
       victoryPanel: { shown: this.victoryPanelShown, open: this.victoryModalOpen },
       // 悬停光标类型（'sword' = 可交战战斗目标；e2e 断言）
       cursorKind: this.cursorKind,
+      // 悬停格 tooltip：当前文本（null = 未显示；e2e 断言地形/驻军/城名）
+      hoverTooltip: this.hexTooltipText.visible ? this.hexTooltipText.text : null,
+      // 升级提示（spec §8 接口预留）：战斗返回后参战英雄 level 变化检测到 → {heroId,name,level,shown}；无则 null
+      levelUpNotice: this.levelUpNotice,
       // 渲染层实际创建的英雄 sprite generalId 列表（问题1 回归：scene.start 复用后 Map 被
       // createLayers 清空重建；旧代码残留死引用 → 战斗返回后此列表为空/与 state.heroes 不一致）。
       // 只暴露 live sprite（destroy() 已把 active 置 false）→ 死引用被过滤，e2e 断言能真正区分修复前后。

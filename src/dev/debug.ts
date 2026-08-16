@@ -23,6 +23,8 @@ export interface DebugBridge {
   setBgmVolume(volume: number): void
   /** 设置音效音量（0~1）；未来"设置"界面接线点 */
   setSfxVolume(volume: number): void
+  /** 注入武将经验（dev/e2e：升级提示回归用；走 core general/gainXp） */
+  grantXp(generalId: string, amount: number): void
   /** 直接以指定阵容/网格开局（e2e 确定性交互测试） */
   startBattle(player: BattleArmyConfig, enemy: BattleArmyConfig, grid: { cols: number; rows: number; obstacles?: Axial[] }): void
   /** 中途速度修正（dev/e2e 钩子；减速/加速技能接线点） */
@@ -80,6 +82,9 @@ export function installDevBridge(game: Phaser.Game): DebugBridge {
     },
     setSfxVolume(volume) {
       adventure()?.setSfxVolume(volume)
+    },
+    grantXp(generalId, amount) {
+      adventure()?.grantXp(generalId, amount)
     },
     startBattle(player, enemy, grid) {
       battle()?.startBattle(player, enemy, grid)

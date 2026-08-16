@@ -491,13 +491,13 @@ else:            战斗
 - [x] 六角格坐标系（尖顶，轴向坐标 + 像素转换）
 - [x] 六角格渲染（按地形着色）
 - [x] 相机拖拽 + 滚轮缩放
-- [ ] 悬停高亮（黄色边框 + 地形提示框；已有悬停路径高亮，提示框未做）
+- [x] 悬停高亮（已有悬停路径高亮 + 地形提示框 2026-08 Task 5 完成——悬停任意已探索格显示地形/移动消耗/驻军 tooltip；单格黄色边框未做）
 - [x] A* 寻路 + 可达范围计算
 
 ### 地形系统
 - [x] 6 种地形：平地、森林、山脉、河流、荒漠、沼泽
 - [x] 不可通行：山脉、河流
-- [ ] 悬停显示名称/通行/效果
+- [x] 悬停显示名称/通行/效果（2026-08 Task 5：通用格 tooltip 显示地形名 + 移动消耗（`森林 1.5` / `山脉 不可通过`））
 
 ### 势力与兵种
 - [x] 阵营基础定义 + Player 实体（2026-08 Player 重构）：FactionId（魏/蜀/吴/群）仅作势力标签；**回合轮转/资源/迷雾/占领/城池全部按 PlayerId 绑定**（`GameState.players` / `currentPlayerId`，`resources`/`visibility`/`NodeState.owner`/`Town.owner`/`HeroUnit.playerId`，同势力玩家各自独立不串）
@@ -517,6 +517,7 @@ else:            战斗
 - [x] 顶部资源条 + 日期（金/木/石/铁 图标+数值 + 第X周第X天；数值后显示 `(+每日产出)`，hover 图标/数值弹出产出来源明细 tooltip（如 `金 每日产出：成都 Lv1 +10，伐木场 +2`），数据来自 core `computeDailyIncome` 纯函数）
 - [x] 资源条流式布局：图标跟随数值文本自适应宽度（按文本实际宽度自左向右排布，`(+N)` 变长时图标随之右移，不重叠；e2e 断言 icon 右沿 < 文本左沿）
 - [x] 资源点视觉区分：矿（持续产出）画深色六角底座 + 已占归属色边框；宝箱（一次性）无底座、**拾取后从地图移除**（core 保留 visited 供回放，仅渲染层不再画）；悬停资源点显示 tooltip（名称 + 每日产出/一次性 + 已占状态）
+- [x] **悬停格 tooltip（2026-08 Task 5，spec §4）**：悬停任意已探索格显示通用「格信息」——地形名 + 移动消耗（`森林 1.5` / `山脉 不可通过`）+ 资源点（矿每日产出/已占、宝箱一次性/拾取）+ 城池（城名 LvN + 驻军/驻城/访问武将）+ 存活守将（`守将 孔秀（2队）`）+ 未歼灭杂兵（`野怪（1队）`）+ 格上武将名；未探索区域不显示（迷雾不泄露信息）；e2e `src/e2e/hover-tooltip.spec.ts`
 - [ ] 选中英雄 + 移动范围高亮（可达范围高亮按用户要求不做；已有悬停路径高亮）
 - [x] A* 移动
 - [ ] AI 敌方英雄移动
@@ -528,6 +529,7 @@ else:            战斗
 - [x] 窄路关卡阻塞：**移动路径不能穿过任何武将**（存活守将 / 未歼灭杂兵 / 其他英雄占据格在寻路 `makeMapCosts` 中不可通行，含己方英雄——不能穿过/重叠）；**战斗目标格放行**：点击存活守将/未歼灭杂兵格 → 英雄**直接移动上去交战**（reducer `moveHeroTo` 把守将/杂兵格作为移动终点放行、走进触发战斗；原「拦存活守将格」移除；目标格在 `makeMapCosts(goalHex)` 中不作为障碍，其余武将格照旧挡）
 - [x] 城池界面 TownPanel（驻军/驻城/访问 + 移兵/驻守/交换/出城）
 - [x] **战斗交互 + 回流（2026-08 Task 8 + Task 5 修订）**：点存活守将/未歼灭杂兵格 → 英雄**直接移动到目标格本身**（`animateMove`；`moveHeroTo` 放行走入；路径中间不穿过武将）→ 到达后触发战斗（构建双方 `BattleArmyConfig`：攻方=当前英雄 army+武将属性；守将=units+`GENERAL_BASES`+`deriveStats`；杂兵=units 无武将「野怪」）→ `scene.start('Battle', { enter: { mode, campaignId, heroId, playerId, targetPosition, garrisonId/neutralId, player, enemy, grid } })`；BattleScene `create(data.enter)` 用外部阵容开局（无 enter 仍走战斗测试固定阵容）；结算后「返回主菜单」按钮若带回流上下文 → 回 Adventure 携带 `BattleResult`；AdventureScene `create(data.result)` → `campaign/resolveBattle` 写回（剩余兵力/经验 `general/gainXp`/守将 `alive=false`/杂兵 `defeated=true`/**胜利占格**（英雄 position=targetPosition、不清空剩余移动力，已扣走进去的代价）/**失败回城**（英雄回玩家第一城格、行动力=0）`checkVictory` 胜利判定）；悬停守将/杂兵格（英雄可达）→ 刀剑光标 `cursorKind='sword'` + 目标格红色交战高亮；e2e `src/e2e/campaign-battle.spec.ts`（含**败局回归**：dev bridge 弱我强敌 → defend 循环战败 → 返回 → 英雄回玩家第一城格 + 行动力 0，杂兵不被歼）
+- [x] **升级提示接口（2026-08 Task 5，spec §8）**：战斗返回 `create(data.result)` 在 `campaign/resolveBattle` 前后比较参战英雄 `level`——升了 → 弹 `openInfo`「升級！」（含新等级）；与胜利面板**串行**（先升级提示、关闭后再判胜利，避免弹层叠放）；guard 每 create 只弹一次；**技能 2 选 1 界面因技能系统未做不实现**（代码注释标明 hook：未来 skillSlots 递增 → skillOffer 事件 → 2 选 1 UI，见 §16）；e2e `src/e2e/hover-tooltip.spec.ts` 用 dev bridge `grantXp` 注入经验确保升级 → 断言 `levelUpNotice`
 - [x] **胜利面板（2026-08 Task 9）**：`campaign/resolveBattle` 写回后 `outcome==='won'` → 弹层（`openInfo`「胜利！」/「击败孔秀，东岭关告破」+「返回主菜单」按钮 → `fadeAndStart` 回主菜单）；guard 每次 create 只弹一次；弹层期间屏蔽地图输入/结束回合（与 TownPanel 同机制）；explore 模式 `victory` 为 null → `checkVictory` no-op → outcome 恒 null 不触发；e2e `src/e2e/campaign-full.spec.ts`；完整战役结算/奖励画面未做
 - [x] **世界状态持久化（2026-08 世界快照）**：进战斗前把当前 `GameState` 序列化存渲染层模块级 `worldSnapshot`；战斗返回 `create(data)` 检测快照 → 用 `deserializeState` 恢复为 CommandLog 初始态（不 `campaign/start`）→ 再 `campaign/resolveBattle` 写回战斗结果。城池驻军/移兵/英雄位置/回合/资源跨战斗保留；仅会话内（刷新即丢）。e2e `src/e2e/world-snapshot.spec.ts`
 - [x] **战斗往返 sprite 重建（2026-08 问题1 修复 + 回归 e2e）**：`createLayers()` 开头清空 5 个 sprite/label Map（`heroSprites`/`townSprites`/`nodeSprites`/`garrisonLabels`/`neutralLabels`）——scene.start 复用场景实例时旧 GameObject 被 Phaser 销毁、Map 残留死引用 → draw* 复用 no-op → 武将/城池/资源点图标消失；清空后按需重建。`getDebugState` 暴露 `renderedHeroes`（渲染层**存活**英雄 sprite generalId 列表，`filter(s.active)` 过滤死引用——旧 bug 下死对象 key 仍在、仅列 key 会漏检），e2e 断言战斗返回后与 `state.heroes` 一致（`src/e2e/campaign-battle.spec.ts`「问题1 回归」）
@@ -614,7 +616,8 @@ else:            战斗
 ### P0 — 核心缺失
 - [ ] 开局选将（强3选1 + 普3选1）
 - [ ] 技能系统（主动计略 + 被动技能，预设路线，随机2选1；`skillSlots` 计数已预留（Lv1=0、每 3 级 +1），技能池/2选1/施放未做；被动技能当前在武将卡中**仅展示**，效果待技能系统）
-- [ ] 武将升级（经验获取，每级属性增长，每3级解锁技能；2026-08 core 已完成：双锚点成长 deriveStats（低起步→20级锚点）+ growth 经验曲线（xpToNext/maxUnits）+ general/gainXp 升级命令 + 战斗 killedHp 经验结算（1 HP=1 经验，仅战胜）+ battle init 部队数上限截断（maxUnits，战斗测试阵容已升 Lv20 展示）+ **战斗→武将经验接线（2026-08 Task 8 战斗回流：`campaign/resolveBattle` 写回 expGained）**；剩「技能池 + UI」）
+- [ ] 武将升级（经验获取，每级属性增长，每3级解锁技能；2026-08 core 已完成：双锚点成长 deriveStats（低起步→20级锚点）+ growth 经验曲线（xpToNext/maxUnits）+ general/gainXp 升级命令 + 战斗 killedHp 经验结算（1 HP=1 经验，仅战胜）+ battle init 部队数上限截断（maxUnits，战斗测试阵容已升 Lv20 展示）+ **战斗→武将经验接线（2026-08 Task 8 战斗回流：`campaign/resolveBattle` 写回 expGained）**；剩「技能池 + 2选1 UI」见下方升级提示 todo）
+- [ ] **战斗结束升级提示 + 技能 2 选 1 界面（技能系统就绪后）**：升级提示接口已留（2026-08 Task 5——战斗返回 `create(data.result)` resolveBattle 前后比较参战英雄 `level` 弹「升級！」；dev bridge `grantXp` 供回归，e2e `src/e2e/hover-tooltip.spec.ts`）；技能 2 选 1 界面未做——技能系统就绪后在此接 `skillOffer` 事件（skillSlots 递增触发）
 - [x] 资源系统（金/木/石/铁）+ 资源点拾取（2026-08 基础版：宝箱固定值 30金+5木；随机化待 RNG 注入机制）
 - [x] 资源矿（占领后每日产出：木2/石1/铁1，**占位值待平衡**；**中立守军**依赖战斗系统未做）
 - [x] 城池每日收入（基础 = 内政厅等级×10金/天，已做；**驻将政治/魅力加成**依赖武将六维属性未做；**每周预备役部队**依赖军制/招募系统未做）
