@@ -4,6 +4,7 @@ import { gameReducer } from '../core/state/reducer'
 import {
   computeDailyIncome,
   createInitialState,
+  currentHero,
   weekOf,
   type FactionId,
   type GameState,
@@ -19,15 +20,7 @@ import { BgmManager, getBgmManager } from '../audio/BgmManager'
 import { BgmControls } from '../ui/BgmControls'
 import { fadeIn } from '../ui/fade'
 import { SfxManager } from '../audio/SfxManager'
-import {
-  HERO_FACTION,
-  HERO_GENERAL_ID,
-  HERO_START,
-  START_FACTIONS,
-  START_GENERALS,
-  START_TOWNS,
-  TURN_ORDER
-} from '../data/bootstrap'
+import { HERO_STARTS, START_FACTIONS, START_GENERALS, START_TOWNS, TURN_ORDER } from '../data/bootstrap'
 
 /** 势力显示颜色（渲染层专用）：魏红 蜀绿 吴蓝 群紫 */
 const FACTION_COLORS: Record<FactionId, number> = {
@@ -217,9 +210,7 @@ export class AdventureScene extends Phaser.Scene {
       towns: START_TOWNS.map((t) => ({ ...t })),
       map,
       mapSeed: this.seed,
-      heroStart: HERO_START,
-      heroGeneralId: HERO_GENERAL_ID,
-      heroFaction: HERO_FACTION
+      heroStarts: [...HERO_STARTS]
     })
     this.mapKeys = new Set(this.state.map?.hexes.map(hexKey) ?? [])
     this.drawMap()
@@ -407,7 +398,7 @@ export class AdventureScene extends Phaser.Scene {
   private drawFog(): void {
     this.fogGraphics.clear()
     const map = this.state.map
-    const hero = this.state.hero
+    const hero = currentHero(this.state)
     if (!map || !hero) return
     const fog = this.state.visibility[hero.faction] ?? {}
     for (const hex of map.hexes) {
@@ -420,7 +411,7 @@ export class AdventureScene extends Phaser.Scene {
   /** 城池渲染：房屋图标按归属色 tint，叠在 hero 之下；未探索区域的城池不可见 */
   private drawTowns(): void {
     this.townGraphics.clear()
-    const hero = this.state.hero
+    const hero = currentHero(this.state)
     if (!hero) return
     const fog = this.state.visibility[hero.faction] ?? {}
     const seen = new Set<string>()
@@ -456,7 +447,7 @@ export class AdventureScene extends Phaser.Scene {
   private drawNodes(): void {
     this.nodeGraphics.clear()
     const map = this.state.map
-    const hero = this.state.hero
+    const hero = currentHero(this.state)
     if (!map || !hero) return
     const fog = this.state.visibility[hero.faction] ?? {}
     const seen = new Set<string>()
@@ -505,8 +496,9 @@ export class AdventureScene extends Phaser.Scene {
   /** 顶部 HUD：金/木/石/铁 图标+数值(+每日产出) + 第X周第X天（视口固定；流式布局自适应列宽） */
   private updateHud(): void {
     const state = this.state
-    if (!state.hero) return
-    const faction = state.hero.faction
+    const hero = currentHero(state)
+    if (!hero) return
+    const faction = hero.faction
     const r = state.resources[faction]
     // 当前势力的每日产出汇总（城池 + 已占矿）
     const income = computeDailyIncome(state, faction)
@@ -570,7 +562,7 @@ export class AdventureScene extends Phaser.Scene {
   /** 悬停格路径高亮（淡黄）；不再高亮可达范围 */
   private drawOverlay(): void {
     this.overlayGraphics.clear()
-    const hero = this.state.hero
+    const hero = currentHero(this.state)
     if (!hero) return
     if (this.hoverHex && this.reachable.has(hexKey(this.hoverHex))) {
       const path = findPath(hero.position, this.hoverHex, this.makeMapCosts())
@@ -582,7 +574,7 @@ export class AdventureScene extends Phaser.Scene {
 
   /** hero 精灵对齐 core 坐标 */
   private syncHeroSprite(): void {
-    const hero = this.state.hero
+    const hero = currentHero(this.state)
     if (!hero) return
     const c = this.layout.hexToPixel(hero.position)
     this.heroSprite.setPosition(c.x, c.y)
@@ -632,7 +624,7 @@ export class AdventureScene extends Phaser.Scene {
   /** 地形 × 迷雾 的寻路代价（只允许走进当前可见格） */
   private makeMapCosts(): MapMovementCost {
     const map = this.state.map
-    const hero = this.state.hero
+    const hero = currentHero(this.state)
     if (!map || !hero) throw new Error('map/hero 未就绪')
     return new MapMovementCost({
       terrainAt: (h) => map.terrain[hexKey(h)] ?? 'plain',
@@ -641,7 +633,7 @@ export class AdventureScene extends Phaser.Scene {
   }
 
   private computeReachable(): void {
-    const hero = this.state.hero
+    const hero = currentHero(this.state)
     if (!hero || !this.state.map) {
       this.reachable = new Set()
       return
@@ -710,7 +702,7 @@ export class AdventureScene extends Phaser.Scene {
     this.hideNodeTooltip()
     if (!hex) return
     const state = this.state
-    const hero = state.hero
+    const hero = currentHero(state)
     const map = state.map
     if (!hero || !map) return
     const k = hexKey(hex)
@@ -748,7 +740,7 @@ export class AdventureScene extends Phaser.Scene {
   private handleClick(p: Phaser.Input.Pointer): void {
     const world = this.cameras.main.getWorldPoint(p.x, p.y)
     const hex = this.layout.pixelToHex(world.x, world.y)
-    const hero = this.state.hero
+    const hero = currentHero(this.state)
     // 点击城池格：显示城池详情（不触发移动）
     const town = this.state.towns.find((t) => hexKey(t.position) === hexKey(hex))
     if (town) {
@@ -795,9 +787,9 @@ export class AdventureScene extends Phaser.Scene {
     try {
       for (let i = 1; i < path.length; i++) {
         const to = path[i]
-        const before = this.state.hero?.position
+        const before = currentHero(this.state)?.position
         this.store.dispatch('unit/move', { to })
-        const after = this.state.hero?.position
+        const after = currentHero(this.state)?.position
         // reducer 拒绝（移动力耗尽 / 地形/迷雾校验不过）则停止
         if (!before || !after || hexKey(after) === hexKey(before)) break
         if (this.animationMs > 0) {
@@ -835,7 +827,8 @@ export class AdventureScene extends Phaser.Scene {
     // preload 加载图标期间 create() 尚未运行，store 未建：返回未就绪，让 e2e waitReady 轮询等待
     if (!this.store) return { ready: false }
     const state = this.state
-    const fog = state.hero ? (state.visibility[state.hero.faction] ?? {}) : {}
+    const hero = currentHero(state)
+    const fog = hero ? (state.visibility[hero.faction] ?? {}) : {}
     const counts = { explored: 0, unexplored: 0 }
     for (const v of Object.values(fog)) counts[v]++
     return {
@@ -854,16 +847,16 @@ export class AdventureScene extends Phaser.Scene {
       turn: state.turn,
       week: weekOf(state.turn),
       currentFaction: state.currentFaction,
-      hero: state.hero
+      hero: hero
         ? {
-            position: state.hero.position,
-            movementLeft: state.hero.movementLeft,
-            maxMovement: state.hero.maxMovement
+            position: hero.position,
+            movementLeft: hero.movementLeft,
+            maxMovement: hero.maxMovement
           }
         : null,
-      resources: state.hero ? state.resources[state.hero.faction] : null,
+      resources: hero ? state.resources[hero.faction] : null,
       // HUD 显示的每日产出汇总（当前势力；城池+已占矿）
-      dailyIncome: state.hero ? computeDailyIncome(state, state.hero.faction) : null,
+      dailyIncome: hero ? computeDailyIncome(state, hero.faction) : null,
       // HUD 流式布局：每个资源列的图标中心 x / 文本左沿 x（e2e 断言图标与文本不重叠）
       hudLayout: this.hudResourceCols.map((col) => ({
         resource: col.resource,

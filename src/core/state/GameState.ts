@@ -8,6 +8,7 @@ import type { Visibility } from '../fog/Fog'
 import type { MapData } from '../map/MapGen'
 import type { Axial } from '../hex/HexGrid'
 import { completeResources, isMine, RESOURCE_NODE_DEFS } from '../../data/resourceNode'
+import type { UnitDefId } from '../../data/units'
 
 /** 4 大势力：魏 / 蜀 / 吴 / 群 */
 export type FactionId = 'wei' | 'shu' | 'wu' | 'qun'
@@ -50,6 +51,8 @@ export interface General {
   skillSlots: number
   /** 已生效被动技能（展示） */
   passives: { name: string; level: number }[]
+  /** 武将携带的部队（军队本体，跟人走；战斗时从这读，≤7 支部队） */
+  army: { defId: UnitDefId; count: number }[]
 }
 
 /** 城池（P0 补充建筑/驻军/等级解锁） */
@@ -60,8 +63,30 @@ export interface Town {
   level: number
   /** 所在地图格 */
   position: Axial
-  /** 驻城武将，决定政治/魅力产出 */
+  /** 驻城武将，决定政治/魅力产出；同一时刻一个武将只有一种状态（地图移动 or 城池） */
   garrisonGeneralId: string | null
+  /** 驻军槽（≤7 支部队；无驻将时的城防部队） */
+  garrison: { defId: UnitDefId; count: number }[]
+  /** 访问英雄（军队也参与防御） */
+  visitorGeneralId: string | null
+}
+
+/** 守将驻点状态（战役：敌方武将把守的要塞） */
+export interface GarrisonState {
+  id: string
+  generalId: string
+  level: number
+  position: Axial
+  units: { defId: UnitDefId; count: number }[]
+  alive: boolean
+}
+
+/** 中立杂兵状态（战役：地图上可主动攻击的野怪） */
+export interface NeutralState {
+  id: string
+  position: Axial
+  units: { defId: UnitDefId; count: number }[]
+  defeated: boolean
 }
 
 /** 单个资源点状态：占领方 / 是否已拾取 */
@@ -70,7 +95,7 @@ export interface NodeState {
   visited: boolean
 }
 
-/** 大地图上的英雄（P0 单人 hero，后续可扩为多名） */
+/** 大地图上的英雄（每武将一英雄；MVP 1 主英雄 + 2 副在外并行） */
 export interface HeroUnit {
   generalId: string
   faction: FactionId
@@ -97,8 +122,20 @@ export interface GameState {
   map: MapData | null
   /** 地图生成种子（确定性重放） */
   mapSeed: number
-  /** 当前英雄；setup 前为 null */
-  hero: HeroUnit | null
+  /** 多英雄（每武将一英雄；MVP 单英雄），setup 前为空数组 */
+  heroes: HeroUnit[]
+  /** 当前操作英雄 id（渲染高亮/移动目标/视野基准）；无选中时回退到 heroes[0] */
+  selectedHeroId: string | null
+  /** 战役 id（非战役模式为 null） */
+  campaignId: string | null
+  /** 守将驻点状态 */
+  garrisons: GarrisonState[]
+  /** 中立杂兵状态 */
+  neutrals: NeutralState[]
+  /** 胜利条件（配置） */
+  victory: { kind: 'defeatGarrison'; targetId: string } | null
+  /** 战役结局（达成胜利 → 'won'） */
+  outcome: 'won' | null
   /** 按势力的战争迷雾（两态：explored 已探索永久可见 / unexplored 未探索；hexKey → 状态） */
   visibility: Record<FactionId, Record<string, Visibility>>
   /** 资源点状态（hexKey → 占领方/已拾取）；setup 时按 map.nodes 初始化 */
@@ -117,10 +154,28 @@ export function createInitialState(): GameState {
     towns: [],
     map: null,
     mapSeed: 0,
-    hero: null,
+    heroes: [],
+    selectedHeroId: null,
+    campaignId: null,
+    garrisons: [],
+    neutrals: [],
+    victory: null,
+    outcome: null,
     visibility: { wei: {}, shu: {}, wu: {}, qun: {} },
     nodeStates: {}
   }
+}
+
+/**
+ * 当前操作英雄（选中的英雄；无选中/找不到时回退到数组第一个，无英雄返回 null）。
+ * 渲染层高亮、移动目标、视野重算都以它为基准；MVP 单英雄 → 退化为原单英雄语义。
+ */
+export function currentHero(state: GameState): HeroUnit | null {
+  if (state.selectedHeroId) {
+    const sel = state.heroes.find((h) => h.generalId === state.selectedHeroId)
+    if (sel) return sel
+  }
+  return state.heroes[0] ?? null
 }
 
 /** 当天所在周：第 1~7 天为第 1 周，8~14 为第 2 周… */

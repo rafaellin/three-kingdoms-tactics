@@ -5,15 +5,7 @@
 import type { SetupPayload } from '../state/reducer'
 import type { FactionId } from '../state/GameState'
 import { makePlainMap } from './maps'
-import {
-  HERO_FACTION,
-  HERO_GENERAL_ID,
-  HERO_START,
-  START_FACTIONS,
-  START_GENERALS,
-  START_TOWNS,
-  TURN_ORDER
-} from '../../data/bootstrap'
+import { HERO_STARTS, START_FACTIONS, START_GENERALS, START_TOWNS, TURN_ORDER } from '../../data/bootstrap'
 
 /** 标准开局：魏蜀吴群 + 蜀主将（关羽）在 (0,0)，半径 3 全平地地图 */
 export function makeSetup(overrides: Partial<SetupPayload> = {}): SetupPayload {
@@ -24,9 +16,7 @@ export function makeSetup(overrides: Partial<SetupPayload> = {}): SetupPayload {
     towns: START_TOWNS.map((t) => ({ ...t })),
     map: makePlainMap(3),
     mapSeed: 1,
-    heroStart: HERO_START,
-    heroGeneralId: HERO_GENERAL_ID,
-    heroFaction: HERO_FACTION,
+    heroStarts: HERO_STARTS.map((h) => ({ generalId: h.generalId, position: { ...h.position } })),
     ...overrides
   }
 }

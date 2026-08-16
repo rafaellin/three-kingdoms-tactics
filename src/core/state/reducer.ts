@@ -18,6 +18,7 @@ import {
   addResources,
   applyDailyIncome,
   canAfford,
+  currentHero,
   subResources,
   ZERO_RESOURCES,
   type FactionId,
@@ -35,9 +36,12 @@ export interface SetupPayload {
   towns: Town[]
   map: MapData
   mapSeed: number
-  heroStart: Axial
-  heroGeneralId: string
-  heroFaction: FactionId
+  /** 多英雄初始位置（每武将一英雄；MVP 单英雄） */
+  heroStarts: { generalId: string; position: Axial }[]
+  /** 兼容旧单英雄 payload（旧 bootstrap/测试仍可传）；新代码统一用 heroStarts */
+  heroStart?: Axial
+  heroGeneralId?: string
+  heroFaction?: FactionId
 }
 
 export interface FactionResourcesPayload {
@@ -78,14 +82,26 @@ function setup(state: GameState, payload: SetupPayload): GameState {
     qun: { ...ZERO_RESOURCES }
   }
   for (const f of payload.factions) resources[f.id] = { ...f.resources }
-  const hero: HeroUnit = {
-    generalId: payload.heroGeneralId,
-    faction: payload.heroFaction,
-    position: { ...payload.heroStart },
-    movementLeft: BASE_MAX_MOVEMENT,
-    maxMovement: BASE_MAX_MOVEMENT,
-    sightRange: BASE_SIGHT_RANGE
-  }
+  // 多英雄：优先 payload.heroStarts；缺省回退到旧单英雄字段（兼容旧 payload）
+  const heroStarts =
+    payload.heroStarts.length > 0
+      ? payload.heroStarts
+      : payload.heroGeneralId
+        ? [{ generalId: payload.heroGeneralId, position: payload.heroStart ?? { q: 0, r: 0 } }]
+        : []
+  const heroes: HeroUnit[] = heroStarts.map((hs) => {
+    const general = payload.generals.find((g) => g.id === hs.generalId)
+    return {
+      generalId: hs.generalId,
+      faction: general?.faction ?? payload.heroFaction ?? (payload.turnOrder[0] as FactionId),
+      position: { ...hs.position },
+      movementLeft: BASE_MAX_MOVEMENT,
+      maxMovement: BASE_MAX_MOVEMENT,
+      sightRange: BASE_SIGHT_RANGE
+    }
+  })
+  const selectedHeroId = heroes[0]?.generalId ?? null
+  const selectedHero = heroes[0] ?? null
   // 初始化资源点状态：地图上每个资源点 → 无主、未拾取
   const nodeStates: Record<string, { owner: FactionId | null; visited: boolean }> = {}
   for (const hex of Object.keys(payload.map.nodes ?? {})) {
@@ -97,33 +113,44 @@ function setup(state: GameState, payload: SetupPayload): GameState {
     currentFaction: (payload.turnOrder[0] as FactionId | undefined) ?? null,
     turnOrder: [...payload.turnOrder],
     resources,
-    generals: payload.generals.map((g) => ({ ...g })),
-    towns: payload.towns.map((t) => ({ ...t })),
+    generals: payload.generals.map((g) => ({ ...g, army: g.army ?? [] })),
+    towns: payload.towns.map((t) => ({ ...t, garrison: t.garrison ?? [], visitorGeneralId: t.visitorGeneralId ?? null })),
     map: payload.map,
     mapSeed: payload.mapSeed,
-    hero,
-    visibility: { ...state.visibility, [hero.faction]: computeVisionFor(payload.map, hero, {}) },
-    nodeStates
+    heroes,
+    selectedHeroId,
+    visibility: selectedHero
+      ? { ...state.visibility, [selectedHero.faction]: computeVisionFor(payload.map, selectedHero, {}) }
+      : state.visibility,
+    nodeStates,
+    // 战役/守将/中立/胜负：MVP 空（非战役模式）
+    campaignId: null,
+    garrisons: [],
+    neutrals: [],
+    victory: null,
+    outcome: null
   }
 }
 
-/** 轮到下一势力；一圈轮完则天数 +1；轮到英雄所属势力时重置其移动力；天数 +1 触发每日结算 */
+/** 轮到下一势力；一圈轮完则天数 +1；轮到当前操作英雄所属势力时重置其移动力；天数 +1 触发每日结算 */
 function advanceTurn(state: GameState): GameState {
   const order = state.turnOrder
   if (order.length === 0) return state
   const idx = state.currentFaction === null ? -1 : order.indexOf(state.currentFaction)
   const next = (idx + 1) % order.length
-  let hero = state.hero
+  const hero = currentHero(state)
   const nextFaction = order[next] as FactionId
-  if (hero && hero.faction === nextFaction) {
-    hero = { ...hero, movementLeft: hero.maxMovement }
-  }
+  // 只重置当前操作英雄（MVP 单英雄 → 与原单英雄语义一致）
+  const heroes =
+    hero && hero.faction === nextFaction
+      ? state.heroes.map((h) => (h.generalId === hero.generalId ? { ...h, movementLeft: h.maxMovement } : h))
+      : state.heroes
   const oldTurn = state.turn
   const newTurn = next === 0 ? oldTurn + 1 : oldTurn
   let nextState: GameState = {
     ...state,
     currentFaction: nextFaction,
-    hero,
+    heroes,
     turn: newTurn
   }
   // 天数 +1（一圈轮完回第一势力）：每日结算（城池产金 + 矿产出）
@@ -192,7 +219,7 @@ function isNeighbor(a: Axial, b: Axial): boolean {
  * 6. 抵达含资源点的格：宝箱一次性拾取；无主矿被占领
  */
 function moveHero(state: GameState, { to }: MovePayload): GameState {
-  const hero = state.hero
+  const hero = currentHero(state)
   const map = state.map
   if (!hero || !map) return state
   if (hexKey(hero.position) === hexKey(to)) return state
@@ -209,7 +236,7 @@ function moveHero(state: GameState, { to }: MovePayload): GameState {
   }
   let next: GameState = {
     ...state,
-    hero: moved,
+    heroes: state.heroes.map((h) => (h.generalId === hero.generalId ? moved : h)),
     visibility: { ...state.visibility, [hero.faction]: computeVisionFor(map, moved, fog) }
   }
   // 资源点拾取 / 占领

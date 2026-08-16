@@ -5,6 +5,7 @@ import {
   computeDailyIncome,
   canAfford,
   createInitialState,
+  currentHero,
   deserializeState,
   serializeState,
   weekOf,
@@ -38,9 +39,31 @@ describe('game/setup', () => {
     expect(s.towns).toHaveLength(1)
     expect(s.towns[0]?.owner).toBe('shu')
     expect(s.map?.hexes).toHaveLength(37)
-    expect(s.hero?.position).toEqual({ q: 0, r: 0 })
-    expect(s.hero?.movementLeft).toBe(6)
+    expect(currentHero(s)?.position).toEqual({ q: 0, r: 0 })
+    expect(currentHero(s)?.movementLeft).toBe(6)
     expect(s.visibility.shu).not.toEqual({})
+  })
+
+  test('多英雄：GameState.heroes 存在，general 带 army，town 带双槽', () => {
+    const s = makeStore().getState()
+    expect(s.heroes).toHaveLength(1)
+    expect(s.selectedHeroId).toBe('g-guan')
+    expect(s.generals[0]?.army).toBeDefined()
+    expect(s.towns[0]?.garrison).toBeDefined()
+    expect(s.towns[0]?.visitorGeneralId).toBeNull()
+  })
+
+  test('currentHero：返回选中英雄，无选中回退数组第一个，无英雄返回 null', () => {
+    // setup 后 selectedHeroId = 第一个英雄
+    const s = makeStore().getState()
+    expect(currentHero(s)?.generalId).toBe('g-guan')
+    // 无选中 → 回退 heroes[0]
+    const s2 = makeStore().getState()
+    expect(currentHero({ ...s2, selectedHeroId: null })?.generalId).toBe('g-guan')
+    // 选中 id 找不到 → 回退 heroes[0]
+    expect(currentHero({ ...s2, selectedHeroId: 'g-nonexist' })?.generalId).toBe('g-guan')
+    // 空英雄 → null
+    expect(currentHero(createInitialState())).toBeNull()
   })
 })
 

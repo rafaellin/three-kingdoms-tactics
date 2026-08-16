@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'vitest'
 import { CommandLog } from '../events/CommandLog'
 import { hexDistance } from '../hex/HexGrid'
-import { createInitialState, type GameState, type HeroUnit } from './GameState'
+import { createInitialState, currentHero, type GameState, type HeroUnit } from './GameState'
 import { gameReducer } from './reducer'
 import { makeSetup } from '../testing/setup'
 import { makePlainMap, key } from '../testing/maps'
@@ -15,18 +15,21 @@ function makeStore(overrides: Partial<Parameters<typeof makeSetup>[0]> = {}): Co
 
 const fogOf = (s: GameState, hero: HeroUnit): Record<string, string> => s.visibility[hero.faction]
 
+/** 当前操作英雄（多英雄后读 selected；MVP 单英雄退化为原 s.hero） */
+const heroOf = (s: GameState): HeroUnit | null => currentHero(s)
+
 describe('game/setup 初始化英雄与视野', () => {
   test('hero 就位 (0,0)，移动力满，半径3地图全部已探索', () => {
     const s = makeStore().getState()
-    expect(s.hero?.position).toEqual({ q: 0, r: 0 })
-    expect(s.hero?.movementLeft).toBe(6)
-    expect(s.hero?.sightRange).toBe(3)
-    expect(Object.values(fogOf(s, s.hero as HeroUnit)).every((v) => v === 'explored')).toBe(true)
+    expect(heroOf(s)?.position).toEqual({ q: 0, r: 0 })
+    expect(heroOf(s)?.movementLeft).toBe(6)
+    expect(heroOf(s)?.sightRange).toBe(3)
+    expect(Object.values(fogOf(s, heroOf(s) as HeroUnit)).every((v) => v === 'explored')).toBe(true)
   })
 
   test('半径5地图：视野仅覆盖起点周围 3 格（37 已探索）', () => {
     const s = makeStore({ map: makePlainMap(5) }).getState()
-    const fog = fogOf(s, s.hero as HeroUnit)
+    const fog = fogOf(s, heroOf(s) as HeroUnit)
     const explored = Object.values(fog).filter((v) => v === 'explored').length
     expect(explored).toBe(37)
   })
@@ -39,7 +42,7 @@ describe('unit/move 单步移动', () => {
     store.dispatch('unit/move', { to: { q: 2, r: 0 } })
     store.dispatch('unit/move', { to: { q: 3, r: 0 } })
     const s = store.getState()
-    const hero = s.hero as HeroUnit
+    const hero = heroOf(s) as HeroUnit
     expect(hero.position).toEqual({ q: 3, r: 0 })
     expect(hero.movementLeft).toBe(3) // 3 × 平地 1
     // 前方新格由未探索揭开，曾见格永久保持，远未见过仍黑
@@ -54,21 +57,21 @@ describe('unit/move 单步移动', () => {
     const store = makeStore({ map: makePlainMap(3, { [key({ q: 1, r: 0 })]: 'forest' }) })
     store.dispatch('unit/move', { to: { q: 1, r: 0 } })
     const s = store.getState()
-    expect(s.hero?.position).toEqual({ q: 1, r: 0 })
-    expect(s.hero?.movementLeft).toBe(6 - 1.5)
+    expect(heroOf(s)?.position).toEqual({ q: 1, r: 0 })
+    expect(heroOf(s)?.movementLeft).toBe(6 - 1.5)
   })
 
   test('非邻居被拒：距离 2 不能一步到达', () => {
     const store = makeStore()
     store.dispatch('unit/move', { to: { q: 2, r: 0 } })
-    expect(store.getState().hero?.position).toEqual({ q: 0, r: 0 })
-    expect(store.getState().hero?.movementLeft).toBe(6)
+    expect(heroOf(store.getState())?.position).toEqual({ q: 0, r: 0 })
+    expect(heroOf(store.getState())?.movementLeft).toBe(6)
   })
 
   test('不可通行地形（山脉）被拒', () => {
     const store = makeStore({ map: makePlainMap(3, { [key({ q: 1, r: 0 })]: 'mountain' }) })
     store.dispatch('unit/move', { to: { q: 1, r: 0 } })
-    expect(store.getState().hero?.position).toEqual({ q: 0, r: 0 })
+    expect(heroOf(store.getState())?.position).toEqual({ q: 0, r: 0 })
   })
 
   test('移动力不足被拒：连续走过沼泽消耗后无法再进', () => {
@@ -82,41 +85,41 @@ describe('unit/move 单步移动', () => {
     store.dispatch('unit/move', { to: { q: 2, r: 0 } })
     store.dispatch('unit/move', { to: { q: 3, r: 0 } })
     const s = store.getState()
-    expect(s.hero?.position).toEqual({ q: 3, r: 0 })
-    expect(s.hero?.movementLeft).toBe(0)
+    expect(heroOf(s)?.position).toEqual({ q: 3, r: 0 })
+    expect(heroOf(s)?.movementLeft).toBe(0)
     // 移动到 (4,0)：仍是邻居，但 movementLeft 0 < 沼泽 2 → 被拒
     store.dispatch('unit/move', { to: { q: 4, r: 0 } })
-    expect(store.getState().hero?.position).toEqual({ q: 3, r: 0 })
+    expect(heroOf(store.getState())?.position).toEqual({ q: 3, r: 0 })
   })
 
   test('未探索格被拒（防御性校验：fog 无记录时邻居也不可移动）', () => {
     const crafted: GameState = {
       ...createInitialState(),
       map: makePlainMap(3),
-      hero: {
-        generalId: 'g', faction: 'shu', position: { q: 0, r: 0 },
-        movementLeft: 6, maxMovement: 6, sightRange: 3
-      },
+      heroes: [
+        { generalId: 'g', faction: 'shu', position: { q: 0, r: 0 }, movementLeft: 6, maxMovement: 6, sightRange: 3 }
+      ],
+      selectedHeroId: 'g',
       visibility: { wei: {}, shu: {}, wu: {}, qun: {} }
     }
     const store = new CommandLog<GameState>(crafted, gameReducer)
     store.dispatch('unit/move', { to: { q: 1, r: 0 } })
-    expect(store.getState().hero?.position).toEqual({ q: 0, r: 0 })
+    expect(heroOf(store.getState())?.position).toEqual({ q: 0, r: 0 })
   })
 
   test('已探索（explored）格可移入：永久可见即通行', () => {
     const crafted: GameState = {
       ...createInitialState(),
       map: makePlainMap(3),
-      hero: {
-        generalId: 'g', faction: 'shu', position: { q: 0, r: 0 },
-        movementLeft: 6, maxMovement: 6, sightRange: 3
-      },
+      heroes: [
+        { generalId: 'g', faction: 'shu', position: { q: 0, r: 0 }, movementLeft: 6, maxMovement: 6, sightRange: 3 }
+      ],
+      selectedHeroId: 'g',
       visibility: { wei: {}, shu: { [key({ q: 1, r: 0 })]: 'explored' }, wu: {}, qun: {} }
     }
     const store = new CommandLog<GameState>(crafted, gameReducer)
     store.dispatch('unit/move', { to: { q: 1, r: 0 } })
-    expect(store.getState().hero?.position).toEqual({ q: 1, r: 0 })
+    expect(heroOf(store.getState())?.position).toEqual({ q: 1, r: 0 })
   })
 })
 
@@ -126,12 +129,12 @@ describe('回合推进重置移动力', () => {
     store.dispatch('unit/move', { to: { q: 1, r: 0 } })
     store.dispatch('unit/move', { to: { q: 2, r: 0 } })
     store.dispatch('unit/move', { to: { q: 3, r: 0 } })
-    expect(store.getState().hero?.movementLeft).toBe(3)
+    expect(heroOf(store.getState())?.movementLeft).toBe(3)
     // wei → shu：轮到蜀，移动力重置
     store.dispatch('game/advanceTurn')
     const s = store.getState()
     expect(s.currentFaction).toBe('shu')
-    expect(s.hero?.movementLeft).toBe(6)
+    expect(heroOf(s)?.movementLeft).toBe(6)
   })
 })
 
