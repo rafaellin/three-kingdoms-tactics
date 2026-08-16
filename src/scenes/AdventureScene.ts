@@ -351,6 +351,14 @@ export class AdventureScene extends Phaser.Scene {
   // ---------- 渲染 ----------
 
   private createLayers(): void {
+    // 场景实例被 scene.start 复用（进战斗/返回/重进）：上一轮 create 创建的 GameObject 已被
+    // Phaser 销毁，但 sprite/label Map 仍持有旧引用（draw* 复用死引用 → 渲染 no-op → 图标消失）。
+    // 必须全部清空，让 drawTowns/drawNodes/drawGarrisons/drawNeutrals/syncHeroSprites 按需重建。
+    this.heroSprites.clear()
+    this.townSprites.clear()
+    this.nodeSprites.clear()
+    this.garrisonLabels.clear()
+    this.neutralLabels.clear()
     // 固定 UI 相机：叠加在主相机之上（数组靠后 → 后渲染 → 置顶）。
     // 主相机只渲染大地图；HUD/工具栏由 UI 相机渲染，滚轮缩放不再波及它们。
     // 注：setScrollFactor(0) 只豁免相机的滚动平移、不免除缩放，故必须走双相机。
@@ -832,18 +840,25 @@ export class AdventureScene extends Phaser.Scene {
     return new MapMovementCost({
       terrainAt: (h) => map.terrain[hexKey(h)] ?? 'plain',
       fogAt: (h) => this.state.visibility[hero.playerId]?.[hexKey(h)],
-      // 窄路：存活守将 / 未歼灭杂兵 占据格不可通行（点击其格触发战斗，Task 8 战斗回流）；
-      // 守将被歼 / 杂兵被歼后该格自动恢复可通行
+      // 窄路：存活守将 / 未歼灭杂兵 / 其他英雄占据格 不可通行（点击守将/杂兵格触发战斗，Task 8 战斗回流）；
+      // 守将被歼 / 杂兵被歼 / 英雄移走 后该格自动恢复可通行
       garrisonAt: (h) => this.isBlockedHex(h)
     })
   }
 
-  /** 不可通行格：存活守将驻点（窄路关卡阻塞）+ 未歼灭中立杂兵（路径不穿过；点击其格触发战斗，Task 8） */
+  /**
+   * 不可通行格：存活守将驻点（窄路关卡阻塞）+ 未歼灭中立杂兵（路径不穿过；点击其格触发战斗，Task 8）
+   * + 其他英雄占据格（问题2：不能重叠/穿过，含己方英雄——与 reducer moveHeroTo 的 overlap 阻挡互补，
+   *   寻路不规划穿过被占格）。
+   */
   private isBlockedHex(h: Axial): boolean {
     const k = hexKey(h)
+    const hero = currentHero(this.state)
     return (
       this.state.garrisons.some((g) => g.alive && hexKey(g.position) === k) ||
-      this.state.neutrals.some((n) => !n.defeated && hexKey(n.position) === k)
+      this.state.neutrals.some((n) => !n.defeated && hexKey(n.position) === k) ||
+      (hero !== null &&
+        this.state.heroes.some((oh) => oh.generalId !== hero.generalId && hexKey(oh.position) === k))
     )
   }
 

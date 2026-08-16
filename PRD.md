@@ -523,9 +523,9 @@ else:            战斗
 
 ### 战役模式（东岭关 · 千里走单骑）
 - [x] 战役配置 `src/data/campaigns.ts`：`CAMPAIGNS['dongling']`（手工窄路地图 / 城池 / 3 我方武将（关羽/周仓/孙乾 Lv5 带兵）/ 英雄出生点 / 守将孔秀 / 2 组中立杂兵 / 胜利条件=击败孔秀）
-- [x] 战役启动 `campaign/start`（mode=campaign 放守将+胜利；mode=explore 不放守将自由探索）；多英雄渲染（每武将一英雄圆点，选中金点+白描边）
+- [x] 战役启动 `campaign/start`（mode=campaign 放守将+胜利、完整玩家序列 [p1,ai1]；mode=explore 不放守将自由探索、**单玩家 [p1]**——Spec §3：只保留 human 玩家，AI 不参与轮转）；多英雄渲染（每武将一英雄圆点，选中金点+白描边）
 - [x] 守将渲染（红城寨格 + 金色旗标 + 名字标签）；杂兵渲染（深绿野怪格 + 中央兵力数）；被歼/被灭后从地图移除
-- [x] 窄路关卡阻塞：存活守将格不可通行（`makeMapCosts` garrisonAt + reducer `moveHeroTo` 拦存活守将格）；杂兵格渲染层阻塞、**reducer 不阻塞**——杂兵战斗由「点击占据格」触发而非移动进入（Task 8 决策，见下方战斗回流）
+- [x] 窄路关卡阻塞：存活守将格不可通行（`makeMapCosts` garrisonAt + reducer `moveHeroTo` 拦存活守将格）；**其他英雄占据格不可通行**（渲染层 `isBlockedHex` 拦其他英雄格——寻路不规划穿过被占格，与 reducer `moveHeroTo` 的 overlap 阻挡互补，含己方英雄）；杂兵格渲染层阻塞、**reducer 不阻塞**——杂兵战斗由「点击占据格」触发而非移动进入（Task 8 决策，见下方战斗回流）
 - [x] 城池界面 TownPanel（驻军/驻城/访问 + 移兵/驻守/换将/出城）
 - [x] **战斗回流（2026-08 Task 8）**：点存活守将/未歼灭杂兵格 → 构建双方 `BattleArmyConfig`（攻方=当前英雄 army+武将属性；守将=units+`GENERAL_BASES`+`deriveStats`；杂兵=units 无武将「野怪」）→ `scene.start('Battle', { enter: { mode, campaignId, heroId, garrisonId/neutralId, player, enemy, grid } })`；BattleScene `create(data.enter)` 用外部阵容开局（无 enter 仍走战斗测试固定阵容）；结算后「返回主菜单」按钮若带回流上下文 → 回 Adventure 携带 `BattleResult`；AdventureScene `create(data.result)` → `campaign/resolveBattle` 写回（剩余兵力/经验 `general/gainXp`/守将 `alive=false`/杂兵 `defeated=true`/`checkVictory` 胜利判定）；e2e `src/e2e/campaign-battle.spec.ts`
 - [x] **胜利面板（2026-08 Task 9）**：`campaign/resolveBattle` 写回后 `outcome==='won'` → 弹层（`openInfo`「胜利！」/「击败孔秀，东岭关告破」+「返回主菜单」按钮 → `fadeAndStart` 回主菜单）；guard 每次 create 只弹一次；弹层期间屏蔽地图输入/结束回合（与 TownPanel 同机制）；explore 模式 `victory` 为 null → `checkVictory` no-op → outcome 恒 null 不触发；e2e `src/e2e/campaign-full.spec.ts`；完整战役结算/奖励画面未做

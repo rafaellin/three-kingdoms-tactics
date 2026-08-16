@@ -198,17 +198,21 @@ function setup(state: GameState, payload: SetupPayload): GameState {
  */
 function campaignStart(state: GameState, payload: CampaignStartPayload): GameState {
   const camp = payload.campaign
-  // 资源/迷雾按战役 players 初始化（key = PlayerId；AI 玩家无沙盒起始资源 → 0）
+  // 探索模式 = 单人（Spec §3）：只保留 human 玩家（东岭关即 [p1]），AI 不参与回合轮转；
+  // 战役模式 = 完整玩家序列（东岭关 [p1, ai1]）。
+  const players =
+    payload.mode === 'explore' ? camp.players.filter((p) => p.kind === 'human') : camp.players
+  // 资源/迷雾按 players 初始化（key = PlayerId；AI 玩家无沙盒起始资源 → 0）
   const resources: Record<string, Resources> = {}
   const visibility: Record<string, Record<string, Visibility>> = {}
-  for (const player of camp.players) {
+  for (const player of players) {
     resources[player.id] = { ...(START_RESOURCES[player.id] ?? ZERO_RESOURCES) }
     visibility[player.id] = {}
   }
   // 英雄：每武将一英雄，从 heroStarts 构造（移动力/视野基准与 setup 一致），playerId 取自配置
   const heroes: HeroUnit[] = camp.heroStarts.map((hs) => {
     const general = camp.startGenerals.find((g) => g.id === hs.generalId)
-    const player = camp.players.find((p) => p.id === hs.playerId)
+    const player = players.find((p) => p.id === hs.playerId)
     return {
       generalId: hs.generalId,
       playerId: hs.playerId,
@@ -229,8 +233,8 @@ function campaignStart(state: GameState, payload: CampaignStartPayload): GameSta
   return {
     ...state,
     turn: 1,
-    players: camp.players.map((p) => ({ ...p })),
-    currentPlayerId: camp.players[0]?.id ?? null,
+    players: players.map((p) => ({ ...p })),
+    currentPlayerId: players[0]?.id ?? null,
     resources,
     generals: camp.startGenerals.map((g) => ({ ...g, army: (g.army ?? []).map((u) => ({ ...u })) })),
     towns: camp.startTowns.map((t) => ({

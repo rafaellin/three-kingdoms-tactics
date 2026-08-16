@@ -43,6 +43,9 @@ describe('campaign/start 战役启动', () => {
     expect(e.garrisons).toHaveLength(0)
     expect(e.victory).toBeNull()
     expect(e.heroes).toHaveLength(3)
+    // 探索模式 = 单人（Spec §3）：players 只保留 human [p1]，AI 不参与回合轮转
+    expect(e.players).toEqual([{ id: 'p1', faction: 'shu', kind: 'human' }])
+    expect(e.currentPlayerId).toBe('p1')
   })
 
   test('campaign/start 深拷贝：修改状态不改动共享战役配置', () => {
@@ -106,8 +109,8 @@ describe('game/advanceTurn 探索模式 + system 结算', () => {
     expect(s.currentPlayerId).toBe('p1')
     expect(s.turn).toBe(1)
     expect(s.heroes.find((h) => h.generalId === 'g-guan')!.movementLeft).toBe(5)
-    // 结束回合 → 回 p1（campaign/start 探索模式 players=[p1,ai1]，AI 自动 no-op 后跨圈进 system）
-    // + 下一天 + ALL 英雄行动力回满；单玩家 [p1] 路径见下方「单玩家」测试
+    // 结束回合 → 回 p1（campaign/start 探索模式 = 单玩家 [p1]，Spec §3；一圈即跨圈进 system）
+    // + 下一天 + ALL 英雄行动力回满（与下方「单玩家」路径一致）
     store.dispatch('game/advanceTurn')
     s = store.getState()
     expect(s.currentPlayerId).toBe('p1')
