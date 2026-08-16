@@ -26,6 +26,15 @@ export interface Resources {
 
 export const ZERO_RESOURCES: Resources = { gold: 0, wood: 0, stone: 0, iron: 0 }
 
+/** 当前属性值（动态层：基础 + 成长 + 装备/技能加成；随升级变化） */
+export interface GeneralStats {
+  atk: number   // 武力
+  def: number   // 统御
+  int: number   // 智力
+  pol: number   // 政治
+  cha: number   // 魅力
+}
+
 /** 武将（P0 逐步补充属性/技能/装备/宝物） */
 export interface General {
   id: string
@@ -35,6 +44,10 @@ export interface General {
   type: '战将' | '智将' | '全能'
   level: number
   xp: number
+  /** 当前六维（战斗展示/攻防/蓝量都读这里，不读基础配置） */
+  stats: GeneralStats
+  /** 已生效被动技能（展示） */
+  passives: { name: string; level: number }[]
 }
 
 /** 城池（P0 补充建筑/驻军/等级解锁） */

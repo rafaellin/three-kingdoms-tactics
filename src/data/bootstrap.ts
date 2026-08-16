@@ -2,7 +2,9 @@
  * 新对局启动数据（纯数据，无逻辑）：势力顺序 / 初始资源 / 武将 / 城池 / 英雄。
  * 渲染层（AdventureScene）与测试工具（core/testing/setup）共用同一份，避免重复。
  */
+import { deriveStats } from '../core/generals'
 import type { FactionId, General, Resources, Town } from '../core/state/GameState'
+import { GENERAL_BASES } from './generals'
 
 /** 回合轮转顺序 */
 export const TURN_ORDER: readonly FactionId[] = ['wei', 'shu', 'wu', 'qun']
@@ -23,9 +25,19 @@ export const START_FACTIONS: readonly { id: FactionId; resources: Resources }[] 
   { id: 'qun', resources: START_RESOURCES.qun }
 ]
 
-/** 初始武将池（P0：先放主角关羽） */
+/** 初始武将池（P0：先放主角关羽；六维/被动来自基础配置） */
+const GUAN = GENERAL_BASES['g-guan']
 export const START_GENERALS: readonly General[] = [
-  { id: 'g-guan', name: '关羽', faction: 'shu', type: '全能', level: 1, xp: 0 }
+  {
+    id: GUAN.id,
+    name: GUAN.name,
+    faction: GUAN.faction,
+    type: GUAN.type,
+    level: 1,
+    xp: 0,
+    stats: deriveStats(GUAN, 1),
+    passives: GUAN.passives
+  }
 ]
 
 /** 初始城池（P0：蜀占成都，位于地图中心 = 英雄出生点） */
