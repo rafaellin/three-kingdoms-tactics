@@ -13,7 +13,7 @@ function makeStore(overrides: Partial<Parameters<typeof makeSetup>[0]> = {}): Co
   return store
 }
 
-const fogOf = (s: GameState, hero: HeroUnit): Record<string, string> => s.visibility[hero.faction]
+const fogOf = (s: GameState, hero: HeroUnit): Record<string, string> => s.visibility[hero.playerId] ?? {}
 
 /** 当前操作英雄（多英雄后读 selected；MVP 单英雄退化为原 s.hero） */
 const heroOf = (s: GameState): HeroUnit | null => currentHero(s)
@@ -97,10 +97,10 @@ describe('unit/move 单步移动', () => {
       ...createInitialState(),
       map: makePlainMap(3),
       heroes: [
-        { generalId: 'g', faction: 'shu', position: { q: 0, r: 0 }, movementLeft: 6, maxMovement: 6, sightRange: 3 }
+        { generalId: 'g', playerId: 'p1', faction: 'shu', position: { q: 0, r: 0 }, movementLeft: 6, maxMovement: 6, sightRange: 3 }
       ],
       selectedHeroId: 'g',
-      visibility: { wei: {}, shu: {}, wu: {}, qun: {} }
+      visibility: { p1: {} }
     }
     const store = new CommandLog<GameState>(crafted, gameReducer)
     store.dispatch('unit/move', { to: { q: 1, r: 0 } })
@@ -112,10 +112,10 @@ describe('unit/move 单步移动', () => {
       ...createInitialState(),
       map: makePlainMap(3),
       heroes: [
-        { generalId: 'g', faction: 'shu', position: { q: 0, r: 0 }, movementLeft: 6, maxMovement: 6, sightRange: 3 }
+        { generalId: 'g', playerId: 'p1', faction: 'shu', position: { q: 0, r: 0 }, movementLeft: 6, maxMovement: 6, sightRange: 3 }
       ],
       selectedHeroId: 'g',
-      visibility: { wei: {}, shu: { [key({ q: 1, r: 0 })]: 'explored' }, wu: {}, qun: {} }
+      visibility: { p1: { [key({ q: 1, r: 0 })]: 'explored' } }
     }
     const store = new CommandLog<GameState>(crafted, gameReducer)
     store.dispatch('unit/move', { to: { q: 1, r: 0 } })
@@ -123,17 +123,41 @@ describe('unit/move 单步移动', () => {
   })
 })
 
+describe('英雄重叠阻挡（问题2：不能重叠/穿过，含己方英雄）', () => {
+  test('目标格被其他英雄占据 → 拒绝移动', () => {
+    const map = makePlainMap(5)
+    const store = makeStore({
+      map,
+      heroStarts: [
+        { generalId: 'g-guan', playerId: 'p1', position: { q: 0, r: 0 } },
+        { generalId: 'g-zhoucang', playerId: 'p1', position: { q: 1, r: 0 } }
+      ]
+    })
+    // 关羽（选中）尝试走进周仓占据的 (1,0) → 拒绝（不移动、不扣移动力）
+    store.dispatch('unit/move', { to: { q: 1, r: 0 } })
+    const s = store.getState()
+    expect(heroOf(s)?.position).toEqual({ q: 0, r: 0 })
+    expect(heroOf(s)?.movementLeft).toBe(6)
+  })
+
+  test('非占据的邻居格仍可正常走入（重叠校验不影响普通移动）', () => {
+    const store = makeStore()
+    store.dispatch('unit/move', { to: { q: 1, r: 0 } })
+    expect(heroOf(store.getState())?.position).toEqual({ q: 1, r: 0 })
+  })
+})
+
 describe('回合推进重置移动力', () => {
-  test('轮回到英雄所属势力时移动力恢复满值', () => {
+  test('结束回合（回到当前玩家）时移动力恢复满值', () => {
     const store = makeStore()
     store.dispatch('unit/move', { to: { q: 1, r: 0 } })
     store.dispatch('unit/move', { to: { q: 2, r: 0 } })
     store.dispatch('unit/move', { to: { q: 3, r: 0 } })
     expect(heroOf(store.getState())?.movementLeft).toBe(3)
-    // wei → shu：轮到蜀，移动力重置
+    // 单玩家：结束回合 = 下一天 + 行动力回满（currentPlayerId 恒为 p1）
     store.dispatch('game/advanceTurn')
     const s = store.getState()
-    expect(s.currentFaction).toBe('shu')
+    expect(s.currentPlayerId).toBe('p1')
     expect(heroOf(s)?.movementLeft).toBe(6)
   })
 })
@@ -159,22 +183,22 @@ describe('unit/move 资源点拾取', () => {
     const store = makeNodeStore()
     store.dispatch('unit/move', { to: { q: 1, r: 0 } })
     const s1 = store.getState()
-    expect(s1.resources.shu?.gold).toBe(80 + 30)
-    expect(s1.resources.shu?.wood).toBe(20 + 5)
+    expect(s1.resources.p1?.gold).toBe(80 + 30)
+    expect(s1.resources.p1?.wood).toBe(20 + 5)
     expect(s1.nodeStates[key({ q: 1, r: 0 })]?.visited).toBe(true)
     // 走出再回来：不重复拾取
     store.dispatch('unit/move', { to: { q: 0, r: 0 } })
     store.dispatch('unit/move', { to: { q: 1, r: 0 } })
     const s2 = store.getState()
-    expect(s2.resources.shu?.gold).toBe(80 + 30)
+    expect(s2.resources.p1?.gold).toBe(80 + 30)
   })
 
-  test('走入无主矿格：占领（owner=hero.faction）', () => {
+  test('走入无主矿格：占领（owner=hero.playerId）', () => {
     const store = makeNodeStore()
     store.dispatch('unit/move', { to: { q: 1, r: 0 } })
     store.dispatch('unit/move', { to: { q: 2, r: 0 } })
     const s = store.getState()
-    expect(s.nodeStates[key({ q: 2, r: 0 })]?.owner).toBe('shu')
+    expect(s.nodeStates[key({ q: 2, r: 0 })]?.owner).toBe('p1')
     expect(s.nodeStates[key({ q: 2, r: 0 })]?.visited).toBe(false) // 矿非一次性，visited 语义不适用
   })
 
@@ -182,11 +206,11 @@ describe('unit/move 资源点拾取', () => {
     const map = makePlainMap(5)
     map.nodes[key({ q: 1, r: 0 })] = 'woodMine'
     const store = makeStore({ map })
-    // 预置矿归魏
+    // 预置矿归 ai1
     const s0 = store.getState()
-    s0.nodeStates[key({ q: 1, r: 0 })] = { owner: 'wei', visited: false }
+    s0.nodeStates[key({ q: 1, r: 0 })] = { owner: 'ai1', visited: false }
     store.dispatch('unit/move', { to: { q: 1, r: 0 } })
-    expect(store.getState().nodeStates[key({ q: 1, r: 0 })]?.owner).toBe('wei')
+    expect(store.getState().nodeStates[key({ q: 1, r: 0 })]?.owner).toBe('ai1')
   })
 
   test('矿产出类型由数据表决定（木矿 +2 木/天）', () => {

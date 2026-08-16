@@ -6,12 +6,14 @@ import {
   canAfford,
   createInitialState,
   currentHero,
+  currentPlayer,
   deserializeState,
   serializeState,
   weekOf,
   type GameState,
   type Resources
 } from './GameState'
+import { aiAct, spawnNeutrals } from './ai'
 import { gameReducer } from './reducer'
 import { deriveStats } from '../generals'
 import { GENERAL_BASES } from '../../data/generals'
@@ -28,20 +30,23 @@ function makeStore(): CommandLog<GameState> {
 const gold = (n: number): Resources => ({ gold: n, wood: 0, stone: 0, iron: 0 })
 
 describe('game/setup', () => {
-  test('建立初始状态：第 1 天、第一势力行动、资源/武将/城池/英雄/地图就位', () => {
+  test('建立初始状态：第 1 天、首玩家行动、资源/武将/城池/英雄/地图就位', () => {
     const s = makeStore().getState()
     expect(s.turn).toBe(1)
-    expect(s.currentFaction).toBe('wei')
-    expect(s.resources.wei).toEqual({ gold: 100, wood: 50, stone: 0, iron: 0 })
-    expect(s.resources.shu).toEqual({ gold: 80, wood: 20, stone: 10, iron: 5 })
+    expect(s.players).toHaveLength(1)
+    expect(s.players[0]).toEqual({ id: 'p1', faction: 'shu', kind: 'human' })
+    expect(s.currentPlayerId).toBe('p1')
+    expect(currentPlayer(s)?.id).toBe('p1')
+    expect(s.resources.p1).toEqual({ gold: 80, wood: 20, stone: 10, iron: 5 })
     expect(s.generals).toHaveLength(1)
     expect(s.generals[0]?.name).toBe('关羽')
     expect(s.towns).toHaveLength(1)
-    expect(s.towns[0]?.owner).toBe('shu')
+    expect(s.towns[0]?.owner).toBe('p1')
     expect(s.map?.hexes).toHaveLength(37)
     expect(currentHero(s)?.position).toEqual({ q: 0, r: 0 })
     expect(currentHero(s)?.movementLeft).toBe(6)
-    expect(s.visibility.shu).not.toEqual({})
+    expect(currentHero(s)?.playerId).toBe('p1')
+    expect(s.visibility.p1).not.toEqual({})
   })
 
   test('多英雄：GameState.heroes 存在，general 带 army，town 带双槽', () => {
@@ -65,26 +70,38 @@ describe('game/setup', () => {
     // 空英雄 → null
     expect(currentHero(createInitialState())).toBeNull()
   })
+
+  test('currentPlayer：无 currentPlayerId 时回退 players[0]，无 players 返回 null', () => {
+    const s = makeStore().getState()
+    expect(currentPlayer({ ...s, currentPlayerId: null })?.id).toBe('p1')
+    expect(currentPlayer({ ...s, currentPlayerId: 'g-nonexist' })?.id).toBe('p1')
+    expect(currentPlayer(createInitialState())).toBeNull()
+  })
 })
 
-describe('game/advanceTurn（回合推进）', () => {
-  test('轮流到下一势力，同一天不变', () => {
+describe('game/advanceTurn（回合推进：按玩家序列）', () => {
+  test('单玩家：结束回合 → 天数 +1、行动力回满、currentPlayerId 仍为 p1', () => {
     const store = makeStore()
+    // 先消耗移动力（走 2 步平地）
+    store.dispatch('unit/move', { to: { q: 1, r: 0 } })
+    store.dispatch('unit/move', { to: { q: 2, r: 0 } })
+    expect(currentHero(store.getState())?.movementLeft).toBe(4)
     store.dispatch('game/advanceTurn')
     const s = store.getState()
-    expect(s.currentFaction).toBe('shu')
-    expect(s.turn).toBe(1)
+    expect(s.currentPlayerId).toBe('p1')
+    expect(s.turn).toBe(2)
+    expect(currentHero(s)?.movementLeft).toBe(6)
   })
 
-  test('四势力轮完一圈回到第一势力，天数 +1', () => {
+  test('单玩家连点 4 次结束回合 → 天数 +4', () => {
     const store = makeStore()
     for (let i = 0; i < 4; i++) store.dispatch('game/advanceTurn')
     const s = store.getState()
-    expect(s.currentFaction).toBe('wei')
-    expect(s.turn).toBe(2)
+    expect(s.currentPlayerId).toBe('p1')
+    expect(s.turn).toBe(5)
   })
 
-  test('空 turnOrder（未 setup）时不崩溃、状态不变', () => {
+  test('空 players（未 setup）时不崩溃、状态不变', () => {
     const store = new CommandLog<GameState>(createInitialState(), gameReducer)
     const before = store.getState()
     store.dispatch('game/advanceTurn')
@@ -103,8 +120,8 @@ describe('周计算 weekOf', () => {
 })
 
 describe('game/advanceTurn 每日结算', () => {
-  test('天数 +1（圈回第一势力）：城池产金 + 矿产出到账（每天结算一次）', () => {
-    // 手工构造：turn=7，蜀有成都（Lv1）+ 木矿，从魏开始推一圈回到魏（天数 +1）
+  test('天数 +1：城池产金 + 矿产出到账（每天结算一次）', () => {
+    // 单玩家：turn=7，p1 有成都（Lv1）+ 木矿 → 结束回合 → 天数 7→8，结算一次
     const map = makePlainMap(5)
     map.nodes[key({ q: 1, r: 0 })] = 'woodMine'
     const base = new CommandLog<GameState>(createInitialState(), gameReducer)
@@ -112,68 +129,77 @@ describe('game/advanceTurn 每日结算', () => {
     const crafted: GameState = {
       ...base.getState(),
       turn: 7,
-      currentFaction: 'wei',
       nodeStates: {
         ...base.getState().nodeStates,
-        [key({ q: 1, r: 0 })]: { owner: 'shu', visited: false }
+        [key({ q: 1, r: 0 })]: { owner: 'p1', visited: false }
       }
     }
     const store = new CommandLog<GameState>(crafted, gameReducer)
-    // wei → shu → wu → qun → wei 一圈回来 turn 7→8，天数 +1 → 每日结算
-    for (let i = 0; i < 4; i++) store.dispatch('game/advanceTurn')
+    store.dispatch('game/advanceTurn')
     const s = store.getState()
     expect(s.turn).toBe(8)
-    expect(s.resources.shu?.gold).toBe((crafted.resources.shu?.gold ?? 0) + 10) // 成都 Lv1 ×10金/天
-    expect(s.resources.shu?.wood).toBe((crafted.resources.shu?.wood ?? 0) + 2) // 木矿 +2木/天
+    expect(s.resources.p1?.gold).toBe((crafted.resources.p1?.gold ?? 0) + 10) // 成都 Lv1 ×10金/天
+    expect(s.resources.p1?.wood).toBe((crafted.resources.p1?.wood ?? 0) + 2) // 木矿 +2木/天
   })
 
-  test('同一天内轮换（天数未变）不触发结算', () => {
-    const base = new CommandLog<GameState>(createInitialState(), gameReducer)
-    base.dispatch('game/setup', makeSetup())
-    const crafted: GameState = { ...base.getState(), turn: 6, currentFaction: 'wei' }
-    const store = new CommandLog<GameState>(crafted, gameReducer)
-    const before = store.getState().resources
-    // wei→shu→wu→qun：3 次推进，天数仍为 6，不结算
-    for (let i = 0; i < 3; i++) store.dispatch('game/advanceTurn')
+  test('每日结算按玩家循环：多玩家各自城池/矿收入独立到账（同势力不串）', () => {
+    const map = makePlainMap(5)
+    map.nodes[key({ q: 1, r: 0 })] = 'woodMine'
+    const store = new CommandLog<GameState>(createInitialState(), gameReducer)
+    store.dispatch('game/setup', makeSetup({
+      map,
+      // 同势力两个玩家（用户原则：同势力玩家资源各自独立，不串）
+      players: [
+        { id: 'p1', faction: 'shu', kind: 'human' },
+        { id: 'p2', faction: 'shu', kind: 'human' }
+      ],
+      towns: [
+        { id: 't1', name: '城1', owner: 'p1', level: 1, position: { q: 0, r: 0 }, garrisonGeneralId: null, garrison: [], visitorGeneralId: null },
+        { id: 't2', name: '城2', owner: 'p2', level: 2, position: { q: 2, r: 0 }, garrisonGeneralId: null, garrison: [], visitorGeneralId: null }
+      ]
+    }))
     const s = store.getState()
-    expect(s.turn).toBe(6)
-    expect(s.resources).toEqual(before)
-    // 第 4 次推进（qun→wei）天数 6→7，结算一次
-    store.dispatch('game/advanceTurn')
-    expect(store.getState().turn).toBe(7)
-    expect(store.getState().resources.shu?.gold).toBe((before.shu?.gold ?? 0) + 10)
+    s.nodeStates[key({ q: 1, r: 0 })] = { owner: 'p1', visited: false }
+    const after = applyDailyIncome(s)
+    // p1：成都 Lv1 +10金/天 + 木矿 +2木/天
+    expect(after.resources.p1?.gold).toBe((s.resources.p1?.gold ?? 0) + 10)
+    expect(after.resources.p1?.wood).toBe((s.resources.p1?.wood ?? 0) + 2)
+    // p2（同势力蜀，资源独立）：城2 Lv2 +20金/天；不分享 p1 的木矿
+    expect(after.resources.p2?.gold).toBe((s.resources.p2?.gold ?? 0) + 20)
+    expect(after.resources.p2?.wood).toBe(s.resources.p2?.wood)
   })
 })
 
 describe('economy 资源增扣', () => {
-  test('add 增加指定势力资源', () => {
+  test('add 增加指定玩家资源', () => {
     const store = makeStore()
-    store.dispatch('economy/add', { faction: 'wei', amount: gold(10) })
-    expect(store.getState().resources.wei?.gold).toBe(110)
+    store.dispatch('economy/add', { playerId: 'p1', amount: gold(10) })
+    expect(store.getState().resources.p1?.gold).toBe(90)
   })
 
   test('spend 资源足够时扣除', () => {
     const store = makeStore()
-    store.dispatch('economy/spend', { faction: 'wei', cost: gold(10) })
-    expect(store.getState().resources.wei?.gold).toBe(90)
+    store.dispatch('economy/spend', { playerId: 'p1', cost: gold(10) })
+    expect(store.getState().resources.p1?.gold).toBe(70)
   })
 
   test('spend 资源不足时状态不变（确定性 no-op）', () => {
     const store = makeStore()
     const before = store.getState()
-    store.dispatch('economy/spend', { faction: 'wei', cost: gold(999) })
+    store.dispatch('economy/spend', { playerId: 'p1', cost: gold(999) })
     expect(store.getState()).toEqual(before)
   })
 
   test('canAfford 判断是否可支付', () => {
     const s = makeStore().getState()
-    expect(canAfford(s, 'wei', gold(100))).toBe(true)
-    expect(canAfford(s, 'wei', gold(101))).toBe(false)
+    expect(canAfford(s, 'p1', gold(80))).toBe(true)
+    expect(canAfford(s, 'p1', gold(81))).toBe(false)
+    expect(canAfford(s, 'ai1', gold(1))).toBe(false) // 非对局玩家无资源
   })
 })
 
 describe('computeDailyIncome（每日产出汇总，供 HUD 显示 (+N)）', () => {
-  /** 带两座矿（木矿→蜀、石矿→魏）+ 成都（蜀，Lv1）的地图 */
+  /** 带两座矿（木矿→p1、石矿→p2）+ 成都（p1，Lv1）的地图 */
   function makeMineState(): GameState {
     const map = makePlainMap(3, {
       [key({ q: 1, r: 0 })]: 'plain',
@@ -182,27 +208,31 @@ describe('computeDailyIncome（每日产出汇总，供 HUD 显示 (+N)）', () 
     map.nodes[key({ q: 1, r: 0 })] = 'woodMine'
     map.nodes[key({ q: 2, r: 0 })] = 'stoneMine'
     const store = new CommandLog<GameState>(createInitialState(), gameReducer)
-    store.dispatch('game/setup', makeSetup({ map }))
+    store.dispatch('game/setup', makeSetup({
+      map,
+      players: [
+        { id: 'p1', faction: 'shu', kind: 'human' },
+        { id: 'p2', faction: 'shu', kind: 'human' }
+      ]
+    }))
     const s = store.getState()
-    s.nodeStates[key({ q: 1, r: 0 })] = { owner: 'shu', visited: false }
-    s.nodeStates[key({ q: 2, r: 0 })] = { owner: 'wei', visited: false }
+    s.nodeStates[key({ q: 1, r: 0 })] = { owner: 'p1', visited: false }
+    s.nodeStates[key({ q: 2, r: 0 })] = { owner: 'p2', visited: false }
     return s
   }
 
-  test('按势力汇总：城池产金 + 已占矿产出，未占资源为 0', () => {
+  test('按玩家汇总：城池产金 + 已占矿产出，未占资源为 0', () => {
     const s = makeMineState()
-    // 蜀：成都 Lv1 → +10金/天；木矿 → +2木/天
-    expect(computeDailyIncome(s, 'shu')).toEqual({ gold: 10, wood: 2, stone: 0, iron: 0 })
-    // 魏：无城；石矿 → +1石/天
-    expect(computeDailyIncome(s, 'wei')).toEqual({ gold: 0, wood: 0, stone: 1, iron: 0 })
-    // 吴：无城无矿
-    expect(computeDailyIncome(s, 'wu')).toEqual({ gold: 0, wood: 0, stone: 0, iron: 0 })
+    // p1：成都 Lv1 → +10金/天；木矿 → +2木/天
+    expect(computeDailyIncome(s, 'p1')).toEqual({ gold: 10, wood: 2, stone: 0, iron: 0 })
+    // p2（同势力蜀）：无城；石矿 → +1石/天（各自独立）
+    expect(computeDailyIncome(s, 'p2')).toEqual({ gold: 0, wood: 0, stone: 1, iron: 0 })
   })
 
   test('无主矿不计入产出', () => {
     const s = makeMineState()
     s.nodeStates[key({ q: 1, r: 0 })] = { owner: null, visited: false }
-    expect(computeDailyIncome(s, 'shu')).toEqual({ gold: 10, wood: 0, stone: 0, iron: 0 })
+    expect(computeDailyIncome(s, 'p1')).toEqual({ gold: 10, wood: 0, stone: 0, iron: 0 })
   })
 
   test('宝箱（一次性）不计入每日产出', () => {
@@ -214,7 +244,7 @@ describe('computeDailyIncome（每日产出汇总，供 HUD 显示 (+N)）', () 
     store.dispatch('game/setup', makeSetup({ map }))
     const s = store.getState()
     s.nodeStates[key({ q: 1, r: 0 })] = { owner: null, visited: true }
-    expect(computeDailyIncome(s, 'shu')).toEqual({ gold: 10, wood: 0, stone: 0, iron: 0 })
+    expect(computeDailyIncome(s, 'p1')).toEqual({ gold: 10, wood: 0, stone: 0, iron: 0 })
   })
 
   test('多座同资源矿产出累加', () => {
@@ -227,14 +257,14 @@ describe('computeDailyIncome（每日产出汇总，供 HUD 显示 (+N)）', () 
     const store = new CommandLog<GameState>(createInitialState(), gameReducer)
     store.dispatch('game/setup', makeSetup({ map }))
     const s = store.getState()
-    s.nodeStates[key({ q: 1, r: 0 })] = { owner: 'shu', visited: false }
-    s.nodeStates[key({ q: 2, r: 0 })] = { owner: 'shu', visited: false }
-    expect(computeDailyIncome(s, 'shu')).toEqual({ gold: 10, wood: 4, stone: 0, iron: 0 })
+    s.nodeStates[key({ q: 1, r: 0 })] = { owner: 'p1', visited: false }
+    s.nodeStates[key({ q: 2, r: 0 })] = { owner: 'p1', visited: false }
+    expect(computeDailyIncome(s, 'p1')).toEqual({ gold: 10, wood: 4, stone: 0, iron: 0 })
   })
 })
 
 describe('applyDailyIncome（每日结算）', () => {
-  /** 带两座矿（木矿→蜀、石矿→魏）+ 成都（蜀，Lv1）的地图 */
+  /** 带两座矿（木矿→p1、石矿→p2）+ 成都（p1，Lv1）的地图 */
   function makeMineState(): GameState {
     const map = makePlainMap(3, {
       [key({ q: 1, r: 0 })]: 'plain',
@@ -243,38 +273,44 @@ describe('applyDailyIncome（每日结算）', () => {
     map.nodes[key({ q: 1, r: 0 })] = 'woodMine'
     map.nodes[key({ q: 2, r: 0 })] = 'stoneMine'
     const store = new CommandLog<GameState>(createInitialState(), gameReducer)
-    store.dispatch('game/setup', makeSetup({ map }))
+    store.dispatch('game/setup', makeSetup({
+      map,
+      players: [
+        { id: 'p1', faction: 'shu', kind: 'human' },
+        { id: 'p2', faction: 'shu', kind: 'human' }
+      ]
+    }))
     const s = store.getState()
-    // 标记两座矿分别被蜀/魏占领
-    s.nodeStates[key({ q: 1, r: 0 })] = { owner: 'shu', visited: false }
-    s.nodeStates[key({ q: 2, r: 0 })] = { owner: 'wei', visited: false }
+    // 标记两座矿分别被 p1/p2 占领
+    s.nodeStates[key({ q: 1, r: 0 })] = { owner: 'p1', visited: false }
+    s.nodeStates[key({ q: 2, r: 0 })] = { owner: 'p2', visited: false }
     return s
   }
 
-  test('城池收入：内政厅等级 ×10 金/天 给所属势力', () => {
+  test('城池收入：内政厅等级 ×10 金/天 给所属玩家', () => {
     const s = makeMineState()
     const after = applyDailyIncome(s)
-    // 成都 Lv1 → shu +10 金；魏无城
-    expect(after.resources.shu?.gold).toBe(s.resources.shu?.gold + 10)
-    expect(after.resources.wei?.gold).toBe(s.resources.wei?.gold)
+    // 成都 Lv1 → p1 +10 金；p2 无城
+    expect(after.resources.p1?.gold).toBe((s.resources.p1?.gold ?? 0) + 10)
+    expect(after.resources.p2?.gold).toBe(s.resources.p2?.gold)
   })
 
   test('矿产出：木矿+2木/天 / 石矿+1石/天 给占领方', () => {
     const s = makeMineState()
     const after = applyDailyIncome(s)
-    expect(after.resources.shu?.wood).toBe((s.resources.shu?.wood ?? 0) + 2)
-    expect(after.resources.wei?.stone).toBe((s.resources.wei?.stone ?? 0) + 1)
+    expect(after.resources.p1?.wood).toBe((s.resources.p1?.wood ?? 0) + 2)
+    expect(after.resources.p2?.stone).toBe((s.resources.p2?.stone ?? 0) + 1)
     // 其他资源不变
-    expect(after.resources.shu?.gold).toBe((s.resources.shu?.gold ?? 0) + 10)
-    expect(after.resources.shu?.iron).toBe(s.resources.shu?.iron)
+    expect(after.resources.p1?.gold).toBe((s.resources.p1?.gold ?? 0) + 10)
+    expect(after.resources.p1?.iron).toBe(s.resources.p1?.iron)
   })
 
   test('无主矿不产出', () => {
     const s = makeMineState()
     s.nodeStates[key({ q: 1, r: 0 })] = { owner: null, visited: false }
     const after = applyDailyIncome(s)
-    expect(after.resources.shu?.wood).toBe(s.resources.shu?.wood)
-    expect(after.resources.shu?.gold).toBe((s.resources.shu?.gold ?? 0) + 10)
+    expect(after.resources.p1?.wood).toBe(s.resources.p1?.wood)
+    expect(after.resources.p1?.gold).toBe((s.resources.p1?.gold ?? 0) + 10)
   })
 
   test('宝箱非矿，每日结算不计产出', () => {
@@ -362,6 +398,18 @@ describe('general/gainXp（武将经验与升级）', () => {
   })
 })
 
+describe('aiAct / spawnNeutrals（接口占位，MVP no-op）', () => {
+  test('aiAct 返回原 state（AI 配置「不动」→ 无行动）', () => {
+    const s = makeStore().getState()
+    expect(aiAct(s, 'ai1')).toBe(s)
+  })
+
+  test('spawnNeutrals 返回原 state（无随机野怪生成）', () => {
+    const s = makeStore().getState()
+    expect(spawnNeutrals(s)).toBe(s)
+  })
+})
+
 describe('序列化（存档 / e2e 断言 / 回放）', () => {
   test('round-trip：序列化后反序列化得到相同状态', () => {
     const s = makeStore().getState()
@@ -373,7 +421,7 @@ describe('序列化（存档 / e2e 断言 / 回放）', () => {
   test('reducer 保持纯函数：命令序列重放 → 相同终态', () => {
     const store = makeStore()
     store.dispatch('game/advanceTurn')
-    store.dispatch('economy/add', { faction: 'shu', amount: gold(5) })
+    store.dispatch('economy/add', { playerId: 'p1', amount: gold(5) })
     const final = store.getState()
 
     const replay = CommandLog.replay(createInitialState(), gameReducer, store.getLog())

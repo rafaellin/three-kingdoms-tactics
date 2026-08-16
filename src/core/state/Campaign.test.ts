@@ -24,6 +24,10 @@ describe('campaign/start 战役启动', () => {
   test('campaign 模式：放守将+胜利条件；explore 不放守将', () => {
     const c = makeCampaignStore('campaign').getState()
     expect(c.campaignId).toBe('dongling')
+    expect(c.players).toHaveLength(2)
+    expect(c.players[0]).toEqual({ id: 'p1', faction: 'shu', kind: 'human' })
+    expect(c.players[1]).toEqual({ id: 'ai1', faction: 'wei', kind: 'ai' })
+    expect(c.currentPlayerId).toBe('p1')
     expect(c.garrisons).toHaveLength(1)
     expect(c.garrisons[0]!.id).toBe('gar-kongxiu')
     expect(c.garrisons[0]!.alive).toBe(true)
@@ -31,6 +35,7 @@ describe('campaign/start 战役启动', () => {
     expect(c.heroes).toHaveLength(3)
     expect(c.selectedHeroId).toBe('g-guan')
     expect(c.heroes[0]!.faction).toBe('shu')
+    expect(c.heroes[0]!.playerId).toBe('p1')
     expect(c.outcome).toBeNull()
 
     const e = makeCampaignStore('explore').getState()
@@ -64,26 +69,34 @@ describe('hero/select 选中英雄', () => {
 })
 
 describe('game/advanceTurn 多英雄回合', () => {
-  test('轮到 shu 时 ALL shu 英雄移动力全恢复（不只选中英雄）', () => {
+  test('轮到 p1 时 ALL p1 英雄移动力全恢复（不只选中英雄）', () => {
     const store = makeCampaignStore()
     // 关羽 (0,-1)→(0,0)、周仓 (-1,-1)→(-1,0)：各耗 1 点移动力（平地）
     store.dispatch('hero/move', { heroId: 'g-guan', to: { q: 0, r: 0 } })
     store.dispatch('hero/move', { heroId: 'g-zhoucang', to: { q: -1, r: 0 } })
     let s = store.getState()
-    expect(s.currentFaction).toBe('wei') // 战役初始当前势力 = turnOrder[0]
+    expect(s.currentPlayerId).toBe('p1') // 战役初始当前玩家 = players[0]
     expect(s.heroes.find((h) => h.generalId === 'g-guan')!.movementLeft).toBe(5)
     expect(s.heroes.find((h) => h.generalId === 'g-zhoucang')!.movementLeft).toBe(5)
-    // 结束回合：wei → shu；轮到蜀 → 所有 shu 英雄移动力恢复满（3 英雄并行不丢）
+    // 结束回合：p1 → ai1（AI 自动行动 no-op）→ 回 p1（system 天数+1）→ 所有 p1 英雄移动力恢复满
     store.dispatch('game/advanceTurn')
     s = store.getState()
-    expect(s.currentFaction).toBe('shu')
+    expect(s.currentPlayerId).toBe('p1')
     for (const gid of ['g-guan', 'g-zhoucang', 'g-sunqian']) {
       expect(s.heroes.find((h) => h.generalId === gid)!.movementLeft).toBe(6)
     }
   })
+
+  test('玩家 → AI → system：单次结束回合即推进一天（AI 不占回合）', () => {
+    const store = makeCampaignStore()
+    expect(store.getState().turn).toBe(1)
+    store.dispatch('game/advanceTurn')
+    expect(store.getState().turn).toBe(2)
+    expect(store.getState().currentPlayerId).toBe('p1')
+  })
 })
 
-describe('hero/move 英雄移动（守将格拦截）', () => {
+describe('hero/move 英雄移动（守将格拦截 + 重叠阻挡）', () => {
   test('目标格是存活守将格 → 拒绝（不可通行）', () => {
     const store = makeCampaignStore()
     // 关羽在 (0,-1)，走到 (0,0) 后再试图进 (0,1)（孔秀格）
@@ -105,6 +118,17 @@ describe('hero/move 英雄移动（守将格拦截）', () => {
     store.dispatch('hero/move', { heroId: 'g-guan', to: { q: 0, r: 0 } })
     store.dispatch('hero/move', { heroId: 'g-guan', to: { q: 0, r: 1 } })
     expect(store.getState().heroes.find((h) => h.generalId === 'g-guan')?.position).toEqual({ q: 0, r: 1 })
+  })
+
+  test('目标格被其他英雄占据 → 拒绝（含己方英雄，问题2）', () => {
+    const store = makeCampaignStore()
+    // 周仓 (-1,-1)→(-1,0)→(0,0) 抢占城格；关羽 (0,-1) 想走进 (0,0)（周仓占据）→ 拒绝
+    store.dispatch('hero/move', { heroId: 'g-zhoucang', to: { q: -1, r: 0 } })
+    store.dispatch('hero/move', { heroId: 'g-zhoucang', to: { q: 0, r: 0 } })
+    store.dispatch('hero/move', { heroId: 'g-guan', to: { q: 0, r: 0 } })
+    const s = store.getState()
+    expect(s.heroes.find((h) => h.generalId === 'g-guan')?.position).toEqual({ q: 0, r: -1 })
+    expect(s.heroes.find((h) => h.generalId === 'g-zhoucang')?.position).toEqual({ q: 0, r: 0 })
   })
 })
 
@@ -194,6 +218,7 @@ describe('城池交互', () => {
     expect(back.position).toEqual({ q: 0, r: 0 })
     expect(back.movementLeft).toBe(6)
     expect(back.faction).toBe('shu')
+    expect(back.playerId).toBe('p1') // 出城英雄归属城主玩家
   })
 
   test('enterTown：访问槽被占时拒绝第二英雄进城（不覆盖丢失武将）', () => {

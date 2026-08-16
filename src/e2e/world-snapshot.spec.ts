@@ -26,6 +26,8 @@ interface DebugGameState {
   scene?: string
   mode?: string | null
   outcome?: string | null
+  phase?: string
+  general?: { enemy?: { name?: string } }
   heroes?: { generalId: string; position: { q: number; r: number } }[]
   garrisons?: { id: string; generalId: string; position: { q: number; r: number }; alive: boolean; screen?: { x: number; y: number } }[]
   neutrals?: { id: string; position: { q: number; r: number }; defeated: boolean; screen?: { x: number; y: number } }[]
@@ -160,9 +162,9 @@ test('世界快照：驻守+移兵 → 打杂兵 → 返回 → 城池驻守/驻
   expect(s.neutrals!.find((n) => n.id === 'neu-1')!.defeated).toBe(true) // 杂兵被歼（战斗结果写回）
   // 城池状态保留：驻军（移兵结果）跨战斗保留；驻城/访问槽因「关羽出城去打杂兵」为空
   // （出城释放驻守槽——这是出城语义，非状态丢失）
-  expect(s.towns![0].garrison).toEqual([{ defId: 'swordsman', count: 1 }]) // 驻军保留（此前重建会重置为空）
-  expect(s.towns![0].garrisonGeneralId).toBeNull() // 关羽出城，驻守槽释放
-  expect(s.towns![0].visitorGeneralId).toBeNull()
+  expect(s.towns![0]!.garrison).toEqual([{ defId: 'swordsman', count: 1 }]) // 驻军保留（此前重建会重置为空）
+  expect(s.towns![0]!.garrisonGeneralId).toBeNull() // 关羽出城，驻守槽释放
+  expect(s.towns![0]!.visitorGeneralId).toBeNull()
   // 英雄位置保留（关羽出城后位置 = 城格，不因战斗返回重置到出生点）
   const guanHero = s.heroes!.find((h) => h.generalId === 'g-guan')!
   expect(guanHero.position).toEqual({ q: 0, r: 0 }) // 出城时 leaveTown 放回城格

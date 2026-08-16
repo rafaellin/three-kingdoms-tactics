@@ -13,6 +13,19 @@ import type { UnitDefId } from '../../data/units'
 /** 4 大势力：魏 / 蜀 / 吴 / 群 */
 export type FactionId = 'wei' | 'shu' | 'wu' | 'qun'
 
+/**
+ * 玩家（回合操作单元）：同势力可有多个玩家（如两个魏势力玩家对战），
+ * 势力仅作显示/渲染标签。资源/迷雾/占领/城池全部按玩家绑定，同势力玩家不串。
+ */
+export interface Player {
+  /** 唯一标识，独立于势力：'p1' | 'p2' | 'ai1' ... */
+  id: string
+  /** 所属势力（同势力玩家可同 faction） */
+  faction: FactionId
+  /** 人类 or AI */
+  kind: 'human' | 'ai'
+}
+
 /** 英雄基准：视野半径（PRD-SUPPLEMENT §1.1）与移动力（速度公式未定，先定值） */
 export const BASE_SIGHT_RANGE = 3
 export const BASE_MAX_MOVEMENT = 6
@@ -55,11 +68,11 @@ export interface General {
   army: { defId: UnitDefId; count: number }[]
 }
 
-/** 城池（P0 补充建筑/驻军/等级解锁） */
+/** 城池（P0 补充建筑/驻军/等级解锁）；owner = PlayerId（城池归玩家，同势力各自有城） */
 export interface Town {
   id: string
   name: string
-  owner: FactionId
+  owner: string
   level: number
   /** 所在地图格 */
   position: Axial
@@ -89,15 +102,18 @@ export interface NeutralState {
   defeated: boolean
 }
 
-/** 单个资源点状态：占领方 / 是否已拾取 */
+/** 单个资源点状态：占领方（PlayerId）/ 是否已拾取 */
 export interface NodeState {
-  owner: FactionId | null
+  owner: string | null
   visited: boolean
 }
 
 /** 大地图上的英雄（每武将一英雄；MVP 1 主英雄 + 2 副在外并行） */
 export interface HeroUnit {
   generalId: string
+  /** 所属玩家 id（迷雾/资源/占领判定按它查所属玩家） */
+  playerId: string
+  /** 势力色显示标签（迷雾/资源判定改用 playerId） */
   faction: FactionId
   position: Axial
   /** 剩余移动力（含小数地形代价，如森林 1.5） */
@@ -110,12 +126,12 @@ export interface GameState {
   schemaVersion: number
   /** 当前天数（1 回合 = 1 天），从 1 起 */
   turn: number
-  /** 当前行动方；setup 前为 null */
-  currentFaction: FactionId | null
-  /** 回合轮转顺序（setup 决定，如 [wei, shu, wu, qun]） */
-  turnOrder: FactionId[]
-  /** 各势力资源，key = FactionId（未参与对局的一律为 0） */
-  resources: Record<FactionId, Resources>
+  /** 参与回合的玩家序列（顺序 = 轮转顺序） */
+  players: Player[]
+  /** 当前行动玩家 id；setup 前为 null */
+  currentPlayerId: string | null
+  /** 各玩家资源，key = PlayerId（同势力玩家各自独立） */
+  resources: Record<string, Resources>
   generals: General[]
   towns: Town[]
   /** 地图数据；setup 前为 null */
@@ -136,8 +152,8 @@ export interface GameState {
   victory: { kind: 'defeatGarrison'; targetId: string } | null
   /** 战役结局（达成胜利 → 'won'） */
   outcome: 'won' | null
-  /** 按势力的战争迷雾（两态：explored 已探索永久可见 / unexplored 未探索；hexKey → 状态） */
-  visibility: Record<FactionId, Record<string, Visibility>>
+  /** 按玩家的战争迷雾（两态：explored 已探索永久可见 / unexplored 未探索；hexKey → 状态；同势力玩家各自独立视野） */
+  visibility: Record<string, Record<string, Visibility>>
   /** 资源点状态（hexKey → 占领方/已拾取）；setup 时按 map.nodes 初始化 */
   nodeStates: Record<string, NodeState>
 }
@@ -147,9 +163,9 @@ export function createInitialState(): GameState {
   return {
     schemaVersion: 1,
     turn: 1,
-    currentFaction: null,
-    turnOrder: [],
-    resources: { wei: ZERO_RESOURCES, shu: ZERO_RESOURCES, wu: ZERO_RESOURCES, qun: ZERO_RESOURCES },
+    players: [],
+    currentPlayerId: null,
+    resources: {},
     generals: [],
     towns: [],
     map: null,
@@ -161,7 +177,7 @@ export function createInitialState(): GameState {
     neutrals: [],
     victory: null,
     outcome: null,
-    visibility: { wei: {}, shu: {}, wu: {}, qun: {} },
+    visibility: {},
     nodeStates: {}
   }
 }
@@ -176,6 +192,18 @@ export function currentHero(state: GameState): HeroUnit | null {
     if (sel) return sel
   }
   return state.heroes[0] ?? null
+}
+
+/**
+ * 当前操作玩家（从 currentPlayerId 取；找不到/未设置时回退 players[0]，无玩家返回 null）。
+ * 渲染层势力色、资源/迷雾/友城判定都以它为准。
+ */
+export function currentPlayer(state: GameState): Player | null {
+  if (state.currentPlayerId) {
+    const p = state.players.find((pl) => pl.id === state.currentPlayerId)
+    if (p) return p
+  }
+  return state.players[0] ?? null
 }
 
 /** 当天所在周：第 1~7 天为第 1 周，8~14 为第 2 周… */
@@ -203,29 +231,30 @@ export function subResources(a: Resources, b: Resources): Resources {
   }
 }
 
-/** 该势力是否支付得起 cost（每项资源都足够） */
-export function canAfford(state: GameState, faction: FactionId, cost: Resources): boolean {
-  const r = state.resources[faction]
+/** 该玩家是否支付得起 cost（每项资源都足够） */
+export function canAfford(state: GameState, playerId: string, cost: Resources): boolean {
+  const r = state.resources[playerId]
+  if (!r) return false
   return r.gold >= cost.gold && r.wood >= cost.wood && r.stone >= cost.stone && r.iron >= cost.iron
 }
 
 /**
- * 某势力每日产出汇总（纯函数；供 HUD 显示 `当前值 (+N)` 与结算复用）。
- * - 城池：内政厅等级 ×10 金/天 → 所属势力（政治加成依赖武将六维属性，暂为 0，PRD 注明）
+ * 某玩家每日产出汇总（纯函数；供 HUD 显示 `当前值 (+N)` 与结算复用）。
+ * - 城池：内政厅等级 ×10 金/天 → 所属玩家（政治加成依赖武将六维属性，暂为 0，PRD 注明）
  * - 矿：按 RESOURCE_NODE_DEFS 的 dailyBonus 产出 → 占领方（用户确认：矿产出是每天）
  * - 宝箱（一次性）不计入；无主矿不计入
  * 不修改 state。
  */
-export function computeDailyIncome(state: GameState, faction: FactionId): Resources {
+export function computeDailyIncome(state: GameState, playerId: string): Resources {
   let income: Resources = { gold: 0, wood: 0, stone: 0, iron: 0 }
   // 城池收入（每天）
   for (const town of state.towns) {
-    if (town.owner !== faction) continue
+    if (town.owner !== playerId) continue
     income = addResources(income, { gold: town.level * 10, wood: 0, stone: 0, iron: 0 })
   }
   // 矿产出（每天）
   for (const [hexKeyStr, nodeState] of Object.entries(state.nodeStates)) {
-    if (nodeState.owner !== faction) continue
+    if (nodeState.owner !== playerId) continue
     const nodeType = state.map?.nodes?.[hexKeyStr]
     if (!nodeType || !isMine(nodeType)) continue
     const bonus = RESOURCE_NODE_DEFS[nodeType].dailyBonus
@@ -237,17 +266,17 @@ export function computeDailyIncome(state: GameState, faction: FactionId): Resour
 
 /**
  * 每日结算（纯函数）：城池收入 + 矿产出。
- * - 城池：内政厅等级 ×10 金/天 → 所属势力（政治加成依赖武将六维属性，暂为 0，PRD 注明）
+ * - 城池：内政厅等级 ×10 金/天 → 所属玩家（政治加成依赖武将六维属性，暂为 0，PRD 注明）
  * - 矿：按 RESOURCE_NODE_DEFS 的 dailyBonus 产出 → 占领方（用户确认：矿产出是每天）
  * - 每周"产出预备役部队（需金钱/物资招募）"依赖军制/招募系统，未实现（PRD 注明）
  * 返回新 state，不就地修改。
  */
 export function applyDailyIncome(state: GameState): GameState {
   let resources = state.resources
-  // 各势力每日产出统一按 computeDailyIncome 汇总（城池 + 矿）
-  for (const faction of Object.keys(resources) as FactionId[]) {
-    const income = computeDailyIncome(state, faction)
-    resources = { ...resources, [faction]: addResources(resources[faction], income) }
+  // 各玩家每日产出统一按 computeDailyIncome 汇总（城池 + 矿）；按玩家循环而非按势力（同势力玩家各自结算）
+  for (const player of state.players) {
+    const income = computeDailyIncome(state, player.id)
+    resources = { ...resources, [player.id]: addResources(resources[player.id] ?? ZERO_RESOURCES, income) }
   }
   return { ...state, resources }
 }

@@ -24,6 +24,12 @@ export interface TownPanelButtonDebug {
 const OWNER_NAMES: Record<FactionId, string> = { wei: '魏', shu: '蜀', wu: '吴', qun: '群' }
 const UNIT_NAME = (defId: string): string => UNIT_DEFS[defId as keyof typeof UNIT_DEFS]?.name ?? defId
 
+/** 城池归属玩家 → 势力中文名（owner 是 PlayerId，经玩家查所属势力；找不到显示「无主」） */
+function ownerName(state: GameState, town: Town): string {
+  const player = state.players.find((p) => p.id === town.owner)
+  return player ? OWNER_NAMES[player.faction] : '无主'
+}
+
 /**
  * 城池界面（渲染层组件，纯显示 + 输入转动作）。
  *
@@ -213,7 +219,7 @@ export class TownPanel {
     this.addText(
       cx,
       y0 + 40,
-      `${town.name}  Lv${town.level}  势力：${OWNER_NAMES[town.owner]}`,
+      `${town.name}  Lv${town.level}  势力：${ownerName(state, town)}`,
       { fontFamily: FONT_DISPLAY, fontSize: '32px', color: css(COLORS.gilt) },
       0.5,
       0.5

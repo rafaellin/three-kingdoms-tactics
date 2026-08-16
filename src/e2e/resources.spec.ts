@@ -173,7 +173,7 @@ test('初始化：资源条 = shu 初始资源、第1周第1天、成都城池�
   expect(s.week).toBe(1)
   expect(s.currentFaction).toBe('wei')
   // 资源条 = 蜀（关羽）初始资源
-  expect(s.resources).toEqual(START_RESOURCES.shu)
+  expect(s.resources).toEqual(START_RESOURCES.p1!)
   // HUD 每日产出：成都 Lv1 → +10金/天；开局无占矿 → 木/石/铁 0
   expect(s.dailyIncome).toEqual({ gold: 10, wood: 0, stone: 0, iron: 0 })
   // HUD 流式布局：图标右沿（iconX+11）严格在文本左沿（textX）之前 → 图标不与 (+N) 文本重叠
@@ -211,10 +211,10 @@ test('拾取宝箱：移动到宝箱格后一次性 +30金+5木，picked=1', asy
   const s = await getState(page)
   expect(s.hero?.position).toEqual(CHEST)
   expect(s.resources).toEqual({
-    gold: START_RESOURCES.shu.gold + chestReward().gold,
-    wood: START_RESOURCES.shu.wood + chestReward().wood,
-    stone: START_RESOURCES.shu.stone,
-    iron: START_RESOURCES.shu.iron
+    gold: START_RESOURCES.p1!.gold + chestReward().gold,
+    wood: START_RESOURCES.p1!.wood + chestReward().wood,
+    stone: START_RESOURCES.p1!.stone,
+    iron: START_RESOURCES.p1!.iron
   })
   expect(s.nodeStates?.picked).toBe(1)
   // 探索后新资源点变为可见：渲染集合 = 沿到达路径逐格折叠视野后的期望集合
@@ -235,7 +235,7 @@ test('占矿：走入无主矿格后 claimedMines=1、资源不变（未拾宝�
   expect(s.hero?.position).toEqual(MINE)
   expect(s.nodeStates?.claimedMines).toBe(1)
   expect(s.nodeStates?.picked).toBe(0)
-  expect(s.resources).toEqual(START_RESOURCES.shu)
+  expect(s.resources).toEqual(START_RESOURCES.p1!)
   // HUD 每日产出：成都 +10金/天 + 已占矿的 dailyBonus（按 seed 8 实际矿种算）
   const mineType = map.nodes[hexKey(MINE)] as ResourceNodeType
   const mineBonus = RESOURCE_NODE_DEFS[mineType].dailyBonus
@@ -294,21 +294,21 @@ test('每日结算：拾取宝箱 + 占矿后推进到第2周，城池每日产�
   const s7 = await pressUntil(page, (s) => s.turn === 7, 40)
   expect(s7.week).toBe(1)
   expect(noChest(s7.resources)).toEqual({
-    gold: START_RESOURCES.shu.gold + 6 * 10,
-    wood: START_RESOURCES.shu.wood + 6 * 2
+    gold: START_RESOURCES.p1!.gold + 6 * 10,
+    wood: START_RESOURCES.p1!.wood + 6 * 2
   })
-  expect(s7.resources?.stone).toBe(START_RESOURCES.shu.stone)
-  expect(s7.resources?.iron).toBe(START_RESOURCES.shu.iron)
+  expect(s7.resources?.stone).toBe(START_RESOURCES.p1!.stone)
+  expect(s7.resources?.iron).toBe(START_RESOURCES.p1!.iron)
 
   // ④ 再推进一圈到 turn=8（第2周）：每日结算累计 7 次，成都 +70金、木矿 +14木
   const s8 = await pressUntil(page, (s) => s.turn === 8, 10)
   expect(s8.week).toBe(2)
   expect(noChest(s8.resources)).toEqual({
-    gold: START_RESOURCES.shu.gold + 7 * 10,
-    wood: START_RESOURCES.shu.wood + 7 * 2
+    gold: START_RESOURCES.p1!.gold + 7 * 10,
+    wood: START_RESOURCES.p1!.wood + 7 * 2
   })
-  expect(s8.resources?.stone).toBe(START_RESOURCES.shu.stone)
-  expect(s8.resources?.iron).toBe(START_RESOURCES.shu.iron)
+  expect(s8.resources?.stone).toBe(START_RESOURCES.p1!.stone)
+  expect(s8.resources?.iron).toBe(START_RESOURCES.p1!.iron)
 
   // ⑤ 截图交人工目检：资源点渲染（宝箱/矿）、HUD 资源条、右下角结束回合按钮
   await page.screenshot({ path: 'screenshots/resources-crossweek.png' })

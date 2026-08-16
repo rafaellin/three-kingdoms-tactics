@@ -5,6 +5,7 @@ import {
   computeDailyIncome,
   createInitialState,
   currentHero,
+  currentPlayer,
   deserializeState,
   serializeState,
   weekOf,
@@ -30,7 +31,7 @@ import { TownPanel } from '../ui/TownPanel'
 import { openInfo } from '../ui/Modal'
 import { fadeAndStart, fadeIn } from '../ui/fade'
 import { SfxManager } from '../audio/SfxManager'
-import { HERO_STARTS, START_FACTIONS, START_GENERALS, START_TOWNS, TURN_ORDER } from '../data/bootstrap'
+import { HERO_STARTS, START_GENERALS, START_PLAYERS, START_TOWNS } from '../data/bootstrap'
 import { CAMPAIGNS } from '../data/campaigns'
 import { GENERAL_BASES } from '../data/generals'
 import { BattleScene, type BattleFlowReturn } from './BattleScene'
@@ -290,13 +291,12 @@ export class AdventureScene extends Phaser.Scene {
     } else {
       const map = generateMap(this.seed, this.mapRadius)
       this.store.dispatch('game/setup', {
-        turnOrder: [...TURN_ORDER],
-        factions: START_FACTIONS.map((f) => ({ ...f })),
+        players: START_PLAYERS.map((p) => ({ ...p })),
         generals: START_GENERALS.map((g) => ({ ...g })),
         towns: START_TOWNS.map((t) => ({ ...t })),
         map,
         mapSeed: this.seed,
-        heroStarts: [...HERO_STARTS]
+        heroStarts: HERO_STARTS.map((h) => ({ generalId: h.generalId, playerId: h.playerId, position: { ...h.position } }))
       })
     }
     this.mapKeys = new Set(this.state.map?.hexes.map(hexKey) ?? [])
@@ -473,7 +473,7 @@ export class AdventureScene extends Phaser.Scene {
     const map = this.state.map
     const hero = currentHero(this.state)
     if (!map || !hero) return
-    const fog = this.state.visibility[hero.faction] ?? {}
+    const fog = this.state.visibility[hero.playerId] ?? {}
     for (const hex of map.hexes) {
       const v = fog[hexKey(hex)]
       if (v !== 'unexplored') continue
@@ -486,7 +486,7 @@ export class AdventureScene extends Phaser.Scene {
     this.townGraphics.clear()
     const hero = currentHero(this.state)
     if (!hero) return
-    const fog = this.state.visibility[hero.faction] ?? {}
+    const fog = this.state.visibility[hero.playerId] ?? {}
     const seen = new Set<string>()
     for (const town of this.state.towns) {
       if (fog[hexKey(town.position)] === 'unexplored') continue
@@ -498,8 +498,8 @@ export class AdventureScene extends Phaser.Scene {
         this.townSprites.set(town.id, sprite)
       }
       sprite.setPosition(c.x, c.y)
-      // 归属色 tint：魏红 蜀绿 吴蓝 群紫
-      sprite.setTint(FACTION_COLORS[town.owner])
+      // 归属色 tint：按 owner 玩家所属势力取色（魏红 蜀绿 吴蓝 群紫；同势力玩家同色）
+      sprite.setTint(this.factionColorOf(town.owner))
     }
     // 重建（换种子）后清理已不存在城池的 sprite
     for (const id of this.townSprites.keys()) {
@@ -522,7 +522,7 @@ export class AdventureScene extends Phaser.Scene {
     const map = this.state.map
     const hero = currentHero(this.state)
     if (!map || !hero) return
-    const fog = this.state.visibility[hero.faction] ?? {}
+    const fog = this.state.visibility[hero.playerId] ?? {}
     const seen = new Set<string>()
     for (const [k, type] of Object.entries(map.nodes ?? {})) {
       // 未探索区域资源不可见（与迷雾两态一致；该格被探索后永久可见）
@@ -542,7 +542,7 @@ export class AdventureScene extends Phaser.Scene {
       // 矿：六角底座（比图标略大，深色半透明）→ 设施感；宝箱无底座
       if (isMineType) {
         this.fillHexScaled(this.nodeGraphics, hex, 0.62, 0x0b0f18, 0.55)
-        this.nodeGraphics.lineStyle(2, claimed ? FACTION_COLORS[node.owner as FactionId] : 0xffffff, claimed ? 1 : 0.4)
+        this.nodeGraphics.lineStyle(2, claimed ? this.factionColorOf(node.owner as string) : 0xffffff, claimed ? 1 : 0.4)
         this.nodeGraphics.strokePoints(this.hexPoints(hex, 0.62), true)
       }
       let sprite = this.nodeSprites.get(k)
@@ -575,7 +575,7 @@ export class AdventureScene extends Phaser.Scene {
     this.garrisonGraphics.clear()
     const hero = currentHero(this.state)
     if (!hero) return
-    const fog = this.state.visibility[hero.faction] ?? {}
+    const fog = this.state.visibility[hero.playerId] ?? {}
     const seen = new Set<string>()
     for (const g of this.state.garrisons) {
       if (!g.alive) continue
@@ -627,7 +627,7 @@ export class AdventureScene extends Phaser.Scene {
     this.neutralGraphics.clear()
     const hero = currentHero(this.state)
     if (!hero) return
-    const fog = this.state.visibility[hero.faction] ?? {}
+    const fog = this.state.visibility[hero.playerId] ?? {}
     const seen = new Set<string>()
     for (const n of this.state.neutrals) {
       if (n.defeated) continue
@@ -664,11 +664,12 @@ export class AdventureScene extends Phaser.Scene {
   private updateHud(): void {
     const state = this.state
     const hero = currentHero(state)
-    if (!hero) return
-    const faction = hero.faction
-    const r = state.resources[faction]
-    // 当前势力的每日产出汇总（城池 + 已占矿）
-    const income = computeDailyIncome(state, faction)
+    const player = currentPlayer(state)
+    if (!hero || !player) return
+    const r = state.resources[player.id]
+    if (!r) return
+    // 当前玩家的每日产出汇总（城池 + 已占矿）
+    const income = computeDailyIncome(state, player.id)
     // 流式排布：图标在左、数值文本紧随其后，按文本实际宽度推进游标（图标不固定绝对位置）
     const ICON_SIZE = 22
     const ICON_GAP = 6
@@ -687,11 +688,11 @@ export class AdventureScene extends Phaser.Scene {
     // 刷新产出来源明细（hover tooltip 用）：金 → `成都 Lv1 +10`；矿 → `伐木场 +2`
     const detail: Record<keyof Resources, string[]> = { gold: [], wood: [], stone: [], iron: [] }
     for (const town of state.towns) {
-      if (town.owner !== faction) continue
+      if (town.owner !== player.id) continue
       detail.gold.push(`${town.name} Lv${town.level} +${town.level * 10}`)
     }
     for (const [k, nodeState] of Object.entries(state.nodeStates)) {
-      if (nodeState.owner !== faction) continue
+      if (nodeState.owner !== player.id) continue
       const type = state.map?.nodes?.[k]
       if (!type || !RESOURCE_NODE_DEFS[type].dailyBonus) continue
       const bonus = RESOURCE_NODE_DEFS[type].dailyBonus
@@ -717,6 +718,12 @@ export class AdventureScene extends Phaser.Scene {
 
   private hideHudTooltip(): void {
     this.hudTooltip.setVisible(false)
+  }
+
+  /** playerId → 势力显示色（渲染层专用：按所属玩家查势力；同势力玩家同色） */
+  private factionColorOf(playerId: string): number {
+    const p = this.state.players.find((pl) => pl.id === playerId)
+    return FACTION_COLORS[p?.faction ?? 'shu']
   }
 
   /** hexKey → Axial（渲染层命中/解析用；无法解析返回 null） */
@@ -824,7 +831,7 @@ export class AdventureScene extends Phaser.Scene {
     if (!map || !hero) throw new Error('map/hero 未就绪')
     return new MapMovementCost({
       terrainAt: (h) => map.terrain[hexKey(h)] ?? 'plain',
-      fogAt: (h) => this.state.visibility[hero.faction]?.[hexKey(h)],
+      fogAt: (h) => this.state.visibility[hero.playerId]?.[hexKey(h)],
       // 窄路：存活守将 / 未歼灭杂兵 占据格不可通行（点击其格触发战斗，Task 8 战斗回流）；
       // 守将被歼 / 杂兵被歼后该格自动恢复可通行
       garrisonAt: (h) => this.isBlockedHex(h)
@@ -924,7 +931,7 @@ export class AdventureScene extends Phaser.Scene {
     const type = map.nodes?.[k]
     if (!type) return
     // 未探索区域的资源点不可见 → 不显示
-    if ((state.visibility[hero.faction] ?? {})[k] === 'unexplored') return
+    if ((state.visibility[hero.playerId] ?? {})[k] === 'unexplored') return
     const def = RESOURCE_NODE_DEFS[type]
     const node = state.nodeStates[k]
     const isMineType = Boolean(def.dailyBonus)
@@ -978,7 +985,7 @@ export class AdventureScene extends Phaser.Scene {
     // 因此 reducer 的 moveHeroTo 保持只拦存活守将（守将格不可走入）、不拦杂兵格——
     // 杂兵战斗由点击触发，无需移动校验（Task 6 渲染层 isBlockedHex 仍拦杂兵格，路径不穿过）。
     // 未探索格不触发（迷雾中的守将/杂兵不可见，点击其格视为误点）。
-    const fog = this.state.visibility[hero.faction] ?? {}
+    const fog = this.state.visibility[hero.playerId] ?? {}
     if ((fog[hexKey(hex)] ?? 'unexplored') === 'unexplored') return
     const garrison = this.state.garrisons.find((g) => g.alive && hexKey(g.position) === hexKey(hex))
     const neutral = this.state.neutrals.find((n) => !n.defeated && hexKey(n.position) === hexKey(hex))
@@ -1123,7 +1130,7 @@ export class AdventureScene extends Phaser.Scene {
     if (!hero || !this.state.map) return
     const town = this.state.towns.find((t) => hexKey(t.position) === hexKey(hero.position))
     if (!town) return
-    if (town.owner !== hero.faction) return // 只自动进友城
+    if (town.owner !== currentPlayer(this.state)?.id) return // 只自动进己方城（按玩家归属）
     if (town.visitorGeneralId === hero.generalId || town.garrisonGeneralId === hero.generalId) return
     this.store.dispatch('hero/enterTown', { heroId: hero.generalId, townId: town.id })
     this.refreshViews()
@@ -1191,7 +1198,7 @@ export class AdventureScene extends Phaser.Scene {
     if (!this.store) return { ready: false }
     const state = this.state
     const hero = currentHero(state)
-    const fog = hero ? (state.visibility[hero.faction] ?? {}) : {}
+    const fog = hero ? (state.visibility[hero.playerId] ?? {}) : {}
     const counts = { explored: 0, unexplored: 0 }
     for (const v of Object.values(fog)) counts[v]++
     return {
@@ -1209,7 +1216,9 @@ export class AdventureScene extends Phaser.Scene {
       uiCameraZoom: Math.round(this.uiCam.zoom * 100) / 100,
       turn: state.turn,
       week: weekOf(state.turn),
-      currentFaction: state.currentFaction,
+      // currentFaction 已从 core 删除；此处为 e2e 兼容派生（当前行动玩家的势力）
+      currentFaction: currentPlayer(state)?.faction ?? null,
+      currentPlayerId: state.currentPlayerId,
       mode: this.mode ?? null,
       campaignId: state.campaignId,
       // 战役结局（达成胜利 → 'won'；战斗回流写回后 e2e 断言）
@@ -1250,9 +1259,9 @@ export class AdventureScene extends Phaser.Scene {
             maxMovement: hero.maxMovement
           }
         : null,
-      resources: hero ? state.resources[hero.faction] : null,
-      // HUD 显示的每日产出汇总（当前势力；城池+已占矿）
-      dailyIncome: hero ? computeDailyIncome(state, hero.faction) : null,
+      resources: hero ? state.resources[hero.playerId] : null,
+      // HUD 显示的每日产出汇总（当前玩家；城池+已占矿）
+      dailyIncome: hero ? computeDailyIncome(state, hero.playerId) : null,
       // HUD 流式布局：每个资源列的图标中心 x / 文本左沿 x（e2e 断言图标与文本不重叠）
       hudLayout: this.hudResourceCols.map((col) => ({
         resource: col.resource,

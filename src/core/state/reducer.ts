@@ -4,17 +4,18 @@
  * 任何随机（如野怪/技能抽取）必须由调用方注入 RNG 后放进 payload，不得在本模块使用。
  */
 import type { Command, Reducer } from '../events/CommandLog'
-import { computeVision, type FogMap } from '../fog/Fog'
+import { computeVision, type FogMap, type Visibility } from '../fog/Fog'
 import { hexKey, hexNeighbor, type Axial, type HexDir } from '../hex/HexGrid'
 import type { MapData } from '../map/MapGen'
 import { getTerrain } from '../../data/terrain'
 import { completeResources, RESOURCE_NODE_DEFS } from '../../data/resourceNode'
-import { START_FACTIONS, TURN_ORDER } from '../../data/bootstrap'
+import { START_RESOURCES } from '../../data/bootstrap'
 import type { CampaignConfig } from '../../data/campaigns'
 import type { UnitDefId } from '../../data/units'
 import { GENERAL_BASES } from '../../data/generals'
 import { deriveStats } from '../generals'
 import { MAX_LEVEL, xpToNext } from '../growth'
+import { aiAct, spawnNeutrals } from './ai'
 import {
   BASE_MAX_MOVEMENT,
   BASE_SIGHT_RANGE,
@@ -24,32 +25,32 @@ import {
   currentHero,
   subResources,
   ZERO_RESOURCES,
-  type FactionId,
   type General,
   type GameState,
   type HeroUnit,
+  type Player,
   type Resources,
   type Town
 } from './GameState'
 
 export interface SetupPayload {
-  turnOrder: FactionId[]
-  factions: { id: FactionId; resources: Resources }[]
+  /** 参与回合的玩家序列（顺序 = 轮转顺序） */
+  players: Player[]
   generals: General[]
   towns: Town[]
   map: MapData
   mapSeed: number
-  /** 多英雄初始位置（每武将一英雄；MVP 单英雄） */
-  heroStarts: { generalId: string; position: Axial }[]
+  /** 多英雄初始位置（每武将一英雄；MVP 单英雄），每项带归属玩家 */
+  heroStarts: { generalId: string; playerId: string; position: Axial }[]
 }
 
 export interface FactionResourcesPayload {
-  faction: FactionId
+  playerId: string
   amount: Resources
 }
 
 export interface SpendResourcesPayload {
-  faction: FactionId
+  playerId: string
   cost: Resources
 }
 
@@ -135,21 +136,23 @@ function computeVisionFor(map: MapData, hero: HeroUnit, oldFog: FogMap): FogMap 
   })
 }
 
-/** 初始化：填入势力/资源/武将/城池/地图/英雄，首次计算视野，回合重置到第 1 天 */
+/** 初始化：填入玩家/资源/武将/城池/地图/英雄，首次计算视野，回合重置到第 1 天 */
 function setup(state: GameState, payload: SetupPayload): GameState {
-  const resources: Record<FactionId, Resources> = {
-    wei: { ...ZERO_RESOURCES },
-    shu: { ...ZERO_RESOURCES },
-    wu: { ...ZERO_RESOURCES },
-    qun: { ...ZERO_RESOURCES }
+  // 资源/迷雾按玩家初始化（key = PlayerId；起始资源取 START_RESOURCES，未配置的一律 0）
+  const resources: Record<string, Resources> = {}
+  const visibility: Record<string, Record<string, Visibility>> = {}
+  for (const player of payload.players) {
+    resources[player.id] = { ...(START_RESOURCES[player.id] ?? ZERO_RESOURCES) }
+    visibility[player.id] = {}
   }
-  for (const f of payload.factions) resources[f.id] = { ...f.resources }
-  // 多英雄：直接读 payload.heroStarts（每武将一英雄）
+  // 多英雄：直接读 payload.heroStarts（每武将一英雄），playerId 取自 payload
   const heroes: HeroUnit[] = payload.heroStarts.map((hs) => {
     const general = payload.generals.find((g) => g.id === hs.generalId)
+    const player = payload.players.find((p) => p.id === hs.playerId)
     return {
       generalId: hs.generalId,
-      faction: general?.faction ?? (payload.turnOrder[0] as FactionId),
+      playerId: hs.playerId,
+      faction: general?.faction ?? player?.faction ?? 'shu',
       position: { ...hs.position },
       movementLeft: BASE_MAX_MOVEMENT,
       maxMovement: BASE_MAX_MOVEMENT,
@@ -159,15 +162,15 @@ function setup(state: GameState, payload: SetupPayload): GameState {
   const selectedHeroId = heroes[0]?.generalId ?? null
   const selectedHero = heroes[0] ?? null
   // 初始化资源点状态：地图上每个资源点 → 无主、未拾取
-  const nodeStates: Record<string, { owner: FactionId | null; visited: boolean }> = {}
+  const nodeStates: Record<string, { owner: string | null; visited: boolean }> = {}
   for (const hex of Object.keys(payload.map.nodes ?? {})) {
     nodeStates[hex] = { owner: null, visited: false }
   }
   return {
     ...state,
     turn: 1,
-    currentFaction: (payload.turnOrder[0] as FactionId | undefined) ?? null,
-    turnOrder: [...payload.turnOrder],
+    players: payload.players.map((p) => ({ ...p })),
+    currentPlayerId: payload.players[0]?.id ?? null,
     resources,
     generals: payload.generals.map((g) => ({ ...g, army: g.army ?? [] })),
     towns: payload.towns.map((t) => ({ ...t, garrison: t.garrison ?? [], visitorGeneralId: t.visitorGeneralId ?? null })),
@@ -176,8 +179,8 @@ function setup(state: GameState, payload: SetupPayload): GameState {
     heroes,
     selectedHeroId,
     visibility: selectedHero
-      ? { ...state.visibility, [selectedHero.faction]: computeVisionFor(payload.map, selectedHero, {}) }
-      : state.visibility,
+      ? { ...visibility, [selectedHero.playerId]: computeVisionFor(payload.map, selectedHero, {}) }
+      : visibility,
     nodeStates,
     // 战役/守将/中立/胜负：MVP 空（非战役模式）
     campaignId: null,
@@ -195,21 +198,21 @@ function setup(state: GameState, payload: SetupPayload): GameState {
  */
 function campaignStart(state: GameState, payload: CampaignStartPayload): GameState {
   const camp = payload.campaign
-  const turnOrder: FactionId[] = [...TURN_ORDER]
-  // 战役沿用沙盒初始资源（MVP；campaign 配置未定义资源）
-  const resources: Record<FactionId, Resources> = {
-    wei: { ...ZERO_RESOURCES },
-    shu: { ...ZERO_RESOURCES },
-    wu: { ...ZERO_RESOURCES },
-    qun: { ...ZERO_RESOURCES }
+  // 资源/迷雾按战役 players 初始化（key = PlayerId；AI 玩家无沙盒起始资源 → 0）
+  const resources: Record<string, Resources> = {}
+  const visibility: Record<string, Record<string, Visibility>> = {}
+  for (const player of camp.players) {
+    resources[player.id] = { ...(START_RESOURCES[player.id] ?? ZERO_RESOURCES) }
+    visibility[player.id] = {}
   }
-  for (const f of START_FACTIONS) resources[f.id] = { ...f.resources }
-  // 英雄：每武将一英雄，从 heroStarts 构造（移动力/视野基准与 setup 一致）
+  // 英雄：每武将一英雄，从 heroStarts 构造（移动力/视野基准与 setup 一致），playerId 取自配置
   const heroes: HeroUnit[] = camp.heroStarts.map((hs) => {
     const general = camp.startGenerals.find((g) => g.id === hs.generalId)
+    const player = camp.players.find((p) => p.id === hs.playerId)
     return {
       generalId: hs.generalId,
-      faction: general?.faction ?? (turnOrder[0] ?? 'shu'),
+      playerId: hs.playerId,
+      faction: general?.faction ?? player?.faction ?? 'shu',
       position: { ...hs.position },
       movementLeft: BASE_MAX_MOVEMENT,
       maxMovement: BASE_MAX_MOVEMENT,
@@ -219,15 +222,15 @@ function campaignStart(state: GameState, payload: CampaignStartPayload): GameSta
   const selectedHeroId = heroes[0]?.generalId ?? null
   const selectedHero = heroes[0] ?? null
   // 资源点状态：地图上每个资源点 → 无主、未拾取
-  const nodeStates: Record<string, { owner: FactionId | null; visited: boolean }> = {}
+  const nodeStates: Record<string, { owner: string | null; visited: boolean }> = {}
   for (const hex of Object.keys(camp.map.nodes ?? {})) {
     nodeStates[hex] = { owner: null, visited: false }
   }
   return {
     ...state,
     turn: 1,
-    currentFaction: turnOrder[0] ?? null,
-    turnOrder,
+    players: camp.players.map((p) => ({ ...p })),
+    currentPlayerId: camp.players[0]?.id ?? null,
     resources,
     generals: camp.startGenerals.map((g) => ({ ...g, army: (g.army ?? []).map((u) => ({ ...u })) })),
     towns: camp.startTowns.map((t) => ({
@@ -240,8 +243,8 @@ function campaignStart(state: GameState, payload: CampaignStartPayload): GameSta
     heroes,
     selectedHeroId,
     visibility: selectedHero
-      ? { ...state.visibility, [selectedHero.faction]: computeVisionFor(camp.map, selectedHero, {}) }
-      : state.visibility,
+      ? { ...visibility, [selectedHero.playerId]: computeVisionFor(camp.map, selectedHero, {}) }
+      : visibility,
     nodeStates,
     campaignId: camp.id,
     garrisons:
@@ -264,46 +267,65 @@ function campaignStart(state: GameState, payload: CampaignStartPayload): GameSta
   }
 }
 
-/** 轮到下一势力；一圈轮完则天数 +1；轮到某势力时该势力所有英雄移动力重置；天数 +1 触发每日结算 */
+/**
+ * 按玩家序列推进回合（Task 2 将正式重写；此处为类型适配的最小实现）：
+ * - 从当前玩家推进到「下一个 human 玩家」；AI 玩家自动执行回合（aiAct，MVP no-op）后继续推进；
+ * - 轮到 human：重置该玩家 ALL 英雄移动力（多英雄并行，不能只重置选中的），currentPlayerId = 该玩家；
+ * - 圈回起点（经历整圈）→ system 结算：天数 +1 + 每日结算（按玩家循环）+ 野怪生成（MVP no-op）。
+ * 探索模式（单玩家 p1）：结束回合 = 下一天 + 行动力回满。
+ */
 function advanceTurn(state: GameState): GameState {
-  const order = state.turnOrder
-  if (order.length === 0) return state
-  const idx = state.currentFaction === null ? -1 : order.indexOf(state.currentFaction)
-  const next = (idx + 1) % order.length
-  const nextFaction = order[next] as FactionId
-  // 轮到某势力 → 该势力 ALL 英雄移动力全恢复（多英雄并行：同势力多个英雄都要回满，
-  // 不能只重置当前选中的英雄，否则其他英雄动过后会一直 spent）
-  const heroes = state.heroes.map((h) =>
-    h.faction === nextFaction ? { ...h, movementLeft: h.maxMovement } : h
-  )
-  const oldTurn = state.turn
-  const newTurn = next === 0 ? oldTurn + 1 : oldTurn
-  let nextState: GameState = {
-    ...state,
-    currentFaction: nextFaction,
-    heroes,
-    turn: newTurn
+  const players = state.players
+  if (players.length === 0) return state
+  let idx = state.currentPlayerId === null
+    ? players.length - 1
+    : players.findIndex((p) => p.id === state.currentPlayerId)
+  if (idx < 0) idx = players.length - 1
+  let nextState = state
+  let wrapped = false
+  let humanFound = false
+  // 至多一整圈：推进到下一个 human（AI 自动行动后继续推进）
+  for (let step = 0; step <= players.length; step++) {
+    const next = (idx + 1) % players.length
+    idx = next
+    const p = players[next]
+    if (!p) break
+    if (next === 0) wrapped = true
+    if (p.kind === 'ai') {
+      nextState = aiAct(nextState, p.id) // MVP no-op；AI 自动结束回合
+      continue
+    }
+    // human：重置该玩家所有英雄移动力 + 置 currentPlayerId
+    const heroes = nextState.heroes.map((h) =>
+      h.playerId === p.id ? { ...h, movementLeft: h.maxMovement } : h
+    )
+    nextState = { ...nextState, currentPlayerId: p.id, heroes }
+    humanFound = true
+    break
   }
-  // 天数 +1（一圈轮完回第一势力）：每日结算（城池产金 + 矿产出）
-  if (newTurn !== oldTurn) {
+  if (!humanFound) return nextState
+  // 圈回起点 → system 结算（天数 +1 + 每日结算 + 野怪生成）
+  if (wrapped) {
+    nextState = { ...nextState, turn: nextState.turn + 1 }
     nextState = applyDailyIncome(nextState)
+    nextState = spawnNeutrals(nextState)
   }
   // 跨周（第 N 周 → 第 N+1 周）的"产出预备役部队"依赖军制/招募系统，未实现（PRD 注明）
   return nextState
 }
 
-function addRes(state: GameState, { faction, amount }: FactionResourcesPayload): GameState {
+function addRes(state: GameState, { playerId, amount }: FactionResourcesPayload): GameState {
   return {
     ...state,
-    resources: { ...state.resources, [faction]: addResources(state.resources[faction], amount) }
+    resources: { ...state.resources, [playerId]: addResources(state.resources[playerId] ?? ZERO_RESOURCES, amount) }
   }
 }
 
-function spend(state: GameState, { faction, cost }: SpendResourcesPayload): GameState {
-  if (!canAfford(state, faction, cost)) return state
+function spend(state: GameState, { playerId, cost }: SpendResourcesPayload): GameState {
+  if (!canAfford(state, playerId, cost)) return state
   return {
     ...state,
-    resources: { ...state.resources, [faction]: subResources(state.resources[faction], cost) }
+    resources: { ...state.resources, [playerId]: subResources(state.resources[playerId] ?? ZERO_RESOURCES, cost) }
   }
 }
 
@@ -362,9 +384,11 @@ function moveHeroTo(state: GameState, hero: HeroUnit, to: Axial): GameState {
   if (!map) return state
   if (hexKey(hero.position) === hexKey(to)) return state
   if (!isNeighbor(hero.position, to)) return state
+  // 目标格被其他英雄占据 → 拒绝（问题2：不能重叠/穿过，含己方英雄）
+  if (state.heroes.some((h) => h.generalId !== hero.generalId && hexKey(h.position) === hexKey(to))) return state
   // 守将驻点（存活）不可通行：需先击败守将
   if (state.garrisons.some((g) => g.alive && hexKey(g.position) === hexKey(to))) return state
-  const fog = state.visibility[hero.faction] ?? {}
+  const fog = state.visibility[hero.playerId] ?? {}
   if (fog[hexKey(to)] !== 'explored') return state
   const terrain = getTerrain(map.terrain[hexKey(to)] ?? 'plain')
   if (!Number.isFinite(terrain.moveCost)) return state
@@ -377,12 +401,12 @@ function moveHeroTo(state: GameState, hero: HeroUnit, to: Axial): GameState {
   let next: GameState = {
     ...state,
     heroes: state.heroes.map((h) => (h.generalId === hero.generalId ? moved : h)),
-    visibility: { ...state.visibility, [hero.faction]: computeVisionFor(map, moved, fog) }
+    visibility: { ...state.visibility, [hero.playerId]: computeVisionFor(map, moved, fog) }
   }
-  // 资源点拾取 / 占领
+  // 资源点拾取 / 占领（owner 按 hero.playerId）
   const nodeType = map.nodes?.[hexKey(to)]
   if (nodeType) {
-    next = interactNode(next, hero.faction, hexKey(to), nodeType)
+    next = interactNode(next, hero.playerId, hexKey(to), nodeType)
   }
   return next
 }
@@ -401,10 +425,10 @@ function moveHeroById(state: GameState, { heroId, to }: HeroMovePayload): GameSt
   return moveHeroTo(state, hero, to)
 }
 
-/** 走到含资源点的格：宝箱一次性拾取（visited），无主矿占领（owner） */
+/** 走到含资源点的格：宝箱一次性拾取（visited），无主矿占领（owner=PlayerId） */
 function interactNode(
   state: GameState,
-  faction: FactionId,
+  playerId: string,
   hex: string,
   nodeType: string
 ): GameState {
@@ -418,7 +442,7 @@ function interactNode(
       ...state,
       resources: {
         ...state.resources,
-        [faction]: addResources(state.resources[faction], completeResources(def.oneTime))
+        [playerId]: addResources(state.resources[playerId] ?? ZERO_RESOURCES, completeResources(def.oneTime))
       },
       nodeStates: { ...state.nodeStates, [hex]: { ...nodeState, visited: true } }
     }
@@ -427,7 +451,7 @@ function interactNode(
     if (nodeState.owner) return state // 已有主不夺占（战斗留后续）
     return {
       ...state,
-      nodeStates: { ...state.nodeStates, [hex]: { ...nodeState, owner: faction } }
+      nodeStates: { ...state.nodeStates, [hex]: { ...nodeState, owner: playerId } }
     }
   }
   return state
@@ -481,6 +505,7 @@ function leaveTown(state: GameState, { heroId, townId }: LeaveTownPayload): Game
   if (!general) return state
   const hero: HeroUnit = {
     generalId: heroId,
+    playerId: town.owner, // 出城英雄归属城主玩家
     faction: general.faction,
     position: { ...town.position },
     movementLeft: BASE_MAX_MOVEMENT,

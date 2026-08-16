@@ -13,7 +13,7 @@ import { deriveStats } from '../core/generals'
 import { GENERAL_BASES } from './generals'
 import type { UnitDefId } from './units'
 import type { TerrainId } from './terrain'
-import type { General, Town } from '../core/state/GameState'
+import type { General, Player, Town } from '../core/state/GameState'
 
 /** 守将驻点：站岗不可移动；站岗格不可通行直到被歼 */
 export interface Garrison {
@@ -34,12 +34,14 @@ export interface Neutral {
 export interface CampaignConfig {
   id: 'dongling'
   name: string
+  /** 参与回合的玩家序列（战役 = 玩家 p1 → AI ai1） */
+  players: Player[]
   /** 战役地图（含窄路关卡地形布局） */
   map: MapData
   startTowns: Town[]
   startGenerals: General[]
-  /** 每武将一英雄（多英雄并行），初始位置 */
-  heroStarts: { generalId: string; position: Axial }[]
+  /** 每武将一英雄（多英雄并行），初始位置 + 归属玩家 */
+  heroStarts: { generalId: string; playerId: string; position: Axial }[]
   garrisons: Garrison[]
   neutrals: Neutral[]
   /** 胜利条件：击败孔秀守将 */
@@ -80,10 +82,14 @@ export const CAMPAIGNS: Record<'dongling', CampaignConfig> = {
   dongling: {
     id: 'dongling',
     name: '千里走单骑·东岭关',
+    players: [
+      { id: 'p1', faction: 'shu', kind: 'human' },
+      { id: 'ai1', faction: 'wei', kind: 'ai' }
+    ],
     map: buildDonglingMap(),
     startTowns: [
       {
-        id: 't-dongling', name: '东岭小城', owner: 'shu', level: 1,
+        id: 't-dongling', name: '东岭小城', owner: 'p1', level: 1,
         position: { q: 0, r: 0 }, garrisonGeneralId: null,
         garrison: [], visitorGeneralId: null
       }
@@ -112,9 +118,9 @@ export const CAMPAIGNS: Record<'dongling', CampaignConfig> = {
       }
     ],
     heroStarts: [
-      { generalId: 'g-guan', position: { q: 0, r: -1 } },
-      { generalId: 'g-zhoucang', position: { q: -1, r: -1 } },
-      { generalId: 'g-sunqian', position: { q: 1, r: -1 } }
+      { generalId: 'g-guan', playerId: 'p1', position: { q: 0, r: -1 } },
+      { generalId: 'g-zhoucang', playerId: 'p1', position: { q: -1, r: -1 } },
+      { generalId: 'g-sunqian', playerId: 'p1', position: { q: 1, r: -1 } }
     ],
     garrisons: [
       {
