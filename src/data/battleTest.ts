@@ -22,7 +22,7 @@ const LVBU = GENERAL_BASES['g-lvbu']
 
 export const PLAYER_ARMY: BattleArmyConfig = {
   side: 'player',
-  general: { name: GUAN.name, level: 1, stats: deriveStats(GUAN, 1), passives: GUAN.passives },
+  general: { name: GUAN.name, level: 1, stats: deriveStats(GUAN, 1), passives: [...GUAN.passives] },
   units: [
     { defId: 'militia', count: 30 },
     { defId: 'swordsman', count: 12 },
@@ -33,7 +33,7 @@ export const PLAYER_ARMY: BattleArmyConfig = {
 
 export const ENEMY_ARMY: BattleArmyConfig = {
   side: 'enemy',
-  general: { name: LVBU.name, level: 1, stats: deriveStats(LVBU, 1), passives: LVBU.passives },
+  general: { name: LVBU.name, level: 1, stats: deriveStats(LVBU, 1), passives: [...LVBU.passives] },
   units: [
     { defId: 'militia', count: 20 },
     { defId: 'pikeman', count: 12 },

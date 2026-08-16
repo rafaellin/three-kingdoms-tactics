@@ -31,7 +31,9 @@ function buildGeneral(cfg: BattleArmyConfig): BattleState['general']['player'] {
       passives: cfg.general.passives.map((p) => ({ ...p }))
     }
   }
-  // 无 general：旧字段反推展示值（现有测试/e2e 阵容行为不变）
+  // 无 general：旧字段反推展示值（现有测试/e2e 阵容行为不变）。
+  // 注意：stats 是近似值（atk = atkBonus×3 会丢失原始四舍五入，如 atkBonus 33 → 武力 99 而非 100），
+  // 仅用于六维展示，不参与战斗伤害结算（伤害走 atkBonus/defBonus，见 computeDamage）。
   const atkBonus = cfg.atkBonus ?? 0
   const defBonus = cfg.defBonus ?? 0
   return {

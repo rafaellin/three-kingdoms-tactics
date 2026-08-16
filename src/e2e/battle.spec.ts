@@ -793,5 +793,6 @@ test('战斗数值展示：左右武将卡（六维/蓝量/被动）+ 主菜单�
   expect(s.generalCardText?.player).toContain('被动 铁壁 Lv1')
   expect(s.generalCardText?.enemy).toContain('吕布')
   expect(s.generalCardText?.enemy).toContain('武力 100')
+  expect(s.generalCardText?.enemy).toContain('被动 狂暴 Lv1')
   await page.screenshot({ path: 'screenshots/battle-general-cards.png' }) // 给人看：左右武将卡布局观感
 })

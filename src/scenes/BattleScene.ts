@@ -798,7 +798,7 @@ export class BattleScene extends Phaser.Scene {
       `伤害：${def.minDamage}~${def.maxDamage}`,
       `速度：${def.speed}`,
       `伤兵剩余：${woundedHp(unit)} 血`,
-      `单兵血量：${UNIT_DEFS[unit.defId].hp}`
+      `单兵血量：${def.hp}`
     ])
     const p = this.input.activePointer
     this.infoPanel.setPosition(p.x + 16, p.y + 16).setVisible(true)

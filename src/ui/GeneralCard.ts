@@ -68,7 +68,7 @@ export class GeneralCard {
   }
 
   private readonly onResize = (): void => {
-    this.layout()
+    // render 内部会再次 layout（定位依赖最新相机尺寸），无需重复调用
     if (this.lastState) this.render(this.lastState)
   }
 

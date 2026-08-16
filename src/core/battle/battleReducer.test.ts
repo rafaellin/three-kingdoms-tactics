@@ -585,12 +585,15 @@ describe('battle/init 武将当前属性', () => {
     expect(g.passives).toEqual([{ name: '铁壁', level: 1 }])
   })
   test('无 general：旧字段反推展示值，行为不变', () => {
-    const s = makeStore().getState() // TEST_ARMIES: atkBonus30/defBonus23
+    const s = makeStore().getState() // TEST_ARMIES: atkBonus30/defBonus23, generalName '关羽'
     const g = s.general.player
+    expect(g.name).toBe('关羽')
     expect(g.atkBonus).toBe(30)
     expect(g.defBonus).toBe(23)
     expect(g.stats).toEqual({ atk: 90, def: 69, int: 0, pol: 0, cha: 0 }) // atk=30×3, def=23×3
+    expect(g.level).toBe(1)
     expect(g.maxMana).toBe(0)
+    expect(g.currentMana).toBe(0)
     expect(g.passives).toEqual([])
   })
 })
