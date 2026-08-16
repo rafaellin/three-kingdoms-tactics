@@ -5,7 +5,7 @@ import { xpToNext } from '../core/growth'
 
 /**
  * hover 格 tooltip + 升级提示 e2e（Task 5，spec §4/§8）。
- * - 悬停山脉格 → tooltip 含「不可通过」；悬停杂兵格 → 含「野怪」；悬停城池格 → 含城名；
+ * - 悬停山脉格 → tooltip 含「不可通过」；悬停杂兵格 → 含逐兵种兵力「民兵 ×10」；悬停城池格 → 含城名；
  * - 升级提示接口：dev bridge `grantXp` 注入经验到「差一点升级」→ 打杂兵 → 返回 →
  *   `campaign/resolveBattle` 跨阈值升级 → `levelUpNotice` 出现（含新等级）→ 关闭弹窗后 shown 保持。
  * 断言一律程序化（window.__game.getState()）；截图仅供人工目检。
@@ -77,7 +77,7 @@ const hexToScreen = (h: Axial): { x: number; y: number } => {
   return { x: 1920 / 2 + p.x, y: 1080 / 2 + p.y }
 }
 
-test('hover 格 tooltip：悬停山脉 → 不可通过；杂兵 → 野怪；城池 → 城名', async ({ page }) => {
+test('hover 格 tooltip：悬停山脉 → 不可通过；杂兵 → 逐兵种兵力；城池 → 城名', async ({ page }) => {
   await gotoCampaign(page)
   await page.evaluate(() => (window as { __game?: { setAnimationSpeed(n: number): void } }).__game?.setAnimationSpeed(0))
 
@@ -91,16 +91,16 @@ test('hover 格 tooltip：悬停山脉 → 不可通过；杂兵 → 野怪；�
   let s = await readState(page)
   expect(s.hoverTooltip).toContain('不可通过')
 
-  // ② 悬停杂兵格（neu-1 未歼灭）→ tooltip 含「野怪」
+  // ② 悬停杂兵格（neu-1 未歼灭）→ tooltip 含逐兵种兵力「民兵 ×10」（neu-1 = 10 民兵）
   const neutral = s.neutrals!.find((n) => n.id === 'neu-1')!
   expect(neutral.defeated).toBe(false)
   await page.mouse.move(neutral.screen!.x, neutral.screen!.y)
   await page.waitForFunction(() => {
     const st = (window as { __game?: { getState(): DebugGameState } }).__game?.getState()
-    return st?.hoverTooltip != null && st.hoverTooltip.includes('野怪')
+    return st?.hoverTooltip != null && st.hoverTooltip.includes('民兵 ×10')
   })
   s = await readState(page)
-  expect(s.hoverTooltip).toContain('野怪')
+  expect(s.hoverTooltip).toContain('民兵 ×10')
 
   // ③ 悬停城池格 (0,0) → tooltip 含城名
   const town = hexToScreen({ q: 0, r: 0 })

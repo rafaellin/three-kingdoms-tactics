@@ -52,7 +52,7 @@ test('战役模式：读东岭关配置，3 英雄 + 1 守将 + 2 杂兵，守�
   expect(s.neutrals?.every((n) => !n.defeated)).toBe(true)
 
   // 截图交人工目检：多英雄六角格边框 + 格内姓氏大字（选中关羽金字「關」/周仓孙乾浅字）、
-  // 孔秀红城寨格 + 白字「孔」、两组深绿杂兵格 + 兵力数、东岭小城、窄路山封锁
+  // 孔秀红城寨格 + 白字「孔」、两组深绿杂兵格 + 士兵 logo、东岭小城、窄路山封锁
   await page.screenshot({ path: 'screenshots/campaign-dongling.png' })
 })
 

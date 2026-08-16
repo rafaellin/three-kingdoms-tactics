@@ -25,6 +25,7 @@ import { findPath, reachableArea } from '../core/pathfinding/Pathfinding'
 import { MapMovementCost } from '../core/pathfinding/MapMovementCost'
 import { getTerrain } from '../data/terrain'
 import { RESOURCE_NODE_DEFS } from '../data/resourceNode'
+import { UNIT_DEFS } from '../data/units'
 import { BgmManager, getBgmManager } from '../audio/BgmManager'
 import { BgmControls } from '../ui/BgmControls'
 import { RightPanel } from '../ui/RightPanel'
@@ -129,9 +130,8 @@ export class AdventureScene extends Phaser.Scene {
   /** 守将渲染层（红城寨格 + 格内姓氏大字；与城池同 depth） */
   private garrisonGraphics!: Phaser.GameObjects.Graphics
   private garrisonLabels = new Map<string, Phaser.GameObjects.Text>()
-  /** 杂兵渲染层（深绿野怪格 + 兵力数标签） */
+  /** 杂兵渲染层（深绿野怪格 + 中央程序化士兵头盔 logo） */
   private neutralGraphics!: Phaser.GameObjects.Graphics
-  private neutralLabels = new Map<string, Phaser.GameObjects.Text>()
   /** 多英雄精灵（generalId → 六角格边框）；选中英雄黄框、其余灰蓝框 */
   private heroSprites = new Map<string, Phaser.GameObjects.Graphics>()
   /** 多英雄格内姓氏文本（generalId → 名字首字繁体；mapOnly Text，随 sprite 定位） */
@@ -420,7 +420,6 @@ export class AdventureScene extends Phaser.Scene {
     this.townSprites.clear()
     this.nodeSprites.clear()
     this.garrisonLabels.clear()
-    this.neutralLabels.clear()
     // 固定 UI 相机：叠加在主相机之上（数组靠后 → 后渲染 → 置顶）。
     // 主相机只渲染大地图；HUD/工具栏由 UI 相机渲染，滚轮缩放不再波及它们。
     // 注：setScrollFactor(0) 只豁免相机的滚动平移、不免除缩放，故必须走双相机。
@@ -675,8 +674,8 @@ export class AdventureScene extends Phaser.Scene {
   }
 
   /**
-   * 杂兵渲染：未歼灭的中立野怪画深绿六角格（野怪格）+ 中央兵力数标签；
-   * 被歼（defeated=true）后从地图移除（标签随 seen 清理销毁）。
+   * 杂兵渲染：未歼灭的中立野怪画深绿六角格（野怪格）+ 格中央程序化士兵头盔 logo；
+   * 被歼（defeated=true）后从地图移除（每次 clear 重绘，无需标签清理）。
    * 未探索区域的杂兵不可见。
    */
   private drawNeutrals(): void {
@@ -684,36 +683,32 @@ export class AdventureScene extends Phaser.Scene {
     const hero = currentHero(this.state)
     if (!hero) return
     const fog = this.state.visibility[hero.playerId] ?? {}
-    const seen = new Set<string>()
     for (const n of this.state.neutrals) {
       if (n.defeated) continue
       if (fog[hexKey(n.position)] === 'unexplored') continue
-      seen.add(n.id)
       this.fillHexScaled(this.neutralGraphics, n.position, 0.6, 0x3f4f24, 0.85)
       this.neutralGraphics.lineStyle(1.5, 0x9db85e, 0.9)
       this.neutralGraphics.strokePoints(this.hexPoints(n.position, 0.6), true)
-      // 中央兵力总数标签
-      const count = n.units.reduce((sum, u) => sum + u.count, 0)
-      let label = this.neutralLabels.get(n.id)
-      if (!label) {
-        label = this.mapOnly(
-          this.add.text(0, 0, '', { fontFamily: 'sans-serif', fontSize: '13px', color: '#e8f5c8' })
-            .setOrigin(0.5)
-            .setDepth(2)
-        )
-        this.neutralLabels.set(n.id, label)
-      }
+      // 中央士兵头盔 logo（替代原兵力数字标签；无现成 soldier icon → 程序化）
       const c = this.layout.hexToPixel(n.position)
-      label.setText(String(count))
-      label.setPosition(c.x, c.y)
+      this.drawSoldierLogo(c.x, c.y)
     }
-    // 被歼 / 换种子后清理已不存在杂兵的标签
-    for (const id of this.neutralLabels.keys()) {
-      if (!seen.has(id)) {
-        this.neutralLabels.get(id)?.destroy()
-        this.neutralLabels.delete(id)
-      }
-    }
+  }
+
+  /**
+   * 程序化士兵头盔 logo（杂兵格中央标识；assets/icons 无士兵 icon）：
+   * 白色圆盔（头）+ 顶部盔顶小帽 + 中间深色护目带。叠在深绿杂兵底上，简洁可读。
+   * 全部画进 neutralGraphics（每次 drawNeutrals 开头 clear，无对象生命周期需管理）。
+   */
+  private drawSoldierLogo(cx: number, cy: number): void {
+    const g = this.neutralGraphics
+    // 白色圆盔（头）略靠上 + 盔顶小帽
+    g.fillStyle(0xf2f5ea, 1)
+    g.fillCircle(cx, cy - 1, 6.5)
+    g.fillRect(cx - 2, cy - 9, 4, 4)
+    // 深色护目带横贯头部下半
+    g.fillStyle(0x2b3520, 1)
+    g.fillRect(cx - 6.5, cy - 1, 13, 3)
   }
 
   /** 顶部 HUD：金/木/石/铁 图标+数值(+每日产出) + 第X周第X天（视口固定；流式布局自适应列宽） */
@@ -1125,10 +1120,11 @@ export class AdventureScene extends Phaser.Scene {
         garrison.generalId
       lines.push(`守将 ${name}（${garrison.units.length}队）`)
     }
-    // 未歼灭杂兵：`野怪（1队）`
+    // 未歼灭杂兵：逐兵种列出 `野怪：民兵 ×10`（多兵种 `、` 连接，如 `野怪：民兵 ×10、弓兵 ×6`）
     const neutral = state.neutrals.find((n) => !n.defeated && hexKey(n.position) === k)
     if (neutral) {
-      lines.push(`野怪（${neutral.units.length}队）`)
+      const units = neutral.units.map((u) => `${UNIT_DEFS[u.defId].name} ×${u.count}`).join('、')
+      lines.push(`野怪：${units}`)
     }
     // 格上武将（含访问武将叠城；访问武将已在「访问：」行显示 → 跳过去重，名称只出现一次）
     for (const h of state.heroes) {
