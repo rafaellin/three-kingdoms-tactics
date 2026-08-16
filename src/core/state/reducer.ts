@@ -450,6 +450,7 @@ function enterTown(state: GameState, { heroId, townId }: EnterTownPayload): Game
   const hero = state.heroes.find((h) => h.generalId === heroId)
   const town = state.towns.find((t) => t.id === townId)
   if (!hero || !town) return state
+  if (town.visitorGeneralId) return state // 访问槽被占：拒绝第二英雄进城（防静默覆盖丢失武将）
   if (hexKey(hero.position) !== hexKey(town.position)) return state
   return {
     ...state,

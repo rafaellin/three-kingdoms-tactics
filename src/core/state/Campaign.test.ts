@@ -176,6 +176,21 @@ describe('城池交互', () => {
     expect(back.faction).toBe('shu')
   })
 
+  test('enterTown：访问槽被占时拒绝第二英雄进城（不覆盖丢失武将）', () => {
+    const store = makeCampaignStore()
+    // 孙乾进城成为访问武将
+    store.dispatch('hero/move', { heroId: 'g-sunqian', to: { q: 0, r: 0 } })
+    store.dispatch('hero/enterTown', { heroId: 'g-sunqian', townId: 't-dongling' })
+    // 周仓也走到城格尝试进城 → 拒绝：孙乾仍是访问武将、周仓仍在地图上（不静默丢失）
+    store.dispatch('hero/move', { heroId: 'g-zhoucang', to: { q: -1, r: 0 } })
+    store.dispatch('hero/move', { heroId: 'g-zhoucang', to: { q: 0, r: 0 } })
+    store.dispatch('hero/enterTown', { heroId: 'g-zhoucang', townId: 't-dongling' })
+    const s = store.getState()
+    expect(s.towns[0]!.visitorGeneralId).toBe('g-sunqian') // 原访问武将未被覆盖
+    expect(s.heroes.find((h) => h.generalId === 'g-zhoucang')).toBeDefined() // 周仓仍在地图上
+    expect(s.heroes.find((h) => h.generalId === 'g-sunqian')).toBeUndefined() // 孙乾仍在城内
+  })
+
   test('移兵 clamp：不能移超过可用数；from=garrison 反向', () => {
     const store = makeCampaignStore()
     // 孙乾进城驻守
