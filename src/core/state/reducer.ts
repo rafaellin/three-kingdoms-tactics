@@ -264,19 +264,18 @@ function campaignStart(state: GameState, payload: CampaignStartPayload): GameSta
   }
 }
 
-/** 轮到下一势力；一圈轮完则天数 +1；轮到当前操作英雄所属势力时重置其移动力；天数 +1 触发每日结算 */
+/** 轮到下一势力；一圈轮完则天数 +1；轮到某势力时该势力所有英雄移动力重置；天数 +1 触发每日结算 */
 function advanceTurn(state: GameState): GameState {
   const order = state.turnOrder
   if (order.length === 0) return state
   const idx = state.currentFaction === null ? -1 : order.indexOf(state.currentFaction)
   const next = (idx + 1) % order.length
-  const hero = currentHero(state)
   const nextFaction = order[next] as FactionId
-  // 只重置当前操作英雄（MVP 单英雄 → 与原单英雄语义一致）
-  const heroes =
-    hero && hero.faction === nextFaction
-      ? state.heroes.map((h) => (h.generalId === hero.generalId ? { ...h, movementLeft: h.maxMovement } : h))
-      : state.heroes
+  // 轮到某势力 → 该势力 ALL 英雄移动力全恢复（多英雄并行：同势力多个英雄都要回满，
+  // 不能只重置当前选中的英雄，否则其他英雄动过后会一直 spent）
+  const heroes = state.heroes.map((h) =>
+    h.faction === nextFaction ? { ...h, movementLeft: h.maxMovement } : h
+  )
   const oldTurn = state.turn
   const newTurn = next === 0 ? oldTurn + 1 : oldTurn
   let nextState: GameState = {

@@ -66,6 +66,13 @@ function buildDonglingMap(): MapData {
   terrain[hexKey({ q: 0, r: 2 })] = 'mountain'
   terrain[hexKey({ q: -1, r: 2 })] = 'mountain'
   terrain[hexKey({ q: 1, r: 2 })] = 'mountain'
+  // 东侧翼 (2,-1)/(2,0)/(2,1) 封死：堵死 (1,0)→(2,0)→(2,1) 绕关路径
+  terrain[hexKey({ q: 2, r: -1 })] = 'mountain'
+  terrain[hexKey({ q: 2, r: 0 })] = 'mountain'
+  terrain[hexKey({ q: 2, r: 1 })] = 'mountain'
+  // 西侧翼 (-2,1)/(-2,2) 封死：堵死 (-2,0)→(-2,1)→(-2,2) 绕关路径
+  terrain[hexKey({ q: -2, r: 1 })] = 'mountain'
+  terrain[hexKey({ q: -2, r: 2 })] = 'mountain'
   return { hexes, terrain, nodes: {} }
 }
 

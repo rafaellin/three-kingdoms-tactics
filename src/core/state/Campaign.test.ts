@@ -63,6 +63,26 @@ describe('hero/select 选中英雄', () => {
   })
 })
 
+describe('game/advanceTurn 多英雄回合', () => {
+  test('轮到 shu 时 ALL shu 英雄移动力全恢复（不只选中英雄）', () => {
+    const store = makeCampaignStore()
+    // 关羽 (0,-1)→(0,0)、周仓 (-1,-1)→(-1,0)：各耗 1 点移动力（平地）
+    store.dispatch('hero/move', { heroId: 'g-guan', to: { q: 0, r: 0 } })
+    store.dispatch('hero/move', { heroId: 'g-zhoucang', to: { q: -1, r: 0 } })
+    let s = store.getState()
+    expect(s.currentFaction).toBe('wei') // 战役初始当前势力 = turnOrder[0]
+    expect(s.heroes.find((h) => h.generalId === 'g-guan')!.movementLeft).toBe(5)
+    expect(s.heroes.find((h) => h.generalId === 'g-zhoucang')!.movementLeft).toBe(5)
+    // 结束回合：wei → shu；轮到蜀 → 所有 shu 英雄移动力恢复满（3 英雄并行不丢）
+    store.dispatch('game/advanceTurn')
+    s = store.getState()
+    expect(s.currentFaction).toBe('shu')
+    for (const gid of ['g-guan', 'g-zhoucang', 'g-sunqian']) {
+      expect(s.heroes.find((h) => h.generalId === gid)!.movementLeft).toBe(6)
+    }
+  })
+})
+
 describe('hero/move 英雄移动（守将格拦截）', () => {
   test('目标格是存活守将格 → 拒绝（不可通行）', () => {
     const store = makeCampaignStore()

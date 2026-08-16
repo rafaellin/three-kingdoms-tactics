@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'vitest'
 import { CAMPAIGNS } from './campaigns'
-import { hexKey } from '../core/hex/HexGrid'
+import { hexKey, hexNeighbor, type Axial, type HexDir } from '../core/hex/HexGrid'
 
 describe('CampaignConfig 东岭关', () => {
   test('配置存在：1城/3将/3出生点/1守将/2杂兵/胜利条件', () => {
@@ -22,6 +22,38 @@ describe('CampaignConfig 东岭关', () => {
     // 两侧封死
     expect(c.map.terrain[hexKey({ q: kongxiuPos.q - 1, r: kongxiuPos.r })]).toBe('mountain')
     expect(c.map.terrain[hexKey({ q: kongxiuPos.q + 1, r: kongxiuPos.r })]).toBe('mountain')
+  })
+
+  test('窄路关卡真·唯一通道：封死侧翼，孔秀格 (0,1) 是城通往关后的唯一可通行格', () => {
+    const c = CAMPAIGNS.dongling
+    const map = c.map
+    const isPassable = (h: Axial) => map.terrain[hexKey(h)] !== 'mountain'
+    // 从城 (0,0) 出发 flood-fill 可通行格；blocked 为「不可穿过的格」
+    const reach = (blocked: string | null): Set<string> => {
+      const visited = new Set<string>([hexKey({ q: 0, r: 0 })])
+      const queue: Axial[] = [{ q: 0, r: 0 }]
+      while (queue.length > 0) {
+        const cur = queue.shift() as Axial
+        for (let d = 0; d < 6; d++) {
+          const n = hexNeighbor(cur, d as HexDir)
+          const k = hexKey(n)
+          if (k === blocked) continue
+          if (!map.terrain[k]) continue // 地图外
+          if (!isPassable(n)) continue
+          if (visited.has(k)) continue
+          visited.add(k)
+          queue.push(n)
+        }
+      }
+      return visited
+    }
+    // 绕过孔秀格 (0,1) → 关后不可达：唯一通道就是孔秀格
+    const noKongxiu = reach(hexKey({ q: 0, r: 1 }))
+    expect(noKongxiu.has(hexKey({ q: 0, r: 2 }))).toBe(false)
+    expect(noKongxiu.has(hexKey({ q: 1, r: 2 }))).toBe(false)
+    // 侧翼绕关路径必须封死：东翼 (2,1)、西翼 (-2,2)（修复前是 plain 可绕过）
+    expect(noKongxiu.has(hexKey({ q: 2, r: 1 }))).toBe(false)
+    expect(noKongxiu.has(hexKey({ q: -2, r: 2 }))).toBe(false)
   })
 
   test('武将初始兵力非空', () => {
