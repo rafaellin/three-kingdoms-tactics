@@ -167,12 +167,38 @@ test('城池面板：换将（驻城↔访问互换）', async ({ page }) => {
   await page.mouse.click(TOWN_SCREEN.x, TOWN_SCREEN.y)
   await clickTownAndEnter(page, 'g-zhoucang')
 
-  // ④ 打开面板：garrison=关羽、visitor=周仓 → 点换将 → 互换
+  // ④ 打开面板：garrison=关羽、visitor=周仓（双槽满）
   await page.mouse.click(TOWN_SCREEN.x, TOWN_SCREEN.y)
   await openPanel(page)
   let s = await readState(page)
   expect(s.towns?.[0]?.garrisonGeneralId).toBe('g-guan')
   expect(s.towns?.[0]?.visitorGeneralId).toBe('g-zhoucang')
+
+  // ⑤ 双槽满时移兵（actor 匹配 bug 回归）：按钮在「驻城武将」关羽 army 上，
+  //    移兵扣的是驻城关羽的兵、访问周仓不动（reducer transferTroops = garrison 优先）
+  const guanSwordsBefore = armyOf(s, 'g-guan', 'swordsman')
+  const zhouPikeBefore = armyOf(s, 'g-zhoucang', 'pikeman')
+  await clickBtn(page, 'transfer-hero-swordsman-1')
+  await page.waitForFunction(
+    () =>
+      (window as { __game?: { getState(): DebugGameState } }).__game?.getState()?.towns?.[0]?.garrison?.some(
+        (u) => u.defId === 'swordsman' && u.count === 1
+      )
+  )
+  s = await readState(page)
+  expect(s.towns?.[0]?.garrison).toEqual([{ defId: 'swordsman', count: 1 }])
+  expect(armyOf(s, 'g-guan', 'swordsman')).toBe(guanSwordsBefore - 1)
+  expect(armyOf(s, 'g-zhoucang', 'pikeman')).toBe(zhouPikeBefore)
+  // 反向移兵回驻城英雄
+  await clickBtn(page, 'transfer-garrison-swordsman-1')
+  await page.waitForFunction(
+    () => (window as { __game?: { getState(): DebugGameState } }).__game?.getState()?.towns?.[0]?.garrison?.length === 0
+  )
+  s = await readState(page)
+  expect(s.towns?.[0]?.garrison).toEqual([])
+  expect(armyOf(s, 'g-guan', 'swordsman')).toBe(guanSwordsBefore)
+
+  // ⑥ 换将 → 互换
   await clickBtn(page, 'swap')
   await page.waitForFunction(() => {
     const st = (window as { __game?: { getState(): DebugGameState } }).__game?.getState()

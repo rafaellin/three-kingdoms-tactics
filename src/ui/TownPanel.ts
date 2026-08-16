@@ -224,7 +224,8 @@ export class TownPanel {
 
     const generalOf = (id: string | null): General | undefined =>
       id ? state.generals.find((g) => g.id === id) : undefined
-    const actorId = town.visitorGeneralId ?? town.garrisonGeneralId
+    // 移兵 actor 必须与 reducer 的 transferTroops 一致：garrison 优先（驻守武将的兵进出驻军）
+    const actorId = town.garrisonGeneralId ?? town.visitorGeneralId
     const textStyle: Phaser.Types.GameObjects.Text.TextStyle = {
       fontFamily: 'sans-serif',
       fontSize: '18px',
