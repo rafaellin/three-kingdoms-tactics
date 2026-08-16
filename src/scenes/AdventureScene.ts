@@ -167,9 +167,16 @@ export class AdventureScene extends Phaser.Scene {
   private static readonly HUD_H = 48
   /** 底部工具栏保留高度（px）：BGM 控件 + 结束回合按钮 */
   private static readonly TOOLS_H = 72
+  /** 右侧面板区占用宽度（px）：RightPanel 左缘 = width-170（含背景 box 取整 178）；此 x 右侧视为面板区，不处理地图输入 */
+  private static readonly PANEL_EXCLUDE_W = 178
 
-  /** 屏幕 Y 坐标是否在地图交互区内 */
-  private isInMapZone(screenY: number): boolean {
+  /**
+   * 屏幕坐标是否在地图交互区内（拖拽/点击/悬停/滚轮共用）。
+   * 右侧面板区（x 超过右缘阈值）不处理地图输入：面板行/按钮点击走自身 pointerdown（makeButton），
+   * 不得在 pointerup 泄漏成地图操作（潜在双击/拖拽/悬停）。y 判定保留 HUD/底部工具栏排除。
+   */
+  private isInMapZone(screenY: number, screenX?: number): boolean {
+    if (screenX !== undefined && screenX > this.scale.width - AdventureScene.PANEL_EXCLUDE_W) return false
     return screenY >= AdventureScene.HUD_H && screenY < this.cameras.main.height - AdventureScene.TOOLS_H
   }
 
@@ -958,8 +965,8 @@ export class AdventureScene extends Phaser.Scene {
     this.input.on('pointerdown', (p: Phaser.Input.Pointer) => {
       // 城池面板/胜利面板打开期间 / 面板刚关闭的手势锁 / 非左键 → 不处理地图输入（防面板按钮泄漏成地图拖拽/点击）
       if (this.townPanel || this.victoryModalOpen || this.modalGestureLock || p.button !== 0) return
-      // 仅在 Map 区启动拖拽；HUD / 工具栏区不触发地图交互
-      if (!this.isInMapZone(p.y)) return
+      // 仅在 Map 区启动拖拽；HUD / 工具栏 / 右侧面板区不触发地图交互
+      if (!this.isInMapZone(p.y, p.x)) return
       this.dragging = true
       this.downPos = { x: p.x, y: p.y }
       this.lastPointer = { x: p.x, y: p.y }
@@ -974,7 +981,7 @@ export class AdventureScene extends Phaser.Scene {
         this.lastPointer = { x: p.x, y: p.y }
         return
       }
-      if (this.isInMapZone(p.y)) this.updateHover(p)
+      if (this.isInMapZone(p.y, p.x)) this.updateHover(p)
     })
     this.input.on('pointerup', (p: Phaser.Input.Pointer) => {
       if (p.button !== 0) return // 仅左键触发地图交互
@@ -985,7 +992,7 @@ export class AdventureScene extends Phaser.Scene {
       }
       this.dragging = false
       // 仅在 Map 区处理点击；位移过小视为点击（而非拖拽平移）
-      if (!this.isInMapZone(p.y)) return
+      if (!this.isInMapZone(p.y, p.x)) return
       const moved = Math.hypot(p.x - this.downPos.x, p.y - this.downPos.y)
       if (moved > 6 || this.busy) return
       this.handleClick(p)
@@ -994,8 +1001,8 @@ export class AdventureScene extends Phaser.Scene {
       this.dragging = false
     })
     this.input.on('wheel', (pointer: Phaser.Input.Pointer) => {
-      // 仅在 Map 区滚轮缩放地图；HUD / 工具栏区滚轮不触发（与拖拽/点击同一分区规则）
-      if (!this.isInMapZone(pointer.y)) return
+      // 仅在 Map 区滚轮缩放地图；HUD / 工具栏 / 右侧面板区滚轮不触发（与拖拽/点击同一分区规则）
+      if (!this.isInMapZone(pointer.y, pointer.x)) return
       const zoom = Phaser.Math.Clamp(cam.zoom - (pointer.deltaY ?? 0) * 0.001, 0.4, 2)
       cam.setZoom(zoom)
     })
@@ -1344,8 +1351,9 @@ export class AdventureScene extends Phaser.Scene {
       // 悬停光标类型（'sword' = 可交战战斗目标；e2e 断言）
       cursorKind: this.cursorKind,
       // 渲染层实际创建的英雄 sprite generalId 列表（问题1 回归：scene.start 复用后 Map 被
-      // createLayers 清空重建；旧代码残留死引用 → 战斗返回后此列表为空/与 state.heroes 不一致）
-      renderedHeroes: [...this.heroSprites.keys()],
+      // createLayers 清空重建；旧代码残留死引用 → 战斗返回后此列表为空/与 state.heroes 不一致）。
+      // 只暴露 live sprite（destroy() 已把 active 置 false）→ 死引用被过滤，e2e 断言能真正区分修复前后。
+      renderedHeroes: [...this.heroSprites].filter(([, s]) => s.active).map(([k]) => k),
       heroes: state.heroes.map((h) => ({
         generalId: h.generalId,
         faction: h.faction,

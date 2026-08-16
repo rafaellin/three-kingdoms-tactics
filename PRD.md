@@ -530,7 +530,7 @@ else:            战斗
 - [x] **战斗交互 + 回流（2026-08 Task 8 + Task 5 修订）**：点存活守将/未歼灭杂兵格 → 英雄**直接移动到目标格本身**（`animateMove`；`moveHeroTo` 放行走入；路径中间不穿过武将）→ 到达后触发战斗（构建双方 `BattleArmyConfig`：攻方=当前英雄 army+武将属性；守将=units+`GENERAL_BASES`+`deriveStats`；杂兵=units 无武将「野怪」）→ `scene.start('Battle', { enter: { mode, campaignId, heroId, playerId, targetPosition, garrisonId/neutralId, player, enemy, grid } })`；BattleScene `create(data.enter)` 用外部阵容开局（无 enter 仍走战斗测试固定阵容）；结算后「返回主菜单」按钮若带回流上下文 → 回 Adventure 携带 `BattleResult`；AdventureScene `create(data.result)` → `campaign/resolveBattle` 写回（剩余兵力/经验 `general/gainXp`/守将 `alive=false`/杂兵 `defeated=true`/**胜利占格**（英雄 position=targetPosition、不清空剩余移动力，已扣走进去的代价）/**失败回城**（英雄回玩家第一城格、行动力=0）`checkVictory` 胜利判定）；悬停守将/杂兵格（英雄可达）→ 刀剑光标 `cursorKind='sword'` + 目标格红色交战高亮；e2e `src/e2e/campaign-battle.spec.ts`（含**败局回归**：dev bridge 弱我强敌 → defend 循环战败 → 返回 → 英雄回玩家第一城格 + 行动力 0，杂兵不被歼）
 - [x] **胜利面板（2026-08 Task 9）**：`campaign/resolveBattle` 写回后 `outcome==='won'` → 弹层（`openInfo`「胜利！」/「击败孔秀，东岭关告破」+「返回主菜单」按钮 → `fadeAndStart` 回主菜单）；guard 每次 create 只弹一次；弹层期间屏蔽地图输入/结束回合（与 TownPanel 同机制）；explore 模式 `victory` 为 null → `checkVictory` no-op → outcome 恒 null 不触发；e2e `src/e2e/campaign-full.spec.ts`；完整战役结算/奖励画面未做
 - [x] **世界状态持久化（2026-08 世界快照）**：进战斗前把当前 `GameState` 序列化存渲染层模块级 `worldSnapshot`；战斗返回 `create(data)` 检测快照 → 用 `deserializeState` 恢复为 CommandLog 初始态（不 `campaign/start`）→ 再 `campaign/resolveBattle` 写回战斗结果。城池驻军/移兵/英雄位置/回合/资源跨战斗保留；仅会话内（刷新即丢）。e2e `src/e2e/world-snapshot.spec.ts`
-- [x] **战斗往返 sprite 重建（2026-08 问题1 修复 + 回归 e2e）**：`createLayers()` 开头清空 5 个 sprite/label Map（`heroSprites`/`townSprites`/`nodeSprites`/`garrisonLabels`/`neutralLabels`）——scene.start 复用场景实例时旧 GameObject 被 Phaser 销毁、Map 残留死引用 → draw* 复用 no-op → 武将/城池/资源点图标消失；清空后按需重建。`getDebugState` 暴露 `renderedHeroes`（渲染层实际创建的英雄 sprite generalId 列表），e2e 断言战斗返回后与 `state.heroes` 一致（`src/e2e/campaign-battle.spec.ts`「问题1 回归」）
+- [x] **战斗往返 sprite 重建（2026-08 问题1 修复 + 回归 e2e）**：`createLayers()` 开头清空 5 个 sprite/label Map（`heroSprites`/`townSprites`/`nodeSprites`/`garrisonLabels`/`neutralLabels`）——scene.start 复用场景实例时旧 GameObject 被 Phaser 销毁、Map 残留死引用 → draw* 复用 no-op → 武将/城池/资源点图标消失；清空后按需重建。`getDebugState` 暴露 `renderedHeroes`（渲染层**存活**英雄 sprite generalId 列表，`filter(s.active)` 过滤死引用——旧 bug 下死对象 key 仍在、仅列 key 会漏检），e2e 断言战斗返回后与 `state.heroes` 一致（`src/e2e/campaign-battle.spec.ts`「问题1 回归」）
 - [ ] 持久存档/读档（跨刷新恢复世界状态）：世界快照仅存会话内变量，刷新页面即重置；完整存档需 localStorage/文件 + 多存档槽
 - [ ] 对战模式：当前战役为单机 PvE（玩家方 vs 守将/杂兵 AI 回合制战斗），无玩家对战/热座模式
 
@@ -601,7 +601,7 @@ else:            战斗
 - [x] 视口分区（HUD 区 / Map 交互区 / Tools 区；地图拖拽/点击/滚轮缩放仅在 Map 区生效，HUD/工具栏经独立固定 UI 相机渲染、不随地图缩放）
 - [x] 共享 UI 基建（2026-08 M1）：`src/ui/theme.ts` 调色板 token（nightInk/cinnabar/jade/gilt/parchment/slateAzure）+ `src/ui/button.ts` 带状态按钮 + `src/ui/fade.ts` 场景淡转场；全量颜色替换与正文字体见 §16「UI 美化」
 - [ ] 底部英雄栏
-- [x] 右侧武将/城池列表（2026-08 Task 4 `src/ui/RightPanel.ts`：当前玩家武将行（名字/等级/兵力总数，点击 → `hero/select` 切换，选中行绿底高亮）+ 城池行（名字/等级，点击 → 打开 TownPanel）+「下一个(h)」按钮 / H 键在当前玩家英雄中循环切换；固定屏幕右侧不随地图缩放，简单列表未美化；敌方城池/驻将信息、列表美化见 §16）
+- [x] 右侧武将/城池列表（2026-08 Task 4 `src/ui/RightPanel.ts`：当前玩家武将行（名字/等级/兵力总数，点击 → `hero/select` 切换，选中行绿底高亮）+ 城池行（名字/等级，点击 → 打开 TownPanel）+「下一个(h)」按钮 / H 键在当前玩家英雄中循环切换；固定屏幕右侧不随地图缩放，简单列表未美化；敌方城池/驻将信息、列表美化见 §16；AdventureScene `isInMapZone` 把面板 x 区（右缘 178px）排除出地图交互——拖拽/点击/悬停/滚轮不落到面板上，面板行/按钮 pointerdown 触发动作后 pointerup 不再泄漏成地图命令）
 - [ ] 选中武将详情
 - [ ] 消息日志
 - [x] 胜利画面（2026-08 Task 9 战役胜利面板：`outcome==='won'` 弹层「胜利！」+「返回主菜单」按钮 → 回主菜单；MVP 见 §15 战役模式）
