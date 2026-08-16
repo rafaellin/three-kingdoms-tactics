@@ -1,14 +1,23 @@
 import Phaser from 'phaser'
 import { currentHero, type GameState } from '../core/state/GameState'
-import { UNIT_DEFS } from '../data/units'
-import { COLORS, css } from './theme'
+import { UNIT_DEFS, type UnitDefId } from '../data/units'
+import { BATTLE_SIDE_COLORS, COLORS, css } from './theme'
+
+/** 信息条单个部队方块的调试信息（e2e 经 getDebugState 断言） */
+interface UnitCellInfo {
+  defId: UnitDefId
+  count: number
+  /** 方块中央大字（gridLabel 首字） */
+  char: string
+}
 
 /**
- * 底部当前武将信息条（渲染层组件，纯显示，不做美化——美化后置）。
+ * 底部当前武将信息条（渲染层组件，纯显示）。
  *
  * 屏幕最底部一行，显示当前选中武将（currentHero = selectedHeroId，回退 heroes[0]）：
  * - `名字 Lv等级 移动力 X/Y`（如 `關羽 Lv5 移动力 6/6`）；
- * - 带部队逐格列出 `兵种名 ×数量`（如 `刀兵 ×20  弓兵 ×12`），像战斗行动顺序条那样每个兵种一个条目。
+ * - 带部队逐个方块列出：参照战斗行动顺序条（TurnOrderQueue）——每个部队一个方块，
+ *   底色 = 玩家势力绿（BATTLE_SIDE_COLORS.player，信息条恒为玩家部队）+ 中央兵种大字 + 右下角小字数量。
  *
  * 固定屏幕底部（UI 相机渲染：`cameras.main.ignore` + `setScrollFactor(0)`，不随地图缩放/滚动；
  * 不设 setInteractive → 不拦截地图拖拽/滚轮/点击）。
@@ -20,10 +29,16 @@ export class StatusBar {
   private static readonly BAR_H = 46
   /** 左缘留白（px） */
   private static readonly LEFT_MARGIN = 16
-  /** hero 文本与部队条目间距（px） */
+  /** hero 文本与部队方块间距（px） */
   private static readonly HERO_GAP = 18
-  /** 部队条目间距（px） */
+  /** 部队方块间距（px） */
   private static readonly UNIT_GAP = 10
+  /** 部队方块边长（px，~44 与战斗行动顺序条同量级） */
+  private static readonly UNIT_SIZE = 44
+  /** 方块中央兵种大字字号（px） */
+  private static readonly UNIT_CHAR_SIZE = 26
+  /** 方块右下角数量小字字号（px） */
+  private static readonly UNIT_COUNT_SIZE = 12
 
   private readonly scene: Phaser.Scene
   private readonly objects: Phaser.GameObjects.GameObject[] = []
@@ -31,6 +46,7 @@ export class StatusBar {
   private destroyed = false
   private lastHero = ''
   private lastUnits: string[] = []
+  private lastUnitCells: UnitCellInfo[] = []
 
   constructor(scene: Phaser.Scene) {
     this.scene = scene
@@ -49,15 +65,22 @@ export class StatusBar {
     if (!hero) {
       this.lastHero = ''
       this.lastUnits = []
+      this.lastUnitCells = []
       return
     }
     const general = state.generals.find((g) => g.id === hero.generalId)
     const name = general?.name ?? hero.generalId
     const level = general?.level ?? '?'
     this.lastHero = `${name} Lv${level} 移动力 ${formatMovement(hero.movementLeft)}/${hero.maxMovement}`
-    this.lastUnits = (general?.army ?? []).map((u) => `${UNIT_DEFS[u.defId].name} ×${u.count}`)
+    const army = general?.army ?? []
+    this.lastUnits = army.map((u) => `${UNIT_DEFS[u.defId].name} ×${u.count}`)
+    this.lastUnitCells = army.map((u) => ({
+      defId: u.defId,
+      count: u.count,
+      char: UNIT_DEFS[u.defId].gridLabel.charAt(0)
+    }))
 
-    // 流式排布：hero 文本左对齐，部队条目逐个向右排（取文本实际宽度推进游标）
+    // 流式排布：hero 文本左对齐，部队方块逐个向右排（按方块边长推进游标）
     const y = cam.height - StatusBar.BAR_H / 2
     let x = StatusBar.LEFT_MARGIN
     const heroText = this.addText(x, y, this.lastHero, {
@@ -67,20 +90,9 @@ export class StatusBar {
       color: css(COLORS.gilt)
     })
     x = heroText.x + heroText.width + StatusBar.HERO_GAP
-    for (const unitText of this.lastUnits) {
-      const t = this.addText(
-        x,
-        y,
-        unitText,
-        {
-          fontFamily: 'sans-serif',
-          fontSize: '17px',
-          color: '#ffffff',
-          backgroundColor: css(0x33415c)
-        },
-        { x: 8, y: 3 }
-      )
-      x = t.x + t.width + StatusBar.UNIT_GAP
+    for (const cell of this.lastUnitCells) {
+      this.addUnitSquare(x, y, cell)
+      x += StatusBar.UNIT_SIZE + StatusBar.UNIT_GAP
     }
   }
 
@@ -91,11 +103,12 @@ export class StatusBar {
     this.clear()
   }
 
-  /** 供 dev bridge / e2e：信息条当前文本（hero = 单行武将信息；units = 部队条目列表） */
+  /** 供 dev bridge / e2e：信息条当前内容（hero = 单行武将信息；units = 部队显示文本；unitCells = 部队方块） */
   getDebugState(): Record<string, unknown> {
     return {
       hero: this.lastHero,
       units: this.lastUnits,
+      unitCells: this.lastUnitCells,
       text: [this.lastHero, ...this.lastUnits].filter(Boolean).join('  ')
     }
   }
@@ -137,6 +150,53 @@ export class StatusBar {
     if (padding) t.setPadding(padding.x, padding.y)
     this.objects.push(t)
     return t
+  }
+
+  /**
+   * 画一个部队方块（参照 TurnOrderQueue 方块）：底色玩家势力绿 + 细黑描边，
+   * 中央兵种大字（gridLabel 首字），右下角小字数量（×N）。
+   * cx/cy 为方块中心（垂直与 hero 文本对齐）。
+   */
+  private addUnitSquare(cx: number, cy: number, cell: UnitCellInfo): void {
+    const size = StatusBar.UNIT_SIZE
+    const x0 = cx - size / 2
+    const y0 = cy - size / 2
+    // 方块底色 + 描边（与战斗行动顺序条同风格；玩家势力绿 = 信息条恒为玩家部队）
+    const g = this.uiOnly(this.scene.add.graphics().setDepth(14).setScrollFactor(0))
+    g.fillStyle(BATTLE_SIDE_COLORS.player, 1)
+    g.fillRect(x0, y0, size, size)
+    g.lineStyle(1, 0x000000, 0.4)
+    g.strokeRect(x0, y0, size, size)
+    this.objects.push(g)
+
+    // 中央兵种大字（gridLabel 首字；稍上移留出右下角数量位）
+    const char = this.uiOnly(
+      this.scene.add
+        .text(cx, cy - 2, cell.char, {
+          fontFamily: 'sans-serif',
+          fontSize: `${StatusBar.UNIT_CHAR_SIZE}px`,
+          fontStyle: 'bold',
+          color: '#ffffff'
+        })
+        .setOrigin(0.5)
+        .setDepth(15)
+        .setScrollFactor(0)
+    )
+    this.objects.push(char)
+
+    // 右下角小字数量（锚右下角，内边距 2px）
+    const count = this.uiOnly(
+      this.scene.add
+        .text(x0 + size - 2, y0 + size - 1, `×${cell.count}`, {
+          fontFamily: 'sans-serif',
+          fontSize: `${StatusBar.UNIT_COUNT_SIZE}px`,
+          color: '#ffffff'
+        })
+        .setOrigin(1, 1)
+        .setDepth(15)
+        .setScrollFactor(0)
+    )
+    this.objects.push(count)
   }
 
   /** 底部通栏条：半透明墨色底 + 鎏金顶线（与战斗行动顺序条同系） */

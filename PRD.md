@@ -602,7 +602,7 @@ else:            战斗
 - [x] 右上角 BGM 播放控件（上一首/曲名♪/下一首 + 音量按钮 + 滑块；右对齐整行，底部让位给行动顺序条/状态条）
 - [x] 视口分区（HUD 区 / Map 交互区 / Tools 区；地图拖拽/点击/滚轮缩放仅在 Map 区生效，HUD/工具栏经独立固定 UI 相机渲染、不随地图缩放）
 - [x] 共享 UI 基建（2026-08 M1）：`src/ui/theme.ts` 调色板 token（nightInk/cinnabar/jade/gilt/parchment/slateAzure）+ `src/ui/button.ts` 带状态按钮 + `src/ui/fade.ts` 场景淡转场；全量颜色替换与正文字体见 §16「UI 美化」
-- [x] 底部当前武将信息条（2026-08 Task 4 `src/ui/StatusBar.ts`：屏幕最底部一行，显示当前选中武将 名字 Lv等级 移动力 X/Y + 带部队逐格列出 `兵种名 ×数量`（如 `關羽 Lv5 移动力 6/6  刀兵 ×20  弓兵 ×12`，像战斗行动顺序条那样每兵种一条目）；固定屏幕底部（UI 相机渲染、setScrollFactor(0)），不设 setInteractive 不拦截地图输入；`getDebugState` 暴露 `statusBar`（hero/units/text）供 e2e；AdventureScene 创建 + refreshViews 刷新 + shutdown 销毁）
+- [x] 底部当前武将信息条（2026-08 Task 4 `src/ui/StatusBar.ts`：屏幕最底部一行，显示当前选中武将 名字 Lv等级 移动力 X/Y + 带部队**方块**列出（2026-08 Task 3 改造：**参照战斗行动顺序条 TurnOrderQueue style**——每个部队一个方块，底色玩家势力绿 `BATTLE_SIDE_COLORS.player` + 中央兵种大字（gridLabel 首字 ~26px）+ 右下角小字数量（`×N` ~12px）；如 `關羽 Lv5 移动力 6/6` 右侧两个方块 刀×20 / 弓×12）；固定屏幕底部（UI 相机渲染、setScrollFactor(0)），不设 setInteractive 不拦截地图输入；`getDebugState` 暴露 `statusBar`（hero/units/unitCells/text）供 e2e；AdventureScene 创建 + refreshViews 刷新 + shutdown 销毁）
 - [x] 右侧武将/城池列表（2026-08 Task 4 + Task 3 `src/ui/RightPanel.ts`：当前玩家武将行（名字/等级，**去掉兵力总数——那个数字误导**；armyCount 保留在 debug 供 e2e，点击 → `hero/select` 切换，选中行绿底高亮）+ 城池行（名字/等级，点击 → 打开 TownPanel）+「下一个(h)」按钮 / H 键在当前玩家英雄中循环切换 + **「结束回合」按钮（Task 3：从右下角移入「下一个」下方，dispatch `game/advanceTurn`，与 E 键等效）**；固定屏幕右侧不随地图缩放，简单列表未美化；敌方城池/驻将信息、列表美化见 §16；AdventureScene `isInMapZone` 把面板 x 区（右缘 178px）排除出地图交互——拖拽/点击/悬停/滚轮不落到面板上，面板行/按钮 pointerdown 触发动作后 pointerup 不再泄漏成地图命令）
 - [ ] 选中武将详情
 - [ ] 消息日志

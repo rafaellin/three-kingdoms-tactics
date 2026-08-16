@@ -18,6 +18,7 @@ interface DebugGameState {
   statusBar?: {
     hero: string
     units: string[]
+    unitCells?: { defId: string; count: number; char: string }[]
     text: string
   } | null
 }
@@ -54,6 +55,10 @@ test('底部信息条：进战役显示关羽 + 部队；移动后移动力变�
   expect(s.statusBar).not.toBeNull()
   expect(s.statusBar?.hero).toBe('關羽 Lv5 移动力 6/6')
   expect(s.statusBar?.units).toEqual(['刀兵 ×20', '弓兵 ×12'])
+  expect(s.statusBar?.unitCells).toEqual([
+    { defId: 'swordsman', count: 20, char: '刀' },
+    { defId: 'archer', count: 12, char: '弓' }
+  ])
   expect(s.statusBar?.text).toBe('關羽 Lv5 移动力 6/6  刀兵 ×20  弓兵 ×12')
 
   // ② 移动一格：关羽出生 (0,-1) → 点击 (-1,0)（平地，移动力扣 1 → 5/6）
@@ -62,6 +67,10 @@ test('底部信息条：进战役显示关羽 + 部队；移动后移动力变�
   s = await readState(page)
   expect(s.statusBar?.hero).toBe('關羽 Lv5 移动力 5/6')
   expect(s.statusBar?.units).toEqual(['刀兵 ×20', '弓兵 ×12'])
+  expect(s.statusBar?.unitCells).toEqual([
+    { defId: 'swordsman', count: 20, char: '刀' },
+    { defId: 'archer', count: 12, char: '弓' }
+  ])
 
   // ③ 按 h 切到周仓 → 信息条变（周倉 Lv5 满移动力 + 枪兵/民兵）
   await page.keyboard.press('h')
@@ -71,6 +80,10 @@ test('底部信息条：进战役显示关羽 + 部队；移动后移动力变�
   s = await readState(page)
   expect(s.statusBar?.hero).toBe('周倉 Lv5 移动力 6/6')
   expect(s.statusBar?.units).toEqual(['枪兵 ×15', '民兵 ×20'])
+  expect(s.statusBar?.unitCells).toEqual([
+    { defId: 'pikeman', count: 15, char: '枪' },
+    { defId: 'militia', count: 20, char: '民' }
+  ])
 
   // 截图交人工目检：屏幕底部信息条（关羽 Lv5 移动力 5/6 + 刀兵×20 弓兵×12）
   await page.screenshot({ path: 'screenshots/status-bar.png' })
