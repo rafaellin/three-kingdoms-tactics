@@ -11,6 +11,7 @@ import { hexDistance, hexKey, hexNeighbor, HexLayout, type Axial, type HexDir } 
 import { UNIT_DEFS } from '../data/units'
 import { BATTLE_GRID, BATTLE_OBSTACLES, ENEMY_ARMY, PLAYER_ARMY } from '../data/battleTest'
 import { MainMenuScene } from './MainMenuScene'
+import { AdventureScene } from './AdventureScene'
 import { getBgmManager } from '../audio/BgmManager'
 import { SfxManager } from '../audio/SfxManager'
 import { BgmControls } from '../ui/BgmControls'
@@ -25,6 +26,27 @@ const GRID_COLOR = 0x1a2333
 const GRID_LINE = 0x0b0f18
 const REACHABLE_FILL = 0x66ccff
 const EDGE_HIT_TOLERANCE = 10
+
+/** 大地图 → 战斗：进入战斗的数据（阵容/网格 + 结算回流上下文） */
+export interface BattleFlowEnter {
+  mode?: 'explore' | 'campaign'
+  campaignId?: string
+  /** 参战英雄 id（= generalId；结算写回目标） */
+  heroId?: string
+  /** 打的是守将 → 胜利时标记 alive=false */
+  garrisonId?: string
+  /** 打的是中立杂兵 → 胜利时标记 defeated=true */
+  neutralId?: string
+  player: BattleArmyConfig
+  enemy: BattleArmyConfig
+  grid: { cols: number; rows: number; obstacles?: Axial[] }
+}
+
+/** 战斗 → 大地图：回流数据（enter 的上下文 + 战斗结果；供 AdventureScene 写回） */
+export type BattleFlowReturn = Omit<BattleFlowEnter, 'player' | 'enemy' | 'grid'> & {
+  result: BattleResult
+}
+
 /**
  * 战斗场景（渲染层）。职责：读 BattleState 渲染 + 把悬停/点击/按钮转成 battle 命令。
  * 交互（hover 驱动）：
@@ -94,12 +116,14 @@ export class BattleScene extends Phaser.Scene {
   private resultText!: Phaser.GameObjects.Text
   private returnButton!: Phaser.GameObjects.Text
   private logText!: Phaser.GameObjects.Text
+  /** 大地图回流上下文（create 时从 data.enter 读取；非 null = 结算后回 Adventure 写回） */
+  private battleReturn: Omit<BattleFlowReturn, 'result'> | null = null
 
   constructor() {
     super(BattleScene.KEY)
   }
 
-  create(): void {
+  create(data?: { enter?: BattleFlowEnter }): void {
     // 场景实例被 scene.start 复用：字段默认值只在构造时初始化一次，必须在此重置跨场景残留的渲染状态
     this.visualPos.clear()
     this.dragging = false
@@ -121,13 +145,36 @@ export class BattleScene extends Phaser.Scene {
     this.unitLabels.clear()
     this.unitCounts.clear()
     this.store = new CommandLog<BattleState>(createInitialBattleState(), battleReducer)
-    this.store.dispatch('battle/init', {
-      player: PLAYER_ARMY,
-      enemy: ENEMY_ARMY,
-      grid: { ...BATTLE_GRID, obstacles: BATTLE_OBSTACLES },
-      playerGold: 10000,
-      opponentKind: 'faction'
-    })
+    // 大地图触发战斗（Task 8）：data.enter 携带外部阵容/网格 → 用传入阵容开局（不走默认 demo）；
+    // 无 enter（主菜单「战斗测试」独立入口）→ 仍用固定测试阵容。opponentKind：
+    // 打中立杂兵 = wild（不可议和）、打守将 = faction。
+    const enter = data?.enter
+    this.battleReturn = enter
+      ? {
+          mode: enter.mode,
+          campaignId: enter.campaignId,
+          heroId: enter.heroId,
+          garrisonId: enter.garrisonId,
+          neutralId: enter.neutralId
+        }
+      : null
+    if (enter) {
+      this.store.dispatch('battle/init', {
+        player: enter.player,
+        enemy: enter.enemy,
+        grid: enter.grid,
+        playerGold: 10000,
+        opponentKind: enter.neutralId ? 'wild' : 'faction'
+      })
+    } else {
+      this.store.dispatch('battle/init', {
+        player: PLAYER_ARMY,
+        enemy: ENEMY_ARMY,
+        grid: { ...BATTLE_GRID, obstacles: BATTLE_OBSTACLES },
+        playerGold: 10000,
+        opponentKind: 'faction'
+      })
+    }
     getBgmManager(this).switchToCategory('battle')
     fadeIn(this)
     this.createLayers()
@@ -227,7 +274,16 @@ export class BattleScene extends Phaser.Scene {
       .setPadding(24, 12)
       .setVisible(false)
       .setInteractive({ useHandCursor: true })
-    this.returnButton.on('pointerdown', () => fadeAndStart(this, MainMenuScene.KEY))
+    this.returnButton.on('pointerdown', () => {
+      // 大地图触发战斗（battleReturn 非空）→ 结算写回 Adventure（携带 BattleResult）；
+      // 主菜单「战斗测试」独立入口（battleReturn 空）→ 回主菜单。
+      if (this.battleReturn) {
+        const result = this.getBattleResult()
+        fadeAndStart(this, AdventureScene.KEY, { ...this.battleReturn, result })
+      } else {
+        fadeAndStart(this, MainMenuScene.KEY)
+      }
+    })
     this.positionResult()
     this.logText = this.add
       .text(24, 24, '', { fontFamily: 'sans-serif', fontSize: '16px', color: '#c8d2e0' })
@@ -1141,6 +1197,8 @@ export class BattleScene extends Phaser.Scene {
       bgm: getBgmManager(this).getState(),
       bgmControls: this.bgmControls?.getDebugState() ?? null,
       sfx: this.sfx?.getState() ?? null,
+      // 大地图回流上下文（create 从 data.enter 读；非 null = 结算后回 Adventure 写回）
+      battleReturn: this.battleReturn,
       phase: state.phase,
       camera: { scrollX: Math.round(this.cameras.main.scrollX), scrollY: Math.round(this.cameras.main.scrollY) },
       turn: state.turn,

@@ -521,6 +521,15 @@ else:            战斗
 - [x] A* 移动
 - [ ] AI 敌方英雄移动
 
+### 战役模式（东岭关 · 千里走单骑）
+- [x] 战役配置 `src/data/campaigns.ts`：`CAMPAIGNS['dongling']`（手工窄路地图 / 城池 / 3 我方武将（关羽/周仓/孙乾 Lv5 带兵）/ 英雄出生点 / 守将孔秀 / 2 组中立杂兵 / 胜利条件=击败孔秀）
+- [x] 战役启动 `campaign/start`（mode=campaign 放守将+胜利；mode=explore 不放守将自由探索）；多英雄渲染（每武将一英雄圆点，选中金点+白描边）
+- [x] 守将渲染（红城寨格 + 金色旗标 + 名字标签）；杂兵渲染（深绿野怪格 + 中央兵力数）；被歼/被灭后从地图移除
+- [x] 窄路关卡阻塞：存活守将格不可通行（`makeMapCosts` garrisonAt + reducer `moveHeroTo` 拦存活守将格）；杂兵格渲染层阻塞、**reducer 不阻塞**——杂兵战斗由「点击占据格」触发而非移动进入（Task 8 决策，见下方战斗回流）
+- [x] 城池界面 TownPanel（驻军/驻城/访问 + 移兵/驻守/换将/出城）
+- [x] **战斗回流（2026-08 Task 8）**：点存活守将/未歼灭杂兵格 → 构建双方 `BattleArmyConfig`（攻方=当前英雄 army+武将属性；守将=units+`GENERAL_BASES`+`deriveStats`；杂兵=units 无武将「野怪」）→ `scene.start('Battle', { enter: { mode, campaignId, heroId, garrisonId/neutralId, player, enemy, grid } })`；BattleScene `create(data.enter)` 用外部阵容开局（无 enter 仍走战斗测试固定阵容）；结算后「返回主菜单」按钮若带回流上下文 → 回 Adventure 携带 `BattleResult`；AdventureScene `create(data.result)` → `campaign/resolveBattle` 写回（剩余兵力/经验 `general/gainXp`/守将 `alive=false`/杂兵 `defeated=true`/`checkVictory` 胜利判定）；e2e `src/e2e/campaign-battle.spec.ts`
+- [ ] 胜利画面（Task 9：MVP 仅 `outcome` 写入 core + getDebugState 暴露；完整胜利面板未做）
+
 ### 资源与经济（2026-08 基础版）
 - [x] 资源类型：金 / 木 / 石 / 铁（无"粮食"概念）
 - [x] 资源点/城池/资源条图标（Kenney Board Game Icons，CC0 免署名，见 `assets/icons/README.md`；石头用砖墙图标、宝箱/金币用钱袋图标替代；Kenney 图标为纯白剪影 → 渲染层 `setTint` 按资源代表色上色：金=亮金/木=棕/石=灰/铁=银蓝，城池按归属色）
@@ -559,7 +568,7 @@ else:            战斗
 - [x] 行动结算锁输入（2026-08）：`busy` 期间（冲锋+攻击+反击停顿+闪白）屏蔽点击/跳过，动画未完不能操作下一单位；结算中隐藏刀剑/弓/残影等"可操作"光标图形（`drawHoverLayer` busy 早退）
 - [x] 提示系统：当前单位金标+箭头、移动残影、刀剑/弓/断箭三态光标、目标闪烁、hover 信息面板
 - [x] 标准化 battle log（2026-08）：core 按统一格式记录每步动作——`第X回合 武将·兵种 移动/攻击/射击/反击 … 造成 N 点伤害，歼灭 M 个（全伤|半伤|消灭）`；左上角显示最近 6 条；**分段输出**（主攻完立即输出攻击 log、反击完才输出反击 log，与动画一致）；新增条目 `console.log` + 累计缓冲，dev bridge 提供 `getLog()` / `downloadLog()`（.log 文件）/ `exportState()`（战斗状态 JSON 复现）
-- [x] 胜负判定 + 返回主菜单（结果文字「胜利/战败」（无感叹号）与「返回主菜单」按钮**作为整体水平+垂直居中**、随相机尺寸动态计算，resize 重排；按钮文字 align:center 与结果文字同一轴线；**结算时隐藏战斗操作按钮组**——`src/ui/OperationButtons.ts` 右下角操作按钮组（跳过行动/撤退，后续加待命/防御），统一定位/resize 重排/整体显隐——2026-08 M1 修复，原写死 960 在非 1920 窗口会偏）
+- [x] 胜负判定 + 返回按钮（结果文字「胜利/战败」（无感叹号）与「返回主菜单」按钮**作为整体水平+垂直居中**、随相机尺寸动态计算，resize 重排；按钮文字 align:center 与结果文字同一轴线；**结算时隐藏战斗操作按钮组**——`src/ui/OperationButtons.ts` 右下角操作按钮组（跳过行动/撤退，后续加待命/防御），统一定位/resize 重排/整体显隐——2026-08 M1 修复，原写死 960 在非 1920 窗口会偏；2026-08 Task 8：按钮**按回流上下文决定去向**——大地图触发战斗（`battleReturn` 非空）→ 回 Adventure 携带 `BattleResult` 写回；主菜单「战斗测试」独立入口 → 仍回主菜单）
 - [x] 切场输入防抖：主菜单「战斗测试」按钮 pointerdown 切场后，同一次点击的收尾 pointerup 会泄漏进新场景的全局监听 → 吞掉（仅当场景启动时指针已按下），避免当前行动单位被误移到按钮所在格（2026-08 修复）
 - [x] 行动顺序条（2026-08）：画面底部**全宽通栏条**，按 `state.order` 显示当前回合行动顺序（方块底色=兵种六边形格子同色、中央 gridLabel **单字**、当前单位黄框高亮、已行动灰掉；跨回合按剩余部队当前速度自动重排；`src/ui/TurnOrderQueue.ts` 纯显示**不拦截**地图拖拽/滚轮/点击；数据完全派生自 core，视图无重复状态）
 - [x] 行动顺序条中途重排（2026-08）：`battle/speedMod` 命令支持对单位叠加速度修正（减速/加速技能入口；`BattleUnit.speedMod` 跨回合保留，`effectiveSpeed` 统一取值）；重排只作用于**当前单位之后的未行动段**——当前单位不被越过、加速最多紧接其后；重排顺带**剔除阵亡残留 id**；受影响单位在 waitQueue 时同步重排**等待段**（保留当前单位，其后按速度升序）；dev bridge `applySpeedMod(unitId, delta)` 供 e2e/调试
@@ -600,7 +609,7 @@ else:            战斗
 ### P0 — 核心缺失
 - [ ] 开局选将（强3选1 + 普3选1）
 - [ ] 技能系统（主动计略 + 被动技能，预设路线，随机2选1；`skillSlots` 计数已预留（Lv1=0、每 3 级 +1），技能池/2选1/施放未做；被动技能当前在武将卡中**仅展示**，效果待技能系统）
-- [ ] 武将升级（经验获取，每级属性增长，每3级解锁技能；2026-08 core 已完成：双锚点成长 deriveStats（低起步→20级锚点）+ growth 经验曲线（xpToNext/maxUnits）+ general/gainXp 升级命令 + 战斗 killedHp 经验结算（1 HP=1 经验，仅战胜）+ battle init 部队数上限截断（maxUnits，战斗测试阵容已升 Lv20 展示）；剩「战斗→武将经验接线 + 技能池 + UI」）
+- [ ] 武将升级（经验获取，每级属性增长，每3级解锁技能；2026-08 core 已完成：双锚点成长 deriveStats（低起步→20级锚点）+ growth 经验曲线（xpToNext/maxUnits）+ general/gainXp 升级命令 + 战斗 killedHp 经验结算（1 HP=1 经验，仅战胜）+ battle init 部队数上限截断（maxUnits，战斗测试阵容已升 Lv20 展示）+ **战斗→武将经验接线（2026-08 Task 8 战斗回流：`campaign/resolveBattle` 写回 expGained）**；剩「技能池 + UI」）
 - [x] 资源系统（金/木/石/铁）+ 资源点拾取（2026-08 基础版：宝箱固定值 30金+5木；随机化待 RNG 注入机制）
 - [x] 资源矿（占领后每日产出：木2/石1/铁1，**占位值待平衡**；**中立守军**依赖战斗系统未做）
 - [x] 城池每日收入（基础 = 内政厅等级×10金/天，已做；**驻将政治/魅力加成**依赖武将六维属性未做；**每周预备役部队**依赖军制/招募系统未做）

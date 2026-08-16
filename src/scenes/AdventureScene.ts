@@ -8,8 +8,14 @@ import {
   weekOf,
   type FactionId,
   type GameState,
+  type GarrisonState,
+  type HeroUnit,
+  type NeutralState,
   type Resources
 } from '../core/state/GameState'
+import type { BattleArmyConfig, BattleResult } from '../core/battle/types'
+import { deriveStats } from '../core/generals'
+import { BATTLE_GRID } from '../data/battleTest'
 import { generateMap } from '../core/map/MapGen'
 import { hexKey, HexLayout, type Axial } from '../core/hex/HexGrid'
 import { findPath, reachableArea } from '../core/pathfinding/Pathfinding'
@@ -24,6 +30,7 @@ import { SfxManager } from '../audio/SfxManager'
 import { HERO_STARTS, START_FACTIONS, START_GENERALS, START_TOWNS, TURN_ORDER } from '../data/bootstrap'
 import { CAMPAIGNS } from '../data/campaigns'
 import { GENERAL_BASES } from '../data/generals'
+import { BattleScene, type BattleFlowReturn } from './BattleScene'
 
 /** 势力显示颜色（渲染层专用）：魏红 蜀绿 吴蓝 群紫 */
 const FACTION_COLORS: Record<FactionId, number> = {
@@ -180,15 +187,31 @@ export class AdventureScene extends Phaser.Scene {
     super(AdventureScene.KEY)
   }
 
-  create(data?: { mode?: 'explore' | 'campaign'; campaignId?: 'dongling' }): void {
-    // 读主菜单传入的模式/战役（fadeAndStart → scene.start 的 data）
+  /** 场景 data：主菜单传 {mode, campaignId}；战斗回流回传 enter 上下文 + result */
+  create(
+    data?: { mode?: 'explore' | 'campaign'; campaignId?: string } & Omit<BattleFlowReturn, 'result'> & {
+      result?: BattleResult
+    }
+  ): void {
+    // 读主菜单传入的模式/战役（fadeAndStart → scene.start 的 data）；战斗回流也带 mode/campaignId
     this.mode = data?.mode ?? undefined
-    this.campaignId = data?.campaignId ?? 'dongling'
+    this.campaignId = (data?.campaignId as 'dongling') ?? 'dongling'
     // BGM 管理器先创建（createLayers 中 BGM 控件依赖它）
     this.bgm = getBgmManager(this)
     fadeIn(this)
     this.createLayers()
     this.buildStore()
+    // 战斗回流（Task 8）：从 Battle 返回时 data.result 携带 BattleResult → 写回大地图
+    // （经验/剩余兵力/守将歼灭/中立歼灭/胜利判定）。在 buildStore（campaign/start）之后 dispatch，
+    // 确保写回发生在全新战役状态上。
+    if (data?.result && data.heroId) {
+      this.store.dispatch('campaign/resolveBattle', {
+        result: data.result,
+        garrisonId: data.garrisonId,
+        neutralId: data.neutralId,
+        heroId: data.heroId
+      })
+    }
     this.refreshViews()
     this.setupInput()
     // 地图中心（世界原点）居中到屏幕中心。视口 1920×1080 → scroll(-960,-540)
@@ -763,13 +786,13 @@ export class AdventureScene extends Phaser.Scene {
     return new MapMovementCost({
       terrainAt: (h) => map.terrain[hexKey(h)] ?? 'plain',
       fogAt: (h) => this.state.visibility[hero.faction]?.[hexKey(h)],
-      // 窄路：存活守将 / 未歼灭杂兵 占据格不可通行（需先战斗，Task 8 接线）；
+      // 窄路：存活守将 / 未歼灭杂兵 占据格不可通行（点击其格触发战斗，Task 8 战斗回流）；
       // 守将被歼 / 杂兵被歼后该格自动恢复可通行
       garrisonAt: (h) => this.isBlockedHex(h)
     })
   }
 
-  /** 不可通行格：存活守将驻点（窄路关卡阻塞）+ 未歼灭中立杂兵（点击不触发移动，战斗接线 Task 8） */
+  /** 不可通行格：存活守将驻点（窄路关卡阻塞）+ 未歼灭中立杂兵（路径不穿过；点击其格触发战斗，Task 8） */
   private isBlockedHex(h: Axial): boolean {
     const k = hexKey(h)
     return (
@@ -910,11 +933,82 @@ export class AdventureScene extends Phaser.Scene {
       }
     }
     if (!hero || !this.mapKeys.has(hexKey(hex))) return
-    // 守将/杂兵占据格在 makeMapCosts 中不可通行 → 不在可达集 → 自然 no-op（战斗接线 Task 8）
+    // 点击存活守将 / 未歼灭杂兵占据格 → 触发战斗（战斗回流 Task 8）。
+    // 这些格在 makeMapCosts 中不可通行（不在可达集），旧逻辑落到下面的 reachable 检查自然 no-op；
+    // 现在在 reachable 检查之前拦截：战斗由「点击占据格」触发，而非「移动进入」。
+    // 因此 reducer 的 moveHeroTo 保持只拦存活守将（守将格不可走入）、不拦杂兵格——
+    // 杂兵战斗由点击触发，无需移动校验（Task 6 渲染层 isBlockedHex 仍拦杂兵格，路径不穿过）。
+    // 未探索格不触发（迷雾中的守将/杂兵不可见，点击其格视为误点）。
+    const fog = this.state.visibility[hero.faction] ?? {}
+    if ((fog[hexKey(hex)] ?? 'unexplored') === 'unexplored') return
+    const garrison = this.state.garrisons.find((g) => g.alive && hexKey(g.position) === hexKey(hex))
+    const neutral = this.state.neutrals.find((n) => !n.defeated && hexKey(n.position) === hexKey(hex))
+    if (garrison || neutral) {
+      this.triggerBattle(hero, garrison, neutral)
+      return
+    }
     if (!this.reachable.has(hexKey(hex))) return
     const path = findPath(hero.position, hex, this.makeMapCosts())
     if (!path || path.length < 2) return
     void this.animateMove(path)
+  }
+
+  /**
+   * 点击守将/杂兵格 → 进入战斗（Task 8 战斗回流）。
+   * 攻方 = 当前选中英雄（currentHero）：其 army + 武将当前属性构建 player 阵容；
+   * 守将 → garrison.units + 守将基础表（GENERAL_BASES + deriveStats）构建 enemy 阵容；
+   * 杂兵 → neutral.units 构建 enemy 阵容（无武将：通用「野怪」名 + 0 攻防加成）。
+   * 胜负由 BattleScene 结算，返回时经 data.result 写回大地图（campaign/resolveBattle）。
+   */
+  private triggerBattle(hero: HeroUnit, garrison: GarrisonState | undefined, neutral: NeutralState | undefined): void {
+    const general = this.state.generals.find((g) => g.id === hero.generalId)
+    if (!general) return
+    const player: BattleArmyConfig = {
+      side: 'player',
+      general: { name: general.name, level: general.level, stats: general.stats, passives: general.passives },
+      units: general.army.map((a) => ({ defId: a.defId, count: a.count }))
+    }
+    let enemy: BattleArmyConfig
+    if (garrison) {
+      const base = GENERAL_BASES[garrison.generalId as keyof typeof GENERAL_BASES]
+      enemy = {
+        side: 'enemy',
+        ...(base
+          ? {
+              general: {
+                name: base.name,
+                level: garrison.level,
+                stats: deriveStats(base, garrison.level),
+                passives: base.passives.map((p) => ({ ...p }))
+              }
+            }
+          : { generalName: garrison.generalId, atkBonus: 0, defBonus: 0 }),
+        units: garrison.units.map((u) => ({ defId: u.defId, count: u.count }))
+      }
+    } else if (neutral) {
+      enemy = {
+        side: 'enemy',
+        // 野怪：无武将（通用展示 + 0 攻防加成；neutralId 标记胜利后 defeated）
+        generalName: '野怪',
+        atkBonus: 0,
+        defBonus: 0,
+        units: neutral.units.map((u) => ({ defId: u.defId, count: u.count }))
+      }
+    } else {
+      return
+    }
+    this.scene.start(BattleScene.KEY, {
+      enter: {
+        mode: this.mode,
+        campaignId: this.campaignId,
+        heroId: hero.generalId,
+        ...(garrison ? { garrisonId: garrison.id } : {}),
+        ...(neutral ? { neutralId: neutral.id } : {}),
+        player,
+        enemy,
+        grid: { cols: BATTLE_GRID.cols, rows: BATTLE_GRID.rows }
+      }
+    })
   }
 
   /** 打开城池界面：传 getState 读最新 core 状态，动作接线到 reducer 命令 + 重绘面板 + 刷新地图 */
@@ -1019,6 +1113,13 @@ export class AdventureScene extends Phaser.Scene {
 
   // ---------- dev 调试句柄 / e2e ----------
 
+  /** hex 轴向坐标 → 屏幕像素（相机 scroll 换算；zoom=1 场景，与 BattleScene 口径一致） */
+  private hexToScreen(h: Axial): { x: number; y: number } {
+    const p = this.layout.hexToPixel(h)
+    const cam = this.cameras.main
+    return { x: p.x - cam.scrollX, y: p.y - cam.scrollY }
+  }
+
   getDebugState(): Record<string, unknown> {
     // preload 加载图标期间 create() 尚未运行，store 未建：返回未就绪，让 e2e waitReady 轮询等待
     if (!this.store) return { ready: false }
@@ -1045,6 +1146,8 @@ export class AdventureScene extends Phaser.Scene {
       currentFaction: state.currentFaction,
       mode: this.mode ?? null,
       campaignId: state.campaignId,
+      // 战役结局（达成胜利 → 'won'；战斗回流写回后 e2e 断言）
+      outcome: state.outcome,
       heroes: state.heroes.map((h) => ({
         generalId: h.generalId,
         faction: h.faction,
@@ -1056,18 +1159,21 @@ export class AdventureScene extends Phaser.Scene {
         id: g.id,
         name: g.name,
         level: g.level,
+        xp: g.xp,
         army: g.army
       })),
       garrisons: state.garrisons.map((g) => ({
         id: g.id,
         generalId: g.generalId,
         position: g.position,
-        alive: g.alive
+        alive: g.alive,
+        screen: this.hexToScreen(g.position)
       })),
       neutrals: state.neutrals.map((n) => ({
         id: n.id,
         position: n.position,
-        defeated: n.defeated
+        defeated: n.defeated,
+        screen: this.hexToScreen(n.position)
       })),
       hero: hero
         ? {
