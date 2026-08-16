@@ -60,6 +60,11 @@ interface DebugGameState {
   modal?: { open: boolean; title: string; message: string } | null
   battleResult?: { outcome: string } | null
   actionButtons?: Record<string, { x: number; y: number }>
+  general?: {
+    player?: { name?: string; level?: number; stats?: { atk?: number; def?: number; int?: number; pol?: number; cha?: number }; maxMana?: number; currentMana?: number; passives?: { name?: string; level?: number }[] }
+    enemy?: { name?: string; level?: number; stats?: { atk?: number; def?: number; int?: number; pol?: number; cha?: number }; maxMana?: number; currentMana?: number; passives?: { name?: string; level?: number }[] }
+  }
+  generalCardText?: { player?: string; enemy?: string }
 }
 
 const getState = (page: Page): Promise<DebugGameState> =>
@@ -761,4 +766,32 @@ test('议和：点【和】→ 弹窗文案含保释金 → 确认 → phase=neg
     return st?.phase === 'negotiated'
   })
   expect((await getState(page)).battleResult?.outcome).toBe('negotiated')
+})
+
+test('战斗数值展示：左右武将卡（六维/蓝量/被动）+ 主菜单战斗测试入口', async ({ page }) => {
+  await gotoBattle(page) // 主菜单 → 战斗测试（PLAYER_ARMY=关羽 / ENEMY_ARMY=吕布，带 general）
+  await waitBattleReady(page)
+  const s = await getState(page)
+  // 攻方（左）关羽卡：六维/蓝量/被动
+  expect(s.general?.player).toMatchObject({
+    name: '关羽', level: 1,
+    stats: { atk: 90, def: 70, int: 50, pol: 60, cha: 80 },
+    maxMana: 50, currentMana: 50,
+    passives: [{ name: '铁壁', level: 1 }]
+  })
+  // 守方（右）吕布卡
+  expect(s.general?.enemy).toMatchObject({
+    name: '吕布', level: 1,
+    stats: { atk: 100, def: 80, int: 30, pol: 20, cha: 40 },
+    maxMana: 30, currentMana: 30,
+    passives: [{ name: '狂暴', level: 1 }]
+  })
+  // 卡已渲染（debug 暴露可见文本）
+  expect(s.generalCardText?.player).toContain('关羽')
+  expect(s.generalCardText?.player).toContain('武力 90')
+  expect(s.generalCardText?.player).toContain('蓝量 50/50')
+  expect(s.generalCardText?.player).toContain('被动 铁壁 Lv1')
+  expect(s.generalCardText?.enemy).toContain('吕布')
+  expect(s.generalCardText?.enemy).toContain('武力 100')
+  await page.screenshot({ path: 'screenshots/battle-general-cards.png' }) // 给人看：左右武将卡布局观感
 })

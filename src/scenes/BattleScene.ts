@@ -17,6 +17,7 @@ import { BgmControls } from '../ui/BgmControls'
 import { BattleActionButtons } from '../ui/BattleActionButtons'
 import { openConfirm, openInfo } from '../ui/Modal'
 import { TurnOrderQueue } from '../ui/TurnOrderQueue'
+import { GeneralCard } from '../ui/GeneralCard'
 import { fadeAndStart, fadeIn } from '../ui/fade'
 import { BATTLE_SIDE_COLORS } from '../ui/theme'
 
@@ -77,6 +78,8 @@ export class BattleScene extends Phaser.Scene {
   private lastPointer = { x: 0, y: 0 }
   private actionButtons: BattleActionButtons | null = null
   private turnOrderQueue: TurnOrderQueue | null = null
+  /** 左右武将卡（screen-fixed；Player=左贴缘、Enemy=右贴缘） */
+  private generalCards: { player: GeneralCard; enemy: GeneralCard } | null = null
   /** 当前打开的弹窗（调试 / e2e 断言用；openConfirm/openInfo 期间非 null） */
   private activeModal: { open: true; title: string; message: string } | null = null
   /** 弹窗关闭后到手势收尾（下一次 pointerup）前的输入锁：挡住本次点击残余的 down/move/up，
@@ -112,6 +115,7 @@ export class BattleScene extends Phaser.Scene {
     this.hitFlashCount = 0
     this.activeModal = null
     this.modalGestureLock = false
+    this.generalCards = null
     this.hover = { ghostHex: null, swordHex: null, swordAdjHex: null, cursorKind: 'none', swordTargetId: null, blinkId: null }
     this.blinkPhase = 0
     this.unitLabels.clear()
@@ -134,6 +138,9 @@ export class BattleScene extends Phaser.Scene {
       this.bgmControls?.destroy()
       this.actionButtons?.destroy()
       this.turnOrderQueue?.destroy()
+      this.generalCards?.player.destroy()
+      this.generalCards?.enemy.destroy()
+      this.generalCards = null
     })
   }
 
@@ -246,6 +253,11 @@ export class BattleScene extends Phaser.Scene {
       leftW: this.actionButtons.getLeftWidth(),
       rightW: this.actionButtons.getRightWidth()
     })
+    // 左右武将卡（screen-fixed：攻方贴左缘、守方贴右缘）
+    this.generalCards = {
+      player: new GeneralCard(this, 'player'),
+      enemy: new GeneralCard(this, 'enemy')
+    }
     this.scale.on('resize', () => {
       this.centerCamera()
       this.positionResult()
@@ -417,6 +429,8 @@ export class BattleScene extends Phaser.Scene {
     this.drawUnits()
     this.drawOverlay()
     this.turnOrderQueue?.render(this.state)
+    this.generalCards?.player.render(this.state)
+    this.generalCards?.enemy.render(this.state)
     this.updateLogAndResult()
   }
 
@@ -1145,6 +1159,11 @@ export class BattleScene extends Phaser.Scene {
       waitQueue: state.waitQueue,
       completedQueue: state.completedQueue,
       turnQueue: buildTurnOrderQueue(state),
+      general: state.general,
+      generalCardText: {
+        player: this.generalCards?.player.getDebugText() ?? '',
+        enemy: this.generalCards?.enemy.getDebugText() ?? ''
+      },
       modal: this.activeModal,
       // 底部行动条各按钮中心坐标（e2e 点击用；方形按钮放大后 x 中心位移，从 debug state 读而非硬编码）
       actionButtons: Object.fromEntries(
