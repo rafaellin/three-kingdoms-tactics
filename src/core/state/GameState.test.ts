@@ -39,7 +39,7 @@ describe('game/setup', () => {
     expect(currentPlayer(s)?.id).toBe('p1')
     expect(s.resources.p1).toEqual({ gold: 80, wood: 20, stone: 10, iron: 5 })
     expect(s.generals).toHaveLength(1)
-    expect(s.generals[0]?.name).toBe('关羽')
+    expect(s.generals[0]?.name).toBe('關羽')
     expect(s.towns).toHaveLength(1)
     expect(s.towns[0]?.owner).toBe('p1')
     expect(s.map?.hexes).toHaveLength(37)

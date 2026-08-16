@@ -318,15 +318,15 @@ test('标准化 battle log：getLog / exportState（后台日志 + 状态导出�
   await waitBattleReady(page)
   await setAnimationSpeed(page, 0)
   await startBattle(page,
-    { side: 'player', generalName: '关羽', atkBonus: 0, defBonus: 0, units: [{ defId: 'militia', count: 20 }] },
-    { side: 'enemy', generalName: '吕布', atkBonus: 0, defBonus: 0, units: [{ defId: 'militia', count: 20 }] },
+    { side: 'player', generalName: '關羽', atkBonus: 0, defBonus: 0, units: [{ defId: 'militia', count: 20 }] },
+    { side: 'enemy', generalName: '呂布', atkBonus: 0, defBonus: 0, units: [{ defId: 'militia', count: 20 }] },
     { cols: 7, rows: 3 })
   const s = await getState(page)
   const reach1 = s.reachable!.find((h) => h.q === 1 && h.r === 0)!
   await page.mouse.click(reach1.screen.x, reach1.screen.y) // 移动
   // 后台 log（标准化格式：回合·武将·兵种·位置）
   const log = await page.evaluate(() => (window as { __game?: { getLog(): string } }).__game?.getLog() ?? '')
-  expect(log).toContain('第1回合 关羽的民兵 移动到 (1,0)')
+  expect(log).toContain('第1回合 關羽的民兵 移动到 (1,0)')
   // 导出状态为 JSON（复现 / debug）
   const exp = await page.evaluate(() => (window as { __game?: { exportState(): string } }).__game?.exportState() ?? '{}')
   const parsed = JSON.parse(exp) as { units?: unknown[]; log?: string[] }
@@ -774,24 +774,24 @@ test('战斗数值展示：左右武将卡（六维/蓝量/被动）+ 主菜单�
   const s = await getState(page)
   // 攻方（左）关羽卡：六维/蓝量/被动
   expect(s.general?.player).toMatchObject({
-    name: '关羽', level: 20,
+    name: '關羽', level: 20,
     stats: { atk: 96, def: 70, int: 50, pol: 60, cha: 80 },
     maxMana: 100, currentMana: 100,
     passives: [{ name: '铁壁', level: 1 }]
   })
   // 守方（右）吕布卡
   expect(s.general?.enemy).toMatchObject({
-    name: '吕布', level: 20,
+    name: '呂布', level: 20,
     stats: { atk: 100, def: 80, int: 30, pol: 20, cha: 40 },
     maxMana: 60, currentMana: 60,
     passives: [{ name: '狂暴', level: 1 }]
   })
   // 卡已渲染（debug 暴露可见文本）
-  expect(s.generalCardText?.player).toContain('关羽')
+  expect(s.generalCardText?.player).toContain('關羽')
   expect(s.generalCardText?.player).toContain('武力 96')
   expect(s.generalCardText?.player).toContain('蓝量 100/100')
   expect(s.generalCardText?.player).toContain('被动 铁壁 Lv1')
-  expect(s.generalCardText?.enemy).toContain('吕布')
+  expect(s.generalCardText?.enemy).toContain('呂布')
   expect(s.generalCardText?.enemy).toContain('武力 100')
   expect(s.generalCardText?.enemy).toContain('被动 狂暴 Lv1')
   await page.screenshot({ path: 'screenshots/battle-general-cards.png' }) // 给人看：左右武将卡布局观感

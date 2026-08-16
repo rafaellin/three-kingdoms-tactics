@@ -96,7 +96,7 @@ test('城池面板：进城→展示驻军/英雄→驻守→移兵双向→出�
   await openPanel(page)
   s = await readState(page)
   expect(s.townPanel?.name).toBe('东岭小城')
-  expect(s.townPanel?.visitorGeneralName).toBe('关羽')
+  expect(s.townPanel?.visitorGeneralName).toBe('關羽')
   expect(s.townPanel?.visitorGeneralId).toBe('g-guan')
   expect(s.townPanel?.garrisonGeneralName).toBeNull()
   expect(s.townPanel?.garrison).toEqual([])

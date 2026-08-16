@@ -189,7 +189,7 @@ test('世界快照：打孔秀 → 胜利 → 返回 → outcome won + 胜利面
   await page.evaluate(() => {
     const bridge = (window as { __game?: { startBattle?(p: unknown, e: unknown, g: unknown): void } }).__game
     bridge?.startBattle?.(
-      { side: 'player', generalName: '关羽', atkBonus: 11, defBonus: 9, units: [{ defId: 'swordsman', count: 20 }, { defId: 'archer', count: 12 }] },
+      { side: 'player', generalName: '關羽', atkBonus: 11, defBonus: 9, units: [{ defId: 'swordsman', count: 20 }, { defId: 'archer', count: 12 }] },
       { side: 'enemy', generalName: '孔秀', atkBonus: 0, defBonus: 0, units: [{ defId: 'militia', count: 10 }] },
       { cols: 15, rows: 11 }
     )

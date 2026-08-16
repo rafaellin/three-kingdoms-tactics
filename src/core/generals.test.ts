@@ -38,6 +38,16 @@ describe('deriveStats 双锚点线性插值（base → lv20）', () => {
   })
 })
 
+describe('武将名繁体（Task 2：直接存繁体，地图/列表/战斗卡自动生效）', () => {
+  test('GENERAL_BASES 各武将 name 为繁体', () => {
+    expect(GENERAL_BASES['g-guan'].name).toBe('關羽')
+    expect(GENERAL_BASES['g-lvbu'].name).toBe('呂布')
+    expect(GENERAL_BASES['g-zhoucang'].name).toBe('周倉')
+    expect(GENERAL_BASES['g-sunqian'].name).toBe('孫乾')
+    expect(GENERAL_BASES['g-kongxiu'].name).toBe('孔秀')
+  })
+})
+
 describe('新武将：周仓/孙乾/孔秀', () => {
   test('base/lv20 存在且 5 级可推导', () => {
     expect(GENERAL_BASES['g-zhoucang']).toBeDefined()

@@ -131,8 +131,10 @@ export class AdventureScene extends Phaser.Scene {
   /** 杂兵渲染层（深绿野怪格 + 兵力数标签） */
   private neutralGraphics!: Phaser.GameObjects.Graphics
   private neutralLabels = new Map<string, Phaser.GameObjects.Text>()
-  /** 多英雄精灵（generalId → 圆点）；选中英雄金点+白描边，其余银青小点 */
+  /** 多英雄精灵（generalId → 六角格边框 + 圆点）；选中英雄金点+白描边，其余银青小点 */
   private heroSprites = new Map<string, Phaser.GameObjects.Graphics>()
+  /** 多英雄格内姓氏文本（generalId → 名字首字繁体；mapOnly Text，随 sprite 定位） */
+  private heroLabels = new Map<string, Phaser.GameObjects.Text>()
   /** 顶部 HUD：资源条（图标 + 数值(+每日产出)）+ 日期 */
   private hudResourceCols!: { resource: keyof Resources; icon: Phaser.GameObjects.Image; text: Phaser.GameObjects.Text }[]
   private hudDateText!: Phaser.GameObjects.Text
@@ -398,6 +400,7 @@ export class AdventureScene extends Phaser.Scene {
     // Phaser 销毁，但 sprite/label Map 仍持有旧引用（draw* 复用死引用 → 渲染 no-op → 图标消失）。
     // 必须全部清空，让 drawTowns/drawNodes/drawGarrisons/drawNeutrals/syncHeroSprites 按需重建。
     this.heroSprites.clear()
+    this.heroLabels.clear()
     this.townSprites.clear()
     this.nodeSprites.clear()
     this.garrisonLabels.clear()
@@ -813,7 +816,11 @@ export class AdventureScene extends Phaser.Scene {
     }
   }
 
-  /** 多英雄精灵对齐 core 坐标：遍历 state.heroes 每个英雄画一个圆点（选中金点+白描边，其余银青小点） */
+  /**
+   * 多英雄精灵对齐 core 坐标：每个英雄画六角格边框（当前操作武将黄色 0xffd166，其余灰蓝 0x9fb4c7）
+   * + 格内姓氏文本（名字第一个字，繁体）；当前武将保留金点高亮（金点 + 白描边）。
+   * 姓氏文本为独立 mapOnly Text，随 sprite 定位到格中心。
+   */
   private syncHeroSprites(): void {
     const seen = new Set<string>()
     for (const hero of this.state.heroes) {
@@ -827,6 +834,14 @@ export class AdventureScene extends Phaser.Scene {
       const c = this.layout.hexToPixel(hero.position)
       sprite.setPosition(c.x, c.y)
       const selected = hero.generalId === this.state.selectedHeroId
+      // 六角格边框：半透明底 + 描边（Task 2：当前武将黄色，其他灰蓝）
+      const borderColor = selected ? 0xffd166 : 0x9fb4c7
+      const hexPts = this.heroHexPoints(0.86)
+      sprite.fillStyle(borderColor, selected ? 0.18 : 0.1)
+      sprite.fillPoints(hexPts, true)
+      sprite.lineStyle(selected ? 2.5 : 1.5, borderColor, selected ? 1 : 0.9)
+      sprite.strokePoints(hexPts, true)
+      // 金点高亮：选中金点+白圈，其余银青小点（保留现状）
       if (selected) {
         sprite.fillStyle(0xffd166, 1)
         sprite.fillCircle(0, 0, 10)
@@ -838,12 +853,42 @@ export class AdventureScene extends Phaser.Scene {
         sprite.lineStyle(1, 0xffffff, 0.7)
         sprite.strokeCircle(0, 0, 8)
       }
+      // 格内姓氏文本：name 第一个字符（繁体），随 sprite 定位在格中心
+      const name =
+        this.state.generals.find((g) => g.id === hero.generalId)?.name ??
+        GENERAL_BASES[hero.generalId as keyof typeof GENERAL_BASES]?.name ??
+        ''
+      let label = this.heroLabels.get(hero.generalId)
+      if (!label) {
+        label = this.mapOnly(
+          this.add
+            .text(0, 0, '', {
+              fontFamily: 'sans-serif',
+              fontSize: '15px',
+              color: '#f5f2e8',
+              stroke: '#0b0f18',
+              strokeThickness: 2
+            })
+            .setOrigin(0.5)
+            .setDepth(5)
+        )
+        this.heroLabels.set(hero.generalId, label)
+      }
+      label.setText(name ? name[0]! : '')
+      label.setPosition(c.x, c.y)
+      label.setColor(selected ? '#ffd166' : '#e8eef5')
     }
-    // 换种子 / 重建后清理已不存在英雄的精灵
+    // 换种子 / 重建后清理已不存在英雄的精灵 + 姓氏文本
     for (const id of this.heroSprites.keys()) {
       if (!seen.has(id)) {
         this.heroSprites.get(id)?.destroy()
         this.heroSprites.delete(id)
+      }
+    }
+    for (const id of this.heroLabels.keys()) {
+      if (!seen.has(id)) {
+        this.heroLabels.get(id)?.destroy()
+        this.heroLabels.delete(id)
       }
     }
   }
@@ -883,6 +928,15 @@ export class AdventureScene extends Phaser.Scene {
       points.push(new Phaser.Math.Vector2(center.x + (p.x - center.x) * scale, center.y + (p.y - center.y) * scale))
     }
     return points
+  }
+
+  /**
+   * hero sprite 局部坐标系的六角点（sprite 位于格中心 = 局部原点）。
+   * 六角尺寸/朝向全图一致，且 hex (0,0) 的中心 = 世界原点 (0,0)，
+   * 故 hexPoints({q:0,r:0}, scale) 直接就是「相对格中心」的角点偏移 → 无需再减中心。
+   */
+  private heroHexPoints(scale: number): Phaser.Math.Vector2[] {
+    return this.hexPoints({ q: 0, r: 0 }, scale)
   }
 
   /** 在指定 Graphics 上画一个缩小比例的填充六角格（矿底座用） */
@@ -1294,9 +1348,13 @@ export class AdventureScene extends Phaser.Scene {
     const sprite = hero ? this.heroSprites.get(hero.generalId) : undefined
     if (!sprite) return Promise.resolve()
     const target = this.layout.hexToPixel(hex)
+    // 姓氏文本随 sprite 一起移动（同一格中心）
+    const label = hero ? this.heroLabels.get(hero.generalId) : undefined
+    const targets: (Phaser.GameObjects.Graphics | Phaser.GameObjects.Text)[] = [sprite]
+    if (label) targets.push(label)
     return new Promise((resolve) => {
       this.tweens.add({
-        targets: sprite,
+        targets,
         x: target.x,
         y: target.y,
         duration: this.animationMs,

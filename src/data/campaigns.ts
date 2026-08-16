@@ -96,21 +96,21 @@ export const CAMPAIGNS: Record<'dongling', CampaignConfig> = {
     ],
     startGenerals: [
       {
-        id: 'g-guan', name: '关羽', faction: 'shu', type: '全能', level: 5, xp: 0,
+        id: 'g-guan', name: '關羽', faction: 'shu', type: '全能', level: 5, xp: 0,
         stats: deriveStats(GENERAL_BASES['g-guan'], 5), passives: [],
         skillSlots: Math.floor(5 / 3), army: [
           { defId: 'swordsman', count: 20 }, { defId: 'archer', count: 12 }
         ]
       },
       {
-        id: 'g-zhoucang', name: '周仓', faction: 'shu', type: '战将', level: 5, xp: 0,
+        id: 'g-zhoucang', name: '周倉', faction: 'shu', type: '战将', level: 5, xp: 0,
         stats: deriveStats(GENERAL_BASES['g-zhoucang'], 5), passives: [],
         skillSlots: Math.floor(5 / 3), army: [
           { defId: 'pikeman', count: 15 }, { defId: 'militia', count: 20 }
         ]
       },
       {
-        id: 'g-sunqian', name: '孙乾', faction: 'shu', type: '智将', level: 5, xp: 0,
+        id: 'g-sunqian', name: '孫乾', faction: 'shu', type: '智将', level: 5, xp: 0,
         stats: deriveStats(GENERAL_BASES['g-sunqian'], 5), passives: [],
         skillSlots: Math.floor(5 / 3), army: [
           { defId: 'archer', count: 15 }, { defId: 'militia', count: 15 }

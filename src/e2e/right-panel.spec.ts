@@ -61,7 +61,7 @@ test('右侧面板：武将列表点击切换 + 城池列表打开面板 + 下�
   let s = await readState(page)
   const heroRows = s.rightPanel?.heroes
   expect(heroRows).toHaveLength(3)
-  expect(heroRows?.map((h) => h.name)).toEqual(['关羽', '周仓', '孙乾'])
+  expect(heroRows?.map((h) => h.name)).toEqual(['關羽', '周倉', '孫乾'])
   expect(heroRows?.find((h) => h.generalId === 'g-guan')?.selected).toBe(true)
   expect(s.selectedHeroId).toBe('g-guan')
   expect(s.rightPanel?.towns?.map((t) => `${t.name} Lv${t.level}`)).toEqual(['东岭小城 Lv1'])

@@ -8,9 +8,9 @@ import type { BattleArmyConfig, BattleGeneralConfig, BattleState, BattleUnitConf
 
 const TEST_GRID = { cols: 13, rows: 9 }
 const TEST_ARMIES = {
-  player: { side: 'player' as const, generalName: '关羽', atkBonus: 30, defBonus: 23,
+  player: { side: 'player' as const, generalName: '關羽', atkBonus: 30, defBonus: 23,
     units: [{ defId: 'militia', count: 30 }, { defId: 'cavalry', count: 8 }] },
-  enemy: { side: 'enemy' as const, generalName: '吕布', atkBonus: 33, defBonus: 27,
+  enemy: { side: 'enemy' as const, generalName: '呂布', atkBonus: 33, defBonus: 27,
     units: [{ defId: 'archer', count: 8 }] }
 }
 
@@ -591,7 +591,7 @@ describe('降/逃/和', () => {
 
 describe('battle/init 武将当前属性', () => {
   const GUAN_GENERAL: BattleGeneralConfig = {
-    name: '关羽',
+    name: '關羽',
     level: 1,
     stats: { atk: 90, def: 70, int: 50, pol: 60, cha: 80 },
     passives: [{ name: '铁壁', level: 1 }]
@@ -602,7 +602,7 @@ describe('battle/init 武将当前属性', () => {
       enemy: { side: 'enemy', generalName: 'E', atkBonus: 0, defBonus: 0, units: [{ defId: 'militia', count: 10 }] }
     }).getState()
     const g = s.general.player
-    expect(g.name).toBe('关羽')
+    expect(g.name).toBe('關羽')
     expect(g.stats).toEqual({ atk: 90, def: 70, int: 50, pol: 60, cha: 80 })
     expect(g.atkBonus).toBe(30)   // round(90/3)
     expect(g.defBonus).toBe(23)   // round(70/3)
@@ -614,7 +614,7 @@ describe('battle/init 武将当前属性', () => {
   test('无 general：旧字段反推展示值，行为不变', () => {
     const s = makeStore().getState() // TEST_ARMIES: atkBonus30/defBonus23, generalName '关羽'
     const g = s.general.player
-    expect(g.name).toBe('关羽')
+    expect(g.name).toBe('關羽')
     expect(g.atkBonus).toBe(30)
     expect(g.defBonus).toBe(23)
     expect(g.stats).toEqual({ atk: 90, def: 69, int: 0, pol: 0, cha: 0 }) // atk=30×3, def=23×3
