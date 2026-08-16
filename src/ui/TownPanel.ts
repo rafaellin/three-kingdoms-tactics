@@ -34,7 +34,8 @@ function ownerName(state: GameState, town: Town): string {
  * 城池界面（渲染层组件，纯显示 + 输入转动作）。
  *
  * 内容：城名/等级/势力 + 驻军槽（兵种×数量）+ 驻城英雄卡 + 访问英雄卡 + 动作按钮。
- * 按钮按槽位占用动态出现：驻守（访问→驻城）/ 换将（驻城↔访问）/ 出城（回 heroes）；
+ * 按钮按槽位占用动态出现：驻守（访问→驻城）/ 交换（驻城↔访问双向切换，reducer swapHeroes
+ * 扩展语义：双槽互换/单驻城出城/单访问进驻）/ 出城（回 heroes）；
  * 移兵：英雄 army ↔ 城驻军，每个兵种行带「1/全」两个小按钮，双向移动。
  *
  * 输入隔离铁律（与 Modal 同纪律，防泄漏到地图）：
@@ -268,9 +269,11 @@ export class TownPanel {
     y = this.heroCard(left, y, right, generalOf(town.visitorGeneralId), town, actorId === town.visitorGeneralId, textStyle)
 
     // 动作按钮（底部居中排开；按槽位占用动态出现）
+    // 「交换」= 驻城↔访问双向切换（reducer swapHeroes 扩展语义）：
+    //   双槽都占→互换；只有驻城→出城；只有访问→进驻；任一侧有武将即可点。
     const actions: { key: string; label: string }[] = []
-    if (town.visitorGeneralId) actions.push({ key: 'garrison', label: '驻守' })
-    if (town.garrisonGeneralId && town.visitorGeneralId) actions.push({ key: 'swap', label: '换将' })
+    if (town.visitorGeneralId && !town.garrisonGeneralId) actions.push({ key: 'garrison', label: '驻守' })
+    if (town.garrisonGeneralId || town.visitorGeneralId) actions.push({ key: 'swap', label: '交换' })
     if (town.garrisonGeneralId || town.visitorGeneralId) actions.push({ key: 'leave', label: '出城' })
     const ay = y0 + H - 46
     if (actions.length > 0) {

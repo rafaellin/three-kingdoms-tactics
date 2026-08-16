@@ -1068,7 +1068,7 @@ export class AdventureScene extends Phaser.Scene {
     const town = this.state.towns.find((t) => hexKey(t.position) === hexKey(hex))
     this.hideNodeTooltip()
     // 点击城池格：当前英雄可走进该城（访问槽空 + 不在城上 + 可达）→ 走进去（落地自动进城）；
-    // 否则打开城池面板（查看驻军/驻将/访问，执行驻守/换将/出城/移兵）
+    // 否则打开城池面板（查看驻军/驻将/访问，执行驻守/交换/出城/移兵）
     if (town) {
       const canEnter =
         hero &&

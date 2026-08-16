@@ -304,24 +304,26 @@ describe('campaign/checkVictory 胜利检查', () => {
 describe('城池交互', () => {
   test('进城 → 驻守 → 移兵 → 出城 完整流转', () => {
     const store = makeCampaignStore()
-    // 孙乾进城
+    // 孙乾进城：访问武将保留在 heroes（位置=城格，大地图叠城上可见）
     store.dispatch('hero/move', { heroId: 'g-sunqian', to: { q: 0, r: 0 } })
     store.dispatch('hero/enterTown', { heroId: 'g-sunqian', townId: 't-dongling' })
     let s = store.getState()
     expect(s.towns[0]!.visitorGeneralId).toBe('g-sunqian')
-    expect(s.heroes.find((h) => h.generalId === 'g-sunqian')).toBeUndefined() // 进城后不再在地图上
-    // 驻守
+    const visiting = s.heroes.find((h) => h.generalId === 'g-sunqian')!
+    expect(visiting.position).toEqual({ q: 0, r: 0 }) // 访问武将仍在地图上（叠城上）
+    // 驻守：访问→驻城，英雄从 heroes 移除（进 garrison，大地图不可见）
     store.dispatch('hero/garrison', { heroId: 'g-sunqian', townId: 't-dongling' })
     s = store.getState()
     expect(s.towns[0]!.garrisonGeneralId).toBe('g-sunqian')
     expect(s.towns[0]!.visitorGeneralId).toBeNull()
+    expect(s.heroes.find((h) => h.generalId === 'g-sunqian')).toBeUndefined() // 驻城后从 heroes 移除
     // 移兵进城（英雄 army → 城 garrison）
     store.dispatch('town/transferTroops', { townId: 't-dongling', from: 'hero', defId: 'militia', count: 5 })
     s = store.getState()
     expect(s.towns[0]!.garrison).toEqual([{ defId: 'militia', count: 5 }])
     const sunqian = s.generals.find((g) => g.id === 'g-sunqian')!
     expect(sunqian.army.find((u) => u.defId === 'militia')!.count).toBe(10) // 15 - 5
-    // 出城 → 回 heroes，位置=城格、满移动力
+    // 出城（驻城英雄）→ 回 heroes，位置=城格、满移动力
     store.dispatch('hero/leaveTown', { heroId: 'g-sunqian', townId: 't-dongling' })
     s = store.getState()
     expect(s.towns[0]!.garrisonGeneralId).toBeNull()
@@ -332,19 +334,62 @@ describe('城池交互', () => {
     expect(back.playerId).toBe('p1') // 出城英雄归属城主玩家
   })
 
-  test('enterTown：访问槽被占时拒绝第二英雄进城（不覆盖丢失武将）', () => {
+  test('leaveTown：访问武将出城 → 仅清访问槽，英雄仍在地图上（不重复添加）', () => {
     const store = makeCampaignStore()
-    // 孙乾进城成为访问武将
     store.dispatch('hero/move', { heroId: 'g-sunqian', to: { q: 0, r: 0 } })
     store.dispatch('hero/enterTown', { heroId: 'g-sunqian', townId: 't-dongling' })
-    // 周仓也走到城格尝试进城 → 拒绝：孙乾仍是访问武将、周仓仍在地图上（不静默丢失）
+    store.dispatch('hero/leaveTown', { heroId: 'g-sunqian', townId: 't-dongling' })
+    const s = store.getState()
+    expect(s.towns[0]!.visitorGeneralId).toBeNull()
+    expect(s.towns[0]!.garrisonGeneralId).toBeNull()
+    const hero = s.heroes.find((h) => h.generalId === 'g-sunqian')!
+    expect(hero.position).toEqual({ q: 0, r: 0 }) // 访问者本就在 heroes，出城后仍在城格
+    expect(s.heroes.filter((h) => h.generalId === 'g-sunqian')).toHaveLength(1) // 未重复添加
+  })
+
+  test('moveHeroTo：访问武将离开城格 → 清空访问槽（离开即结束访问）', () => {
+    const store = makeCampaignStore()
+    store.dispatch('hero/move', { heroId: 'g-sunqian', to: { q: 0, r: 0 } })
+    store.dispatch('hero/enterTown', { heroId: 'g-sunqian', townId: 't-dongling' })
+    expect(store.getState().towns[0]!.visitorGeneralId).toBe('g-sunqian')
+    // 访问武将沿城格向左移动离开城 → 访问结束
+    store.dispatch('hero/move', { heroId: 'g-sunqian', to: { q: -1, r: 0 } })
+    const s = store.getState()
+    expect(s.towns[0]!.visitorGeneralId).toBeNull()
+    expect(s.heroes.find((h) => h.generalId === 'g-sunqian')!.position).toEqual({ q: -1, r: 0 })
+  })
+
+  test('enterTown：访问槽被占时拒绝第二英雄进城（不覆盖丢失武将）', () => {
+    const store = makeCampaignStore()
+    // 孙乾进城成为访问武将（仍在 heroes，位置=城格 → 城格被占用）
+    store.dispatch('hero/move', { heroId: 'g-sunqian', to: { q: 0, r: 0 } })
+    store.dispatch('hero/enterTown', { heroId: 'g-sunqian', townId: 't-dongling' })
+    // 周仓试图走上城格 → 被重叠守卫拒绝（孙乾站在城格上，不能叠城）；enterTown 也因不在城格拒绝
     store.dispatch('hero/move', { heroId: 'g-zhoucang', to: { q: -1, r: 0 } })
     store.dispatch('hero/move', { heroId: 'g-zhoucang', to: { q: 0, r: 0 } })
     store.dispatch('hero/enterTown', { heroId: 'g-zhoucang', townId: 't-dongling' })
     const s = store.getState()
     expect(s.towns[0]!.visitorGeneralId).toBe('g-sunqian') // 原访问武将未被覆盖
-    expect(s.heroes.find((h) => h.generalId === 'g-zhoucang')).toBeDefined() // 周仓仍在地图上
-    expect(s.heroes.find((h) => h.generalId === 'g-sunqian')).toBeUndefined() // 孙乾仍在城内
+    expect(s.heroes.find((h) => h.generalId === 'g-zhoucang')!.position).toEqual({ q: -1, r: 0 }) // 周仓被挡在城格外
+    expect(s.heroes.find((h) => h.generalId === 'g-sunqian')).toBeDefined() // 孙乾访问中仍在地图上
+  })
+
+  test('garrisonTown：驻城槽被占时拒绝访问武将进驻（防覆盖丢失驻城武将）', () => {
+    const store = makeCampaignStore()
+    // 孙乾进驻
+    store.dispatch('hero/move', { heroId: 'g-sunqian', to: { q: 0, r: 0 } })
+    store.dispatch('hero/enterTown', { heroId: 'g-sunqian', townId: 't-dongling' })
+    store.dispatch('hero/garrison', { heroId: 'g-sunqian', townId: 't-dongling' })
+    // 周仓访问（孙乾已从 heroes 移除，城格空闲可走上）
+    store.dispatch('hero/move', { heroId: 'g-zhoucang', to: { q: -1, r: 0 } })
+    store.dispatch('hero/move', { heroId: 'g-zhoucang', to: { q: 0, r: 0 } })
+    store.dispatch('hero/enterTown', { heroId: 'g-zhoucang', townId: 't-dongling' })
+    // 周仓尝试进驻 → 被拒绝（驻城槽被孙乾占），不覆盖丢失驻城武将
+    store.dispatch('hero/garrison', { heroId: 'g-zhoucang', townId: 't-dongling' })
+    const s = store.getState()
+    expect(s.towns[0]!.garrisonGeneralId).toBe('g-sunqian')
+    expect(s.towns[0]!.visitorGeneralId).toBe('g-zhoucang')
+    expect(s.heroes.find((h) => h.generalId === 'g-zhoucang')).toBeDefined() // 周仓仍是访问者在地图上
   })
 
   test('移兵 clamp：不能移超过可用数；from=garrison 反向', () => {
@@ -366,24 +411,50 @@ describe('城池交互', () => {
     expect(s.generals.find((g) => g.id === 'g-sunqian')!.army.find((u) => u.defId === 'militia')!.count).toBe(10)
   })
 
-  test('swapHeroes：驻守/访问互换（都非空才换）', () => {
+  test('swapHeroes：双槽都占 → 互换（槽位互换 + heroes 成员切换）', () => {
     const store = makeCampaignStore()
     // 孙乾进城并驻守
     store.dispatch('hero/move', { heroId: 'g-sunqian', to: { q: 0, r: 0 } })
     store.dispatch('hero/enterTown', { heroId: 'g-sunqian', townId: 't-dongling' })
     store.dispatch('hero/garrison', { heroId: 'g-sunqian', townId: 't-dongling' })
-    // 周仓进城访问（路径 (-1,-1)→(-1,0)→(0,0)）
+    // 周仓进城访问（孙乾驻城后从 heroes 移除，城格空闲）
     store.dispatch('hero/move', { heroId: 'g-zhoucang', to: { q: -1, r: 0 } })
     store.dispatch('hero/move', { heroId: 'g-zhoucang', to: { q: 0, r: 0 } })
     store.dispatch('hero/enterTown', { heroId: 'g-zhoucang', townId: 't-dongling' })
     let s = store.getState()
     expect(s.towns[0]!.garrisonGeneralId).toBe('g-sunqian')
     expect(s.towns[0]!.visitorGeneralId).toBe('g-zhoucang')
-    // 互换
+    // 互换：garrison↔visitor + heroes 成员切换
     store.dispatch('town/swapHeroes', { townId: 't-dongling' })
     s = store.getState()
     expect(s.towns[0]!.garrisonGeneralId).toBe('g-zhoucang')
     expect(s.towns[0]!.visitorGeneralId).toBe('g-sunqian')
+    expect(s.heroes.find((h) => h.generalId === 'g-sunqian')!.position).toEqual({ q: 0, r: 0 }) // 原驻城孙乾回 heroes
+    expect(s.heroes.find((h) => h.generalId === 'g-zhoucang')).toBeUndefined() // 原访问周仓进 garrison 移除
+  })
+
+  test('swapHeroes：只有访问、无驻城 → 访问进驻（移入 garrison，从 heroes 移除）', () => {
+    const store = makeCampaignStore()
+    store.dispatch('hero/move', { heroId: 'g-sunqian', to: { q: 0, r: 0 } })
+    store.dispatch('hero/enterTown', { heroId: 'g-sunqian', townId: 't-dongling' })
+    store.dispatch('town/swapHeroes', { townId: 't-dongling' })
+    const s = store.getState()
+    expect(s.towns[0]!.garrisonGeneralId).toBe('g-sunqian')
+    expect(s.towns[0]!.visitorGeneralId).toBeNull()
+    expect(s.heroes.find((h) => h.generalId === 'g-sunqian')).toBeUndefined() // 进驻 → 从 heroes 移除
+  })
+
+  test('swapHeroes：只有驻城、无访问 → 驻城武将出城（garrison 清空，回 heroes 位置=城格）', () => {
+    const store = makeCampaignStore()
+    store.dispatch('hero/move', { heroId: 'g-sunqian', to: { q: 0, r: 0 } })
+    store.dispatch('hero/enterTown', { heroId: 'g-sunqian', townId: 't-dongling' })
+    store.dispatch('hero/garrison', { heroId: 'g-sunqian', townId: 't-dongling' })
+    store.dispatch('town/swapHeroes', { townId: 't-dongling' })
+    const s = store.getState()
+    expect(s.towns[0]!.garrisonGeneralId).toBeNull()
+    expect(s.towns[0]!.visitorGeneralId).toBeNull()
+    const back = s.heroes.find((h) => h.generalId === 'g-sunqian')!
+    expect(back.position).toEqual({ q: 0, r: 0 }) // 驻城武将出城回 heroes
   })
 })
 

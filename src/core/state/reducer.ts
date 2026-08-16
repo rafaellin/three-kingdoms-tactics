@@ -412,12 +412,25 @@ function moveHeroTo(state: GameState, hero: HeroUnit, to: Axial): GameState {
     heroes: state.heroes.map((h) => (h.generalId === hero.generalId ? moved : h)),
     visibility: { ...state.visibility, [hero.playerId]: computeVisionFor(map, moved, fog) }
   }
+  // 访问武将移动离开城格 → 结束访问（清空该城 visitorGeneralId，英雄仍在 heroes 可继续走）
+  next = clearVisitorOnLeaveTown(next, hero, to)
   // 资源点拾取 / 占领（owner 按 hero.playerId）
   const nodeType = map.nodes?.[hexKey(to)]
   if (nodeType) {
     next = interactNode(next, hero.playerId, hexKey(to), nodeType)
   }
   return next
+}
+
+/** 若移动的英雄当前是某城访问武将且移动离开城格 → 清空该城访问槽（离开即结束访问） */
+function clearVisitorOnLeaveTown(state: GameState, hero: HeroUnit, to: Axial): GameState {
+  const town = state.towns.find((t) => t.visitorGeneralId === hero.generalId)
+  if (!town) return state
+  if (hexKey(to) === hexKey(town.position)) return state
+  return {
+    ...state,
+    towns: state.towns.map((t) => (t.id === town.id ? { ...t, visitorGeneralId: null } : t))
+  }
 }
 
 /** 单步移动（unit/move 向后兼容：操作当前选中英雄） */
@@ -477,49 +490,61 @@ function addUnitStack(
   return [...stacks, { defId, count }]
 }
 
-/** 英雄进城：英雄在城格上时 → 设为访问武将、从 heroes 移除（同一时刻英雄要么在地图要么在城） */
-function enterTown(state: GameState, { heroId, townId }: EnterTownPayload): GameState {
-  const hero = state.heroes.find((h) => h.generalId === heroId)
-  const town = state.towns.find((t) => t.id === townId)
-  if (!hero || !town) return state
-  if (town.visitorGeneralId) return state // 访问槽被占：拒绝第二英雄进城（防静默覆盖丢失武将）
-  if (hexKey(hero.position) !== hexKey(town.position)) return state
+/** 在城格位置构建满移动力的英雄单位（驻城出城/交换用）；武将配置缺失 → null */
+function heroAtTown(state: GameState, town: Town, generalId: string): HeroUnit | null {
+  const general = state.generals.find((g) => g.id === generalId)
+  if (!general) return null
   return {
-    ...state,
-    towns: state.towns.map((t) => (t.id === townId ? { ...t, visitorGeneralId: heroId } : t)),
-    heroes: state.heroes.filter((h) => h.generalId !== heroId)
-  }
-}
-
-/** 访问→驻守：仅当英雄是该城访问武将时，转入驻守槽 */
-function garrisonTown(state: GameState, { heroId, townId }: GarrisonPayload): GameState {
-  const town = state.towns.find((t) => t.id === townId)
-  if (!town || town.visitorGeneralId !== heroId) return state
-  return {
-    ...state,
-    towns: state.towns.map((t) =>
-      t.id === townId ? { ...t, garrisonGeneralId: heroId, visitorGeneralId: null } : t
-    )
-  }
-}
-
-/** 出城：清空驻守/访问槽 → 英雄回 heroes（位置=城格、满移动力、视野基准与 setup 一致） */
-function leaveTown(state: GameState, { heroId, townId }: LeaveTownPayload): GameState {
-  const town = state.towns.find((t) => t.id === townId)
-  if (!town) return state
-  const asGarrison = town.garrisonGeneralId === heroId
-  const asVisitor = town.visitorGeneralId === heroId
-  if (!asGarrison && !asVisitor) return state
-  const general = state.generals.find((g) => g.id === heroId)
-  if (!general) return state
-  const hero: HeroUnit = {
-    generalId: heroId,
+    generalId,
     playerId: town.owner, // 出城英雄归属城主玩家
     faction: general.faction,
     position: { ...town.position },
     movementLeft: BASE_MAX_MOVEMENT,
     maxMovement: BASE_MAX_MOVEMENT,
     sightRange: BASE_SIGHT_RANGE
+  }
+}
+
+/** 英雄进城（访问）：英雄保留在 heroes（位置=城格，大地图叠城上可见），仅记录访问槽 */
+function enterTown(state: GameState, { heroId, townId }: EnterTownPayload): GameState {
+  const hero = state.heroes.find((h) => h.generalId === heroId)
+  const town = state.towns.find((t) => t.id === townId)
+  if (!hero || !town) return state
+  if (town.visitorGeneralId) return state // 访问槽被占：拒绝第二英雄进城（防静默覆盖丢失武将）
+  if (town.garrisonGeneralId === heroId) return state // 驻城武将不能再以访问身份进城
+  if (hexKey(hero.position) !== hexKey(town.position)) return state
+  return {
+    ...state,
+    towns: state.towns.map((t) => (t.id === townId ? { ...t, visitorGeneralId: heroId } : t))
+  }
+}
+
+/** 访问→驻守：英雄移入 garrison 槽，从 heroes 移除（驻城武将大地图不可见） */
+function garrisonTown(state: GameState, { heroId, townId }: GarrisonPayload): GameState {
+  const town = state.towns.find((t) => t.id === townId)
+  if (!town || town.visitorGeneralId !== heroId) return state
+  if (town.garrisonGeneralId && town.garrisonGeneralId !== heroId) return state // 驻城槽被占：防覆盖丢失驻城武将
+  return {
+    ...state,
+    towns: state.towns.map((t) =>
+      t.id === townId ? { ...t, garrisonGeneralId: heroId, visitorGeneralId: null } : t
+    ),
+    heroes: state.heroes.filter((h) => h.generalId !== heroId)
+  }
+}
+
+/** 出城：驻城英雄 → garrison 清空 + 加回 heroes（位置=城格、满移动力）；访问英雄 → 仅清访问槽（英雄本就在 heroes） */
+function leaveTown(state: GameState, { heroId, townId }: LeaveTownPayload): GameState {
+  const town = state.towns.find((t) => t.id === townId)
+  if (!town) return state
+  const asGarrison = town.garrisonGeneralId === heroId
+  const asVisitor = town.visitorGeneralId === heroId
+  if (!asGarrison && !asVisitor) return state
+  let heroes = state.heroes
+  if (asGarrison) {
+    const hero = heroAtTown(state, town, heroId)
+    if (!hero) return state
+    heroes = [...state.heroes, hero]
   }
   return {
     ...state,
@@ -532,22 +557,50 @@ function leaveTown(state: GameState, { heroId, townId }: LeaveTownPayload): Game
           }
         : t
     ),
-    heroes: [...state.heroes, hero]
+    heroes
   }
 }
 
-/** 驻城↔访问互换（两个槽都非空才换） */
+/** 驻城↔访问「交换」双向切换：双槽都占 → 互换；只有驻城 → 驻城出城；只有访问 → 访问进驻 */
 function swapHeroes(state: GameState, { townId }: SwapHeroesPayload): GameState {
   const town = state.towns.find((t) => t.id === townId)
-  if (!town || !town.garrisonGeneralId || !town.visitorGeneralId) return state
-  return {
-    ...state,
-    towns: state.towns.map((t) =>
-      t.id === townId
-        ? { ...t, garrisonGeneralId: town.visitorGeneralId, visitorGeneralId: town.garrisonGeneralId }
-        : t
-    )
+  if (!town) return state
+  const garrison = town.garrisonGeneralId
+  const visitor = town.visitorGeneralId
+
+  // 双槽都占：互换槽位 + heroes 成员切换（原驻城加回 heroes 位置=城格，原访问移入 garrison 移除）
+  if (garrison && visitor) {
+    const hero = heroAtTown(state, town, garrison)
+    if (!hero) return state
+    return {
+      ...state,
+      towns: state.towns.map((t) =>
+        t.id === townId ? { ...t, garrisonGeneralId: visitor, visitorGeneralId: garrison } : t
+      ),
+      heroes: [...state.heroes.filter((h) => h.generalId !== visitor), hero]
+    }
   }
+  // 只有驻城、无访问：驻城武将出城（garrison 清空，加回 heroes 位置=城格）
+  if (garrison) {
+    const hero = heroAtTown(state, town, garrison)
+    if (!hero) return state
+    return {
+      ...state,
+      towns: state.towns.map((t) => (t.id === townId ? { ...t, garrisonGeneralId: null } : t)),
+      heroes: [...state.heroes, hero]
+    }
+  }
+  // 只有访问、无驻城：访问武将进驻（访问移入 garrison，从 heroes 移除）
+  if (visitor) {
+    return {
+      ...state,
+      towns: state.towns.map((t) =>
+        t.id === townId ? { ...t, garrisonGeneralId: visitor, visitorGeneralId: null } : t
+      ),
+      heroes: state.heroes.filter((h) => h.generalId !== visitor)
+    }
+  }
+  return state
 }
 
 /**

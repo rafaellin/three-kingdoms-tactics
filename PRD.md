@@ -513,7 +513,7 @@ else:            战斗
 
 ### 大地图
 - [x] 回合制轮换（E 键 / 右下角按钮结束回合；天数+1 自动每日结算，见"资源与经济"）
-- [x] 城池显示（房屋图标按归属色 tint；点击城池格打开**城池界面 TownPanel**（见「城池」节）；当前英雄可走进友城 → 落地自动进城为访问武将）
+- [x] 城池显示（房屋图标按归属色 tint；点击城池格打开**城池界面 TownPanel**（见「城池」节）；当前英雄可走进友城 → 落地自动进城为访问武将，**访问武将保留在地图（位置=城格，叠城上可见），驻守才移入 garrison 从 heroes 移除**）
 - [x] 顶部资源条 + 日期（金/木/石/铁 图标+数值 + 第X周第X天；数值后显示 `(+每日产出)`，hover 图标/数值弹出产出来源明细 tooltip（如 `金 每日产出：成都 Lv1 +10，伐木场 +2`），数据来自 core `computeDailyIncome` 纯函数）
 - [x] 资源条流式布局：图标跟随数值文本自适应宽度（按文本实际宽度自左向右排布，`(+N)` 变长时图标随之右移，不重叠；e2e 断言 icon 右沿 < 文本左沿）
 - [x] 资源点视觉区分：矿（持续产出）画深色六角底座 + 已占归属色边框；宝箱（一次性）无底座、**拾取后从地图移除**（core 保留 visited 供回放，仅渲染层不再画）；悬停资源点显示 tooltip（名称 + 每日产出/一次性 + 已占状态）
@@ -526,7 +526,7 @@ else:            战斗
 - [x] 战役启动 `campaign/start`（mode=campaign 放守将+胜利、完整玩家序列 [p1,ai1]；mode=explore 不放守将自由探索、**单玩家 [p1]**——Spec §3：只保留 human 玩家，AI 不参与轮转）；多英雄渲染（每武将一英雄圆点，选中金点+白描边）
 - [x] 守将渲染（红城寨格 + 金色旗标 + 名字标签）；杂兵渲染（深绿野怪格 + 中央兵力数）；被歼/被灭后从地图移除
 - [x] 窄路关卡阻塞：**移动路径不能穿过任何武将**（存活守将 / 未歼灭杂兵 / 其他英雄占据格在寻路 `makeMapCosts` 中不可通行，含己方英雄——不能穿过/重叠）；**战斗目标格放行**：点击存活守将/未歼灭杂兵格 → 英雄**直接移动上去交战**（reducer `moveHeroTo` 把守将/杂兵格作为移动终点放行、走进触发战斗；原「拦存活守将格」移除；目标格在 `makeMapCosts(goalHex)` 中不作为障碍，其余武将格照旧挡）
-- [x] 城池界面 TownPanel（驻军/驻城/访问 + 移兵/驻守/换将/出城）
+- [x] 城池界面 TownPanel（驻军/驻城/访问 + 移兵/驻守/交换/出城）
 - [x] **战斗交互 + 回流（2026-08 Task 8 + Task 5 修订）**：点存活守将/未歼灭杂兵格 → 英雄**直接移动到目标格本身**（`animateMove`；`moveHeroTo` 放行走入；路径中间不穿过武将）→ 到达后触发战斗（构建双方 `BattleArmyConfig`：攻方=当前英雄 army+武将属性；守将=units+`GENERAL_BASES`+`deriveStats`；杂兵=units 无武将「野怪」）→ `scene.start('Battle', { enter: { mode, campaignId, heroId, playerId, targetPosition, garrisonId/neutralId, player, enemy, grid } })`；BattleScene `create(data.enter)` 用外部阵容开局（无 enter 仍走战斗测试固定阵容）；结算后「返回主菜单」按钮若带回流上下文 → 回 Adventure 携带 `BattleResult`；AdventureScene `create(data.result)` → `campaign/resolveBattle` 写回（剩余兵力/经验 `general/gainXp`/守将 `alive=false`/杂兵 `defeated=true`/**胜利占格**（英雄 position=targetPosition、不清空剩余移动力，已扣走进去的代价）/**失败回城**（英雄回玩家第一城格、行动力=0）`checkVictory` 胜利判定）；悬停守将/杂兵格（英雄可达）→ 刀剑光标 `cursorKind='sword'` + 目标格红色交战高亮；e2e `src/e2e/campaign-battle.spec.ts`（含**败局回归**：dev bridge 弱我强敌 → defend 循环战败 → 返回 → 英雄回玩家第一城格 + 行动力 0，杂兵不被歼）
 - [x] **胜利面板（2026-08 Task 9）**：`campaign/resolveBattle` 写回后 `outcome==='won'` → 弹层（`openInfo`「胜利！」/「击败孔秀，东岭关告破」+「返回主菜单」按钮 → `fadeAndStart` 回主菜单）；guard 每次 create 只弹一次；弹层期间屏蔽地图输入/结束回合（与 TownPanel 同机制）；explore 模式 `victory` 为 null → `checkVictory` no-op → outcome 恒 null 不触发；e2e `src/e2e/campaign-full.spec.ts`；完整战役结算/奖励画面未做
 - [x] **世界状态持久化（2026-08 世界快照）**：进战斗前把当前 `GameState` 序列化存渲染层模块级 `worldSnapshot`；战斗返回 `create(data)` 检测快照 → 用 `deserializeState` 恢复为 CommandLog 初始态（不 `campaign/start`）→ 再 `campaign/resolveBattle` 写回战斗结果。城池驻军/移兵/英雄位置/回合/资源跨战斗保留；仅会话内（刷新即丢）。e2e `src/e2e/world-snapshot.spec.ts`
@@ -589,7 +589,7 @@ else:            战斗
 - [ ] 保留等级技能
 
 ### 城池
-- [x] 城池界面 MVP（2026-08 TownPanel）：城名/等级/势力 + 驻军槽（兵种×数量）+ 驻城英雄卡 + 访问英雄卡；按钮按槽位动态出现——驻守（访问→驻城 `hero/garrison`）、换将（驻城↔访问 `town/swapHeroes`）、出城（回 heroes `hero/leaveTown`）、移兵（英雄 army ↔ 驻军，每个兵种行「1/全」双向按钮 `town/transferTroops`）；打开期间 overlay 隔离地图输入（左键、点外关闭、手势锁防泄漏）；e2e `src/e2e/town-panel.spec.ts`
+- [x] 城池界面 MVP（2026-08 TownPanel）：城名/等级/势力 + 驻军槽（兵种×数量）+ 驻城英雄卡 + 访问英雄卡；按钮按槽位动态出现——驻守（访问→驻城 `hero/garrison`）、**交换**（驻城↔访问双向切换 `town/swapHeroes`：双槽互换/单驻城出城/单访问进驻）、出城（回 heroes `hero/leaveTown`）、移兵（英雄 army ↔ 驻军，每个兵种行「1/全」双向按钮 `town/transferTroops`）；**访问/驻城语义（2026-08 Task 1）**：`enterTown` 保留英雄在 heroes（位置=城格，大地图叠城可见）、`garrisonTown` 才移入 garrison 从 heroes 移除、`leaveTown` 驻城出城加回 heroes / 访问出城仅清访问槽、`moveHeroTo` 访问武将离开城格自动结束访问；打开期间 overlay 隔离地图输入（左键、点外关闭、手势锁防泄漏）；e2e `src/e2e/town-panel.spec.ts`
 - [ ] 建筑/招募/酒馆 三页签（§9.3 TownScene 完整版；MVP 城池界面未含建筑/招募/酒馆）
 - [ ] 建筑建造
 - [ ] 兵力招募
