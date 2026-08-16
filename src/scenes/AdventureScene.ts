@@ -5,6 +5,8 @@ import {
   computeDailyIncome,
   createInitialState,
   currentHero,
+  deserializeState,
+  serializeState,
   weekOf,
   type FactionId,
   type GameState,
@@ -33,6 +35,13 @@ import { CAMPAIGNS } from '../data/campaigns'
 import { GENERAL_BASES } from '../data/generals'
 import { BattleScene, type BattleFlowReturn } from './BattleScene'
 import { MainMenuScene } from './MainMenuScene'
+
+/**
+ * 世界快照（渲染层模块级，跨场景存活；仅会话内，刷新即丢）：
+ * 进战斗前把当前 GameState 序列化保存；战斗返回时用快照恢复大地图（城池/英雄位置/回合/资源保留），
+ * 再写回战斗结果（campaign/resolveBattle）。解决「战斗往返大地图状态重置」gap。
+ */
+let worldSnapshot: string | null = null
 
 /** 势力显示颜色（渲染层专用）：魏红 蜀绿 吴蓝 群紫 */
 const FACTION_COLORS: Record<FactionId, number> = {
@@ -209,10 +218,16 @@ export class AdventureScene extends Phaser.Scene {
     this.bgm = getBgmManager(this)
     fadeIn(this)
     this.createLayers()
-    this.buildStore()
-    // 战斗回流（Task 8）：从 Battle 返回时 data.result 携带 BattleResult → 写回大地图
-    // （经验/剩余兵力/守将歼灭/中立歼灭/胜利判定）。在 buildStore（campaign/start）之后 dispatch，
-    // 确保写回发生在全新战役状态上。
+    // 战斗回流（世界快照持久化）：从 Battle 返回时 data.result 携带 BattleResult →
+    // 用快照恢复大地图（城池/英雄位置/回合/资源保留），再写回战斗结果。
+    // 否则（新开局/探索测试/战斗测试返回主菜单再进）清残留快照，走全新 campaign/start。
+    if (data?.result && data.heroId && worldSnapshot) {
+      this.buildStore(worldSnapshot)
+      worldSnapshot = null
+    } else {
+      worldSnapshot = null
+      this.buildStore()
+    }
     if (data?.result && data.heroId) {
       this.store.dispatch('campaign/resolveBattle', {
         result: data.result,
@@ -252,8 +267,21 @@ export class AdventureScene extends Phaser.Scene {
     return this.store.getState()
   }
 
-  /** 新建 CommandLog 并初始化状态：有 mode → 读战役配置 campaign/start；否则随机地图 game/setup（dev 换种子） */
-  private buildStore(): void {
+  /**
+   * 新建 CommandLog 并初始化状态。
+   * restoreFrom（世界快照 JSON，战斗返回时传入）→ 反序列化恢复大地图（不 campaign/start，城池/位置/回合/资源保留）；
+   * 否则有 mode → 读战役配置 campaign/start；无 mode → 随机地图 game/setup（dev 换种子）。
+   */
+  private buildStore(restoreFrom?: string): void {
+    if (restoreFrom) {
+      // 战斗返回：从快照恢复（世界状态持久化），随后 create 再 dispatch resolveBattle 写回战斗结果
+      this.store = new CommandLog<GameState>(deserializeState(restoreFrom), gameReducer)
+      this.mapKeys = new Set(this.state.map?.hexes.map(hexKey) ?? [])
+      this.drawMap()
+      this.drawTowns()
+      this.drawNodes()
+      return
+    }
     this.store = new CommandLog<GameState>(createInitialState(), gameReducer)
     const mode = this.mode
     if (mode) {
@@ -1008,6 +1036,8 @@ export class AdventureScene extends Phaser.Scene {
     } else {
       return
     }
+    // 进战斗前保存世界快照：战斗返回时恢复大地图状态（城池驻守/移兵/英雄位置/回合/资源不丢）
+    worldSnapshot = serializeState(this.state)
     this.scene.start(BattleScene.KEY, {
       enter: {
         mode: this.mode,
