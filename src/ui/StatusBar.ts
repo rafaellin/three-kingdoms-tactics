@@ -90,8 +90,9 @@ export class StatusBar {
       color: css(COLORS.gilt)
     })
     x = heroText.x + heroText.width + StatusBar.HERO_GAP
+    // 游标 x 是左缘语义 → 传入方块中心 cx = x + UNIT_SIZE / 2，避免方块左缘盖住 hero 文本
     for (const cell of this.lastUnitCells) {
-      this.addUnitSquare(x, y, cell)
+      this.addUnitSquare(x + StatusBar.UNIT_SIZE / 2, y, cell)
       x += StatusBar.UNIT_SIZE + StatusBar.UNIT_GAP
     }
   }
