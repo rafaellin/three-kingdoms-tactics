@@ -2,7 +2,6 @@ import Phaser from 'phaser'
 import type { BattleState, Side } from '../core/battle/types'
 import { COLORS, css, FONT_DISPLAY } from './theme'
 
-const CARD_W = 216
 const EDGE = 16      // 屏幕边缘留白
 const PAD = 16       // 面板内边距
 
@@ -78,16 +77,18 @@ export class GeneralCard {
     const y = cam.height / 2
     const bodyH = this.body.height
     const cardH = this.nameText.height + 6 + bodyH + PAD * 2
+    // 卡宽贴合内容：取姓名/正文较宽者 + 左右内边距（随文字长度自适应）
+    const cardW = Math.max(this.nameText.width, this.body.width) + PAD * 2
     const leftX = EDGE
-    const rightX = cam.width - EDGE - CARD_W
+    const rightX = cam.width - EDGE - cardW
     const x0 = this.side === 'player' ? leftX : rightX
     this.bg.clear()
     this.bg.fillStyle(COLORS.nightInk, 0.82)
-    this.bg.fillRoundedRect(x0, y - cardH / 2, CARD_W, cardH, 8)
+    this.bg.fillRoundedRect(x0, y - cardH / 2, cardW, cardH, 8)
     this.bg.lineStyle(2, COLORS.gilt, 0.6)
-    this.bg.strokeRoundedRect(x0, y - cardH / 2, CARD_W, cardH, 8)
+    this.bg.strokeRoundedRect(x0, y - cardH / 2, cardW, cardH, 8)
     const originX = this.side === 'player' ? 0 : 1
-    this.nameText.setOrigin(originX, 0.5).setPosition(x0 + (originX === 0 ? PAD : CARD_W - PAD), y - cardH / 2 + this.nameText.height / 2)
-    this.body.setOrigin(originX, 0).setPosition(x0 + (originX === 0 ? PAD : CARD_W - PAD), y - cardH / 2 + this.nameText.height + 6)
+    this.nameText.setOrigin(originX, 0.5).setPosition(x0 + (originX === 0 ? PAD : cardW - PAD), y - cardH / 2 + this.nameText.height / 2)
+    this.body.setOrigin(originX, 0).setPosition(x0 + (originX === 0 ? PAD : cardW - PAD), y - cardH / 2 + this.nameText.height + 6)
   }
 }
