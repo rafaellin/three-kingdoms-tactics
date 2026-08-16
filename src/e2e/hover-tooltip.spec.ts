@@ -20,6 +20,7 @@ interface DebugGameState {
   levelUpNotice?: { heroId: string; name: string; level: number; shown: boolean } | null
   generals?: { id: string; name: string; level: number; xp: number }[]
   neutrals?: { id: string; position: Axial; defeated: boolean; screen?: { x: number; y: number } }[]
+  garrisons?: { id: string; generalId: string; position: Axial; alive: boolean; screen?: { x: number; y: number } }[]
   // battle 状态
   phase?: string
   general?: { enemy?: { name?: string } }
@@ -111,7 +112,30 @@ test('hover 格 tooltip：悬停山脉 → 不可通过；杂兵 → 野怪；�
   s = await readState(page)
   expect(s.hoverTooltip).toContain('东岭小城')
 
-  // 截图交人工目检：格 tooltip（地形/消耗/驻军/城名）
+  // ④ 悬停守将格 (0,1)（gar-kongxiu 孔秀 2队）→ tooltip 含「守将」「孔秀」
+  // （守将不在 state.generals → 走 GENERAL_BASES fallback 名）
+  const garrison = s.garrisons!.find((g) => g.id === 'gar-kongxiu')!
+  expect(garrison.alive).toBe(true)
+  await page.mouse.move(garrison.screen!.x, garrison.screen!.y)
+  await page.waitForFunction(() => {
+    const st = (window as { __game?: { getState(): DebugGameState } }).__game?.getState()
+    return st?.hoverTooltip != null && st.hoverTooltip.includes('守将') && st.hoverTooltip.includes('孔秀')
+  })
+  s = await readState(page)
+  expect(s.hoverTooltip).toContain('守将')
+  expect(s.hoverTooltip).toContain('孔秀')
+
+  // ⑤ 悬停未探索迷雾格 (0,3)（孔秀南侧，山 (0,2) 阻挡视野外）→ tooltip 不显示（hoverTooltip null）
+  const fog = hexToScreen({ q: 0, r: 3 })
+  await page.mouse.move(fog.x, fog.y)
+  await page.waitForFunction(() => {
+    const st = (window as { __game?: { getState(): DebugGameState } }).__game?.getState()
+    return st?.hoverTooltip == null
+  })
+  s = await readState(page)
+  expect(s.hoverTooltip).toBeNull()
+
+  // 截图交人工目检：格 tooltip（地形/消耗/驻军/城名/守将；迷雾不显示）
   await page.screenshot({ path: 'screenshots/hover-tooltip.png' })
 })
 

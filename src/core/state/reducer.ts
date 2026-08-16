@@ -568,7 +568,9 @@ function swapHeroes(state: GameState, { townId }: SwapHeroesPayload): GameState 
   const garrison = town.garrisonGeneralId
   const visitor = town.visitorGeneralId
 
-  // 双槽都占：互换槽位 + heroes 成员切换（原驻城加回 heroes 位置=城格，原访问移入 garrison 移除）
+  // 双槽都占：互换槽位 + heroes 成员切换（原驻城加回 heroes 位置=城格，原访问移入 garrison 移除）。
+  // 驻城武将原位替换访问武将所在槽（不 append 到末尾）→ 保持 heroes 数组序，nextHero 循环不因交换而重排；
+  // 选中若指向被移入 garrison 的访问武将 → 改指回城武将（新返回者，位于原位），避免 stale selectedHeroId。
   if (garrison && visitor) {
     const hero = heroAtTown(state, town, garrison)
     if (!hero) return state
@@ -577,7 +579,8 @@ function swapHeroes(state: GameState, { townId }: SwapHeroesPayload): GameState 
       towns: state.towns.map((t) =>
         t.id === townId ? { ...t, garrisonGeneralId: visitor, visitorGeneralId: garrison } : t
       ),
-      heroes: [...state.heroes.filter((h) => h.generalId !== visitor), hero]
+      heroes: state.heroes.map((h) => (h.generalId === visitor ? hero : h)),
+      selectedHeroId: state.selectedHeroId === visitor ? garrison : state.selectedHeroId
     }
   }
   // 只有驻城、无访问：驻城武将出城（garrison 清空，加回 heroes 位置=城格）
@@ -590,14 +593,17 @@ function swapHeroes(state: GameState, { townId }: SwapHeroesPayload): GameState 
       heroes: [...state.heroes, hero]
     }
   }
-  // 只有访问、无驻城：访问武将进驻（访问移入 garrison，从 heroes 移除）
+  // 只有访问、无驻城：访问武将进驻（访问移入 garrison，从 heroes 移除）。
+  // 选中若指向被移除的访问武将 → 重指 heroes[0]（无英雄则 null），避免 stale selectedHeroId。
   if (visitor) {
+    const heroes = state.heroes.filter((h) => h.generalId !== visitor)
     return {
       ...state,
       towns: state.towns.map((t) =>
         t.id === townId ? { ...t, garrisonGeneralId: visitor, visitorGeneralId: null } : t
       ),
-      heroes: state.heroes.filter((h) => h.generalId !== visitor)
+      heroes,
+      selectedHeroId: state.selectedHeroId === visitor ? (heroes[0]?.generalId ?? null) : state.selectedHeroId
     }
   }
   return state

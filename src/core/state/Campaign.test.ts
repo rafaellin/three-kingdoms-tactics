@@ -456,6 +456,69 @@ describe('城池交互', () => {
     const back = s.heroes.find((h) => h.generalId === 'g-sunqian')!
     expect(back.position).toEqual({ q: 0, r: 0 }) // 驻城武将出城回 heroes
   })
+
+  test('swapHeroes：双槽互换保留 heroes 数组序（原访问槽原位替换，不 append 末尾）', () => {
+    const store = makeCampaignStore()
+    // 关羽（数组首位）先进城驻守 → 从 heroes 移除 → heroes=[周仓,孙乾]
+    store.dispatch('hero/move', { heroId: 'g-guan', to: { q: 0, r: 0 } })
+    store.dispatch('hero/enterTown', { heroId: 'g-guan', townId: 't-dongling' })
+    store.dispatch('hero/garrison', { heroId: 'g-guan', townId: 't-dongling' })
+    expect(store.getState().heroes.map((h) => h.generalId)).toEqual(['g-zhoucang', 'g-sunqian'])
+    // 周仓（现数组首位）进城访问 → heroes=[周仓,孙乾]
+    store.dispatch('hero/move', { heroId: 'g-zhoucang', to: { q: -1, r: 0 } })
+    store.dispatch('hero/move', { heroId: 'g-zhoucang', to: { q: 0, r: 0 } })
+    store.dispatch('hero/enterTown', { heroId: 'g-zhoucang', townId: 't-dongling' })
+    let s = store.getState()
+    expect(s.towns[0]!.garrisonGeneralId).toBe('g-guan')
+    expect(s.towns[0]!.visitorGeneralId).toBe('g-zhoucang')
+    expect(s.heroes.map((h) => h.generalId)).toEqual(['g-zhoucang', 'g-sunqian'])
+    // 互换：garrison 关羽 ↔ visitor 周仓；关羽原位替换周仓槽（index 0），孙乾不动
+    store.dispatch('town/swapHeroes', { townId: 't-dongling' })
+    s = store.getState()
+    expect(s.towns[0]!.garrisonGeneralId).toBe('g-zhoucang')
+    expect(s.towns[0]!.visitorGeneralId).toBe('g-guan')
+    // 保序：返回的关羽在 index 0（原访问槽），而非 append 到末尾
+    expect(s.heroes.map((h) => h.generalId)).toEqual(['g-guan', 'g-sunqian'])
+    expect(s.heroes.find((h) => h.generalId === 'g-guan')!.position).toEqual({ q: 0, r: 0 })
+  })
+
+  test('swapHeroes：双槽互换，选中=访问武将 → selectedHeroId 改指回城武将（新返回者）', () => {
+    const store = makeCampaignStore()
+    // 孙乾驻城 → heroes=[关羽,周仓]
+    store.dispatch('hero/move', { heroId: 'g-sunqian', to: { q: 0, r: 0 } })
+    store.dispatch('hero/enterTown', { heroId: 'g-sunqian', townId: 't-dongling' })
+    store.dispatch('hero/garrison', { heroId: 'g-sunqian', townId: 't-dongling' })
+    // 周仓进城访问 → heroes=[关羽,周仓]，选中周仓
+    store.dispatch('hero/move', { heroId: 'g-zhoucang', to: { q: -1, r: 0 } })
+    store.dispatch('hero/move', { heroId: 'g-zhoucang', to: { q: 0, r: 0 } })
+    store.dispatch('hero/enterTown', { heroId: 'g-zhoucang', townId: 't-dongling' })
+    store.dispatch('hero/select', { heroId: 'g-zhoucang' })
+    let s = store.getState()
+    expect(s.towns[0]!.garrisonGeneralId).toBe('g-sunqian')
+    expect(s.towns[0]!.visitorGeneralId).toBe('g-zhoucang')
+    expect(s.selectedHeroId).toBe('g-zhoucang')
+    // 互换：garrison 孙乾 ↔ visitor 周仓；选中周仓（被移入 garrison）→ 重指孙乾
+    store.dispatch('town/swapHeroes', { townId: 't-dongling' })
+    s = store.getState()
+    expect(s.towns[0]!.garrisonGeneralId).toBe('g-zhoucang')
+    expect(s.towns[0]!.visitorGeneralId).toBe('g-sunqian')
+    expect(s.heroes.some((h) => h.generalId === 'g-zhoucang')).toBe(false)
+    expect(s.selectedHeroId).toBe('g-sunqian') // 重指新返回者，非 stale
+    expect(s.heroes.find((h) => h.generalId === 'g-sunqian')).toBeDefined()
+  })
+
+  test('swapHeroes：只有访问点交换（进驻）且选中该访问武将 → selectedHeroId 重指 heroes[0]', () => {
+    const store = makeCampaignStore()
+    store.dispatch('hero/move', { heroId: 'g-sunqian', to: { q: 0, r: 0 } })
+    store.dispatch('hero/enterTown', { heroId: 'g-sunqian', townId: 't-dongling' })
+    store.dispatch('hero/select', { heroId: 'g-sunqian' })
+    expect(store.getState().selectedHeroId).toBe('g-sunqian')
+    store.dispatch('town/swapHeroes', { townId: 't-dongling' })
+    const s = store.getState()
+    expect(s.towns[0]!.garrisonGeneralId).toBe('g-sunqian')
+    expect(s.heroes.some((h) => h.generalId === 'g-sunqian')).toBe(false)
+    expect(s.selectedHeroId).toBe('g-guan') // 原访问者进驻移除 → 重指 heroes[0]
+  })
 })
 
 describe('MapMovementCost 守将格拦截', () => {

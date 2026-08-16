@@ -1139,9 +1139,10 @@ export class AdventureScene extends Phaser.Scene {
     if (neutral) {
       lines.push(`野怪（${neutral.units.length}队）`)
     }
-    // 格上武将（含访问武将叠城）
+    // 格上武将（含访问武将叠城；访问武将已在「访问：」行显示 → 跳过去重，名称只出现一次）
     for (const h of state.heroes) {
       if (hexKey(h.position) !== k) continue
+      if (town?.visitorGeneralId === h.generalId) continue
       const name = state.generals.find((g) => g.id === h.generalId)?.name ?? h.generalId
       lines.push(name)
     }
