@@ -10,6 +10,7 @@ import { computeDamage, DEFEND_BONUS, MELEE_ATTACK_MULT, RANGE_OUT_MULT } from '
 import { battleFindPath, battleReachableArea } from './pathing'
 import { computeBail } from './result'
 import { effectiveSpeed, occupiedHexes, type BattleArmyConfig, type BattleState, type BattleUnit } from './types'
+import { maxUnits } from '../growth'
 
 /** 魔法值上限系数：maxMana = round(智力 × MANA_COEF)（PRD §5.3：智力×系数；系数暂定 1） */
 const MANA_COEF = 1
@@ -118,8 +119,10 @@ function reorderWait(state: BattleState, tailAsc: boolean): string[] {
 }
 
 function init(state: BattleState, payload: { player: BattleArmyConfig; enemy: BattleArmyConfig; grid: { cols: number; rows: number; obstacles?: Axial[] }; playerGold?: number; opponentKind?: 'faction' | 'wild' }): BattleState {
-  const mk = (cfg: BattleArmyConfig, qBase: number): BattleUnit[] =>
-    cfg.units.map((u, i) => {
+  const mk = (cfg: BattleArmyConfig, qBase: number): BattleUnit[] => {
+    // 部队数上限校验（HOMM3 式槽位）：超限截断到 maxUnits(武将等级，缺省 Lv1=4)，保留前 N 支（确定性）
+    const cap = maxUnits(cfg.general?.level ?? 1)
+    return cfg.units.slice(0, cap).map((u, i) => {
       const def = UNIT_DEFS[u.defId]
       return {
         id: `${cfg.side === 'player' ? 'p' : 'e'}${i}`,
@@ -136,6 +139,7 @@ function init(state: BattleState, payload: { player: BattleArmyConfig; enemy: Ba
         retaliated: false
       }
     })
+  }
   const units = [...mk(payload.player, 0), ...mk(payload.enemy, payload.grid.cols - 2)]
   const order = sortOrder(units)
   const general = {

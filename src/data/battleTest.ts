@@ -1,6 +1,6 @@
 /**
  * 战斗测试固定阵容（纯数据）：主菜单「战斗测试」入口用。
- * 我方：关羽（武90/统70/智50/政60/魅80）+ 4 支；敌方：吕布（武100/统80/智30/政20/魅40）+ 4 支。
+ * 我方：关羽 Lv20（武96/统70/智50/政60/魅80）+ 4 支；敌方：吕布 Lv20（武100/统80/智30/政20/魅40）+ 4 支。
  * 攻防加成由 battleReducer 从当前武力/统御推导（atkBonus = round(武力/3)）。
  */
 import type { Axial } from '../core/hex/HexGrid'
@@ -22,7 +22,7 @@ const LVBU = GENERAL_BASES['g-lvbu']
 
 export const PLAYER_ARMY: BattleArmyConfig = {
   side: 'player',
-  general: { name: GUAN.name, level: 1, stats: deriveStats(GUAN, 1), passives: [...GUAN.passives] },
+  general: { name: GUAN.name, level: 20, stats: deriveStats(GUAN, 20), passives: [...GUAN.passives] },
   units: [
     { defId: 'militia', count: 30 },
     { defId: 'swordsman', count: 12 },
@@ -33,7 +33,7 @@ export const PLAYER_ARMY: BattleArmyConfig = {
 
 export const ENEMY_ARMY: BattleArmyConfig = {
   side: 'enemy',
-  general: { name: LVBU.name, level: 1, stats: deriveStats(LVBU, 1), passives: [...LVBU.passives] },
+  general: { name: LVBU.name, level: 20, stats: deriveStats(LVBU, 20), passives: [...LVBU.passives] },
   units: [
     { defId: 'militia', count: 20 },
     { defId: 'pikeman', count: 12 },

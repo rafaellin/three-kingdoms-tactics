@@ -4,7 +4,7 @@ import { hexKey } from '../hex/HexGrid'
 import { battleReducer, canRetaliate, createInitialBattleState } from './battleReducer'
 import { buildBattleResult } from './result'
 import { computeActualAttack, computeActualDefense } from './damage'
-import type { BattleArmyConfig, BattleGeneralConfig, BattleState } from './types'
+import type { BattleArmyConfig, BattleGeneralConfig, BattleState, BattleUnitConfig } from './types'
 
 const TEST_GRID = { cols: 13, rows: 9 }
 const TEST_ARMIES = {
@@ -51,6 +51,32 @@ describe('battle/init', () => {
     const s = store.getState()
     expect(s.obstacles).toEqual([{ q: 2, r: 0 }])
     expect(s.units.every((u) => u.retaliated === false)).toBe(true)
+  })
+  test('init 按武将等级截断部队数上限：Lv1→4 支、Lv15→7 上限可容纳 6 支', () => {
+    const six: BattleUnitConfig[] = [
+      { defId: 'militia', count: 10 },
+      { defId: 'swordsman', count: 10 },
+      { defId: 'archer', count: 10 },
+      { defId: 'cavalry', count: 10 },
+      { defId: 'pikeman', count: 10 },
+      { defId: 'militia', count: 10 }
+    ]
+    const mkPlayer = (level: number) =>
+      ({ side: 'player' as const, general: { name: 'P', level, stats: { atk: 18, def: 16, int: 14, pol: 18, cha: 22 }, passives: [] }, units: six })
+    // general Lv1 → maxUnits 4：6 支截断到前 4 支
+    const s1 = makeStore({
+      player: mkPlayer(1),
+      enemy: { side: 'enemy', generalName: 'E', atkBonus: 0, defBonus: 0, units: [{ defId: 'militia', count: 10 }] }
+    }).getState()
+    const p1 = s1.units.filter((u) => u.side === 'player')
+    expect(p1).toHaveLength(4)
+    expect(p1.map((u) => u.defId)).toEqual(['militia', 'swordsman', 'archer', 'cavalry']) // 保留前 N 支
+    // general Lv15 → maxUnits 7：6 支全保留
+    const s2 = makeStore({
+      player: mkPlayer(15),
+      enemy: { side: 'enemy', generalName: 'E', atkBonus: 0, defBonus: 0, units: [{ defId: 'militia', count: 10 }] }
+    }).getState()
+    expect(s2.units.filter((u) => u.side === 'player')).toHaveLength(6)
   })
 })
 

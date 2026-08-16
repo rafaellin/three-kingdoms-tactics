@@ -158,7 +158,7 @@ test('近战：边界刀剑 → 点击冲锋 + 全伤反击', async ({ page }) =
   const p0 = after.units!.find((u) => u.id === 'p0')!
   const e0a = after.units!.find((u) => u.id === 'e0')!
   expect(p0.position).toEqual({ q: 2, r: 0 })
-  expect(e0a.hpLeft).toBe(366)    // 刀兵20×hp20=400 - 34
+  expect(e0a.hpLeft).toBe(364)    // 刀兵20×hp20=400 - 36（HOMM3：攻4 vs 防8 差-4 → ×0.90）
   expect(p0.hpLeft).toBe(116)     // 民兵20×hp10=200 - 84（反击）
   expect(e0a.retaliated).toBe(true)
   expect(after.currentUnitId).toBe('p1') // 反击后 advance 到 p1（无 AI 介入）
@@ -774,21 +774,21 @@ test('战斗数值展示：左右武将卡（六维/蓝量/被动）+ 主菜单�
   const s = await getState(page)
   // 攻方（左）关羽卡：六维/蓝量/被动
   expect(s.general?.player).toMatchObject({
-    name: '关羽', level: 1,
-    stats: { atk: 90, def: 70, int: 50, pol: 60, cha: 80 },
+    name: '关羽', level: 20,
+    stats: { atk: 96, def: 70, int: 50, pol: 60, cha: 80 },
     maxMana: 50, currentMana: 50,
     passives: [{ name: '铁壁', level: 1 }]
   })
   // 守方（右）吕布卡
   expect(s.general?.enemy).toMatchObject({
-    name: '吕布', level: 1,
+    name: '吕布', level: 20,
     stats: { atk: 100, def: 80, int: 30, pol: 20, cha: 40 },
     maxMana: 30, currentMana: 30,
     passives: [{ name: '狂暴', level: 1 }]
   })
   // 卡已渲染（debug 暴露可见文本）
   expect(s.generalCardText?.player).toContain('关羽')
-  expect(s.generalCardText?.player).toContain('武力 90')
+  expect(s.generalCardText?.player).toContain('武力 96')
   expect(s.generalCardText?.player).toContain('蓝量 50/50')
   expect(s.generalCardText?.player).toContain('被动 铁壁 Lv1')
   expect(s.generalCardText?.enemy).toContain('吕布')
