@@ -12,6 +12,9 @@ import {
   type Resources
 } from './GameState'
 import { gameReducer } from './reducer'
+import { deriveStats } from '../generals'
+import { GENERAL_BASES } from '../../data/generals'
+import { MAX_LEVEL } from '../growth'
 import { makeSetup } from '../testing/setup'
 import { makePlainMap, key } from '../testing/maps'
 
@@ -261,6 +264,78 @@ describe('applyDailyIncome（每日结算）', () => {
     s.nodeStates[key({ q: 1, r: 0 })] = { owner: null, visited: true }
     const after = applyDailyIncome(s)
     expect(after).toEqual(s) // 无城无矿 → 结算无变化
+  })
+})
+
+describe('general/gainXp（武将经验与升级）', () => {
+  const GUAN = GENERAL_BASES['g-guan']
+
+  test('加经验不升级：xp 累加、level/属性不变', () => {
+    const store = makeStore()
+    const before = store.getState().generals[0]!
+    store.dispatch('general/gainXp', { generalId: 'g-guan', amount: 500 })
+    const g = store.getState().generals[0]!
+    expect(g.xp).toBe(500)
+    expect(g.level).toBe(1)
+    expect(g.stats).toEqual(before.stats)
+  })
+
+  test('单级升级：扣 xpToNext 清余、重算属性、skillSlots 更新', () => {
+    const store = makeStore()
+    store.dispatch('general/gainXp', { generalId: 'g-guan', amount: 1200 }) // xpToNext(1)=1000 → 余 200
+    const g = store.getState().generals[0]!
+    expect(g.level).toBe(2)
+    expect(g.xp).toBe(200)
+    expect(g.skillSlots).toBe(0) // floor(2/3)
+    expect(g.stats).toEqual(deriveStats(GUAN, 2))
+  })
+
+  test('连升：一次加大量跨多级（8000 → Lv6，余 558）', () => {
+    const store = makeStore()
+    store.dispatch('general/gainXp', { generalId: 'g-guan', amount: 8000 })
+    const g = store.getState().generals[0]!
+    expect(g.level).toBe(6)
+    expect(g.xp).toBe(558)
+    expect(g.skillSlots).toBe(2) // floor(6/3)
+    expect(g.stats).toEqual(deriveStats(GUAN, 6))
+  })
+
+  test('3 级解锁技能槽：Lv3→1、Lv6→2', () => {
+    const store = makeStore()
+    store.dispatch('general/gainXp', { generalId: 'g-guan', amount: 1000 }) // → Lv2，余 0
+    expect(store.getState().generals[0]!.skillSlots).toBe(0) // floor(2/3)
+    store.dispatch('general/gainXp', { generalId: 'g-guan', amount: 1200 }) // → Lv3，余 0
+    expect(store.getState().generals[0]!.skillSlots).toBe(1) // floor(3/3)
+    store.dispatch('general/gainXp', { generalId: 'g-guan', amount: 1440 + 1728 + 2074 }) // → Lv6
+    expect(store.getState().generals[0]!.skillSlots).toBe(2) // floor(6/3)
+  })
+
+  test('达到 MAX_LEVEL 停止：level 不变、xp 不再扣', () => {
+    const base = makeStore().getState()
+    const crafted: GameState = {
+      ...base,
+      generals: [
+        {
+          ...base.generals[0]!,
+          level: MAX_LEVEL,
+          xp: 0,
+          stats: deriveStats(GUAN, MAX_LEVEL),
+          skillSlots: Math.floor(MAX_LEVEL / 3)
+        }
+      ]
+    }
+    const store = new CommandLog<GameState>(crafted, gameReducer)
+    store.dispatch('general/gainXp', { generalId: 'g-guan', amount: 999999 })
+    const g = store.getState().generals[0]!
+    expect(g.level).toBe(MAX_LEVEL)
+    expect(g.xp).toBe(999999) // 到顶不再扣经验、不再升级
+  })
+
+  test('找不到武将 → no-op 返回原 state', () => {
+    const store = makeStore()
+    const before = store.getState()
+    store.dispatch('general/gainXp', { generalId: 'g-nonexist', amount: 500 })
+    expect(store.getState()).toEqual(before)
   })
 })
 

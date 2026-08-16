@@ -36,6 +36,7 @@ export const START_GENERALS: readonly General[] = [
     level: 1,
     xp: 0,
     stats: deriveStats(GUAN, 1),
+    skillSlots: Math.floor(1 / 3), // Lv1 → 0
     passives: [...GUAN.passives]
   }
 ]

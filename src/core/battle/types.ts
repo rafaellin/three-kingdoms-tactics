@@ -123,6 +123,8 @@ export interface BattleState {
   outcome: BattleOutcome | null
   /** 进入战斗时的参数（玩家金币 / 对手类型；battle/init 带入，议和判定用） */
   enter?: BattleEnterParams
+  /** 每方累计歼灭的敌方 hp×count（1 HP = 1 经验；被歼灭单位会从 units 移除，故战斗中途累加） */
+  killedHp: Record<Side, number>
   log: string[]
 }
 

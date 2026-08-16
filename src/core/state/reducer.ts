@@ -9,6 +9,9 @@ import { hexKey, hexNeighbor, type Axial, type HexDir } from '../hex/HexGrid'
 import type { MapData } from '../map/MapGen'
 import { getTerrain } from '../../data/terrain'
 import { completeResources, RESOURCE_NODE_DEFS } from '../../data/resourceNode'
+import { GENERAL_BASES } from '../../data/generals'
+import { deriveStats } from '../generals'
+import { MAX_LEVEL, xpToNext } from '../growth'
 import {
   BASE_MAX_MOVEMENT,
   BASE_SIGHT_RANGE,
@@ -49,6 +52,11 @@ export interface SpendResourcesPayload {
 
 export interface MovePayload {
   to: Axial
+}
+
+export interface GainXpPayload {
+  generalId: string
+  amount: number
 }
 
 /** 为该势力重算视野（旧 fog 决定 explored 持久化） */
@@ -141,6 +149,32 @@ function spend(state: GameState, { faction, cost }: SpendResourcesPayload): Game
   }
 }
 
+/**
+ * 武将获得经验（确定性，无随机）：
+ * xp 累加 → 连升（while 足够则扣 xpToNext、level+1）→ 重算 stats/skillSlots。
+ * 达到 MAX_LEVEL 后不再升级（xp 仍可累积，不再扣减）；找不到武将/基础配置 → no-op。
+ */
+function gainXp(state: GameState, { generalId, amount }: GainXpPayload): GameState {
+  const base = GENERAL_BASES[generalId as keyof typeof GENERAL_BASES]
+  if (!base) return state
+  const idx = state.generals.findIndex((g) => g.id === generalId)
+  if (idx < 0) return state
+
+  let xp = state.generals[idx]!.xp + amount
+  let level = state.generals[idx]!.level
+  while (xp >= xpToNext(level) && level < MAX_LEVEL) {
+    xp -= xpToNext(level)
+    level += 1
+  }
+
+  const generals = state.generals.map((g, i) =>
+    i === idx
+      ? { ...g, xp, level, stats: deriveStats(base, level), skillSlots: Math.floor(level / 3) }
+      : g
+  )
+  return { ...state, generals }
+}
+
 function isNeighbor(a: Axial, b: Axial): boolean {
   for (let d = 0; d < 6; d++) {
     if (hexKey(hexNeighbor(a, d as HexDir)) === hexKey(b)) return true
@@ -231,6 +265,8 @@ export const gameReducer: Reducer<GameState> = (state, cmd: Command) => {
       return spend(state, cmd.payload as SpendResourcesPayload)
     case 'unit/move':
       return moveHero(state, cmd.payload as MovePayload)
+    case 'general/gainXp':
+      return gainXp(state, cmd.payload as GainXpPayload)
     default:
       return state
   }

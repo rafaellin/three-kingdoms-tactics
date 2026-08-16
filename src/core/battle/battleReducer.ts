@@ -70,6 +70,7 @@ export function createInitialBattleState(): BattleState {
     selectedUnitId: null,
     phase: 'combat',
     outcome: null,
+    killedHp: { player: 0, enemy: 0 },
     log: []
   }
 }
@@ -155,6 +156,7 @@ function init(state: BattleState, payload: { player: BattleArmyConfig; enemy: Ba
     selectedUnitId: null,
     phase: 'combat',
     outcome: null,
+    killedHp: { player: 0, enemy: 0 }, // 新开一场战斗清零累计
     enter: payload.playerGold !== undefined && payload.opponentKind !== undefined
       ? { playerGold: payload.playerGold, opponentKind: payload.opponentKind }
       : undefined,
@@ -339,6 +341,16 @@ function attack(state: BattleState, unitId: string, targetId: string, to?: Axial
   const targetAfter = next.units.find((u) => u.id === target.id)
   const killedCount = targetAfter ? targetCountBefore - targetAfter.count : targetCountBefore
   const eliminated = !targetAfter
+  // 歼灭整队 → 累计该方歼灭的敌方 hp×count（1 HP = 1 经验，见 buildBattleResult）
+  if (eliminated) {
+    next = {
+      ...next,
+      killedHp: {
+        ...next.killedHp,
+        [attacker.side]: (next.killedHp[attacker.side] ?? 0) + targetCountBefore * UNIT_DEFS[target.defId].hp
+      }
+    }
+  }
   const logs = [
     `第${state.turn}回合 ${unitName(state, attacker)} 攻击 ${unitName(state, target)}，` +
     `造成 ${dmg} 点伤害${killedCount > 0 ? `，歼灭 ${killedCount} 个` : ''}（${eliminated ? '消灭' : '全伤'}）`
@@ -370,11 +382,19 @@ function retaliate(state: BattleState, retaliatorId: string, victimId: string): 
   const victimAfter = units.find((u) => u.id === victim.id)
   const killedCount = victimAfter ? victimCountBefore - victimAfter.count : victimCountBefore
   const eliminated = !victimAfter
+  // 歼灭整队 → 累计该方歼灭的敌方 hp×count（1 HP = 1 经验，见 buildBattleResult）
+  let killedHp = state.killedHp
+  if (eliminated) {
+    killedHp = {
+      ...state.killedHp,
+      [retaliator.side]: (state.killedHp[retaliator.side] ?? 0) + victimCountBefore * UNIT_DEFS[victim.defId].hp
+    }
+  }
   const logs = [
     `第${state.turn}回合 ${unitName(state, retaliator)} 反击 ${unitName(state, victim)}，` +
     `造成 ${rDmg} 点伤害${killedCount > 0 ? `，歼灭 ${killedCount} 个` : ''}（${eliminated ? '消灭' : '全伤'}）`
   ]
-  const s = applyTerminal({ ...state, units, log: [...state.log, ...logs] })
+  const s = applyTerminal({ ...state, units, killedHp, log: [...state.log, ...logs] })
   if (s.phase !== 'combat') return s
   return advance(s)
 }
@@ -407,6 +427,16 @@ function shoot(state: BattleState, unitId: string, targetId: string): BattleStat
   const targetAfter = next.units.find((u) => u.id === target.id)
   const killedCount = targetAfter ? targetCountBefore - targetAfter.count : targetCountBefore
   const eliminated = !targetAfter
+  // 歼灭整队 → 累计该方歼灭的敌方 hp×count（1 HP = 1 经验，见 buildBattleResult）
+  if (eliminated) {
+    next = {
+      ...next,
+      killedHp: {
+        ...next.killedHp,
+        [attacker.side]: (next.killedHp[attacker.side] ?? 0) + targetCountBefore * UNIT_DEFS[target.defId].hp
+      }
+    }
+  }
   const log = [
     ...state.log,
     `第${state.turn}回合 ${unitName(state, attacker)} 射击 ${unitName(state, target)}，` +

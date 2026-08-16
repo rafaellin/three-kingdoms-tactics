@@ -46,6 +46,8 @@ export interface General {
   xp: number
   /** 当前六维（战斗展示/攻防/蓝量都读这里，不读基础配置） */
   stats: GeneralStats
+  /** 已解锁技能槽数 = floor(level/3)（技能系统未来按它出槽位；本期只维护计数，不实现技能池） */
+  skillSlots: number
   /** 已生效被动技能（展示） */
   passives: { name: string; level: number }[]
 }

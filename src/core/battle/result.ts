@@ -22,7 +22,8 @@ export function buildBattleResult(state: BattleState): BattleResult {
   return {
     outcome,
     remainingTroops: zeroed ? [] : state.units.filter((u) => u.side === 'player').map((u) => ({ defId: u.defId, count: u.count })),
-    expGained: 0, // 经验系统将来填（仅战胜）
+    // 经验仅「战胜」给（HOMM3 式 1 HP = 1 经验）：投降/逃跑/议和/战败不给
+    expGained: outcome === 'won' ? Math.round(state.killedHp.player) : 0,
     goldSettlement: outcome === 'negotiated' ? -computeBail(state) : 0,
     generalCaptured: outcome === 'surrendered' ? true : outcome === 'fled' || outcome === 'negotiated' ? false : null
   }

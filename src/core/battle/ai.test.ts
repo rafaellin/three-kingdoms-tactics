@@ -14,7 +14,7 @@ function state(enemy: BattleUnit, foes: BattleUnit[]): BattleState {
     units: [enemy, ...foes],
     obstacles: [],
     general: { player: { name: 'P', atkBonus: 0, defBonus: 0, stats: { atk: 0, def: 0, int: 0, pol: 0, cha: 0 }, level: 1, maxMana: 0, currentMana: 0, passives: [] }, enemy: { name: 'E', atkBonus: 0, defBonus: 0, stats: { atk: 0, def: 0, int: 0, pol: 0, cha: 0 }, level: 1, maxMana: 0, currentMana: 0, passives: [] } },
-    turn: 1, completedQueue: [], normalQueue: [enemy.id], waitQueue: [], currentUnitId: enemy.id, selectedUnitId: null, phase: 'combat', outcome: null, log: []
+    turn: 1, completedQueue: [], normalQueue: [enemy.id], waitQueue: [], currentUnitId: enemy.id, selectedUnitId: null, phase: 'combat', outcome: null, killedHp: { player: 0, enemy: 0 }, log: []
   }
 }
 

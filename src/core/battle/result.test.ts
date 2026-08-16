@@ -11,7 +11,8 @@ function mkState(over: Partial<BattleState>): BattleState {
     ],
     general: { player: { name: 'P', atkBonus: 0, defBonus: 0, stats: { atk: 0, def: 0, int: 0, pol: 0, cha: 0 }, level: 1, maxMana: 0, currentMana: 0, passives: [] }, enemy: { name: 'E', atkBonus: 0, defBonus: 0, stats: { atk: 0, def: 0, int: 0, pol: 0, cha: 0 }, level: 1, maxMana: 0, currentMana: 0, passives: [] } },
     turn: 1, completedQueue: [], normalQueue: ['p0', 'e0'], waitQueue: [], currentUnitId: 'p0',
-    selectedUnitId: null, phase: 'combat', outcome: null, enter: { playerGold: 10000, opponentKind: 'faction' }, log: [],
+    selectedUnitId: null, phase: 'combat', outcome: null, enter: { playerGold: 10000, opponentKind: 'faction' },
+    killedHp: { player: 0, enemy: 0 }, log: [],
     ...over
   }
 }
@@ -49,5 +50,23 @@ describe('buildBattleResult', () => {
   })
   test('自然战败：generalCaptured=null（探索层决定 30% 逃跑）', () => {
     expect(buildBattleResult(mkState({ phase: 'lost', outcome: 'lost' })).generalCaptured).toBeNull()
+  })
+
+  test('战胜：expGained = 我方歼灭敌方 hp×count 总和（round）', () => {
+    const r = buildBattleResult(mkState({
+      phase: 'won',
+      outcome: 'won',
+      killedHp: { player: 312.6, enemy: 40 }
+    }))
+    expect(r.outcome).toBe('won')
+    expect(r.expGained).toBe(313) // round(312.6)
+  })
+
+  test('非战胜（战败/降/逃/和）：expGained = 0，即使我方有歼灭', () => {
+    const killed = { player: 312, enemy: 0 }
+    expect(buildBattleResult(mkState({ phase: 'lost', outcome: 'lost', killedHp: killed })).expGained).toBe(0)
+    expect(buildBattleResult(mkState({ phase: 'lost', outcome: 'surrendered', killedHp: killed })).expGained).toBe(0)
+    expect(buildBattleResult(mkState({ phase: 'fled', outcome: 'fled', killedHp: killed })).expGained).toBe(0)
+    expect(buildBattleResult(mkState({ phase: 'negotiated', outcome: 'negotiated', killedHp: killed })).expGained).toBe(0)
   })
 })

@@ -2,6 +2,7 @@ import { describe, expect, test } from 'vitest'
 import { CommandLog } from '../events/CommandLog'
 import { hexKey } from '../hex/HexGrid'
 import { battleReducer, canRetaliate, createInitialBattleState } from './battleReducer'
+import { buildBattleResult } from './result'
 import { computeActualAttack, computeActualDefense } from './damage'
 import type { BattleArmyConfig, BattleGeneralConfig, BattleState } from './types'
 
@@ -595,5 +596,48 @@ describe('battle/init 武将当前属性', () => {
     expect(g.maxMana).toBe(0)
     expect(g.currentMana).toBe(0)
     expect(g.passives).toEqual([])
+  })
+})
+
+describe('killedHp 累计（胜利经验 = 我方歼灭敌方 hp×count 总和）', () => {
+  test('射击灭队：killedHp.player += count×hp，战胜 expGained 结算', () => {
+    const store = makeStore({
+      grid: { cols: 5, rows: 3 },
+      player: { side: 'player', generalName: 'P', atkBonus: 0, defBonus: 0, units: [{ defId: 'archer', count: 10 }] },
+      enemy: { side: 'enemy', generalName: 'E', atkBonus: 0, defBonus: 0, units: [{ defId: 'militia', count: 3 }] } // 3×hp10=30
+    })
+    store.dispatch('battle/shoot', { unitId: 'p0', targetId: 'e0' })
+    const s = store.getState()
+    expect(s.units.find((u) => u.id === 'e0')).toBeUndefined()
+    expect(s.phase).toBe('won')
+    expect(s.killedHp.player).toBe(30) // 3 × hp10
+    expect(buildBattleResult(s).expGained).toBe(30)
+  })
+
+  test('敌方灭我方：killedHp.enemy 累计；战败不给经验', () => {
+    const store = makeStore({
+      grid: { cols: 4, rows: 3 },
+      player: { side: 'player', generalName: 'P', atkBonus: 0, defBonus: 0, units: [{ defId: 'militia', count: 1 }] },
+      enemy: { side: 'enemy', generalName: 'E', atkBonus: 0, defBonus: 0, units: [{ defId: 'swordsman', count: 20 }] }
+    })
+    store.dispatch('battle/endTurn', { unitId: 'p0' }) // 同速玩家先行 → 玩家结束，敌方行动
+    store.dispatch('battle/attack', { unitId: 'e0', targetId: 'p0', to: { q: 1, r: 0 } })
+    const s = store.getState()
+    expect(s.units.find((u) => u.id === 'p0')).toBeUndefined()
+    expect(s.phase).toBe('lost')
+    expect(s.killedHp.enemy).toBe(10) // 1 × hp10
+    expect(buildBattleResult(s).expGained).toBe(0)
+  })
+
+  test('未全灭（stack 存活）不计 killedHp', () => {
+    const store = makeStore({
+      grid: { cols: 5, rows: 3 },
+      player: { side: 'player', generalName: 'P', atkBonus: 0, defBonus: 0, units: [{ defId: 'archer', count: 10 }] },
+      enemy: { side: 'enemy', generalName: 'E', atkBonus: 0, defBonus: 0, units: [{ defId: 'militia', count: 50 }] }
+    })
+    store.dispatch('battle/shoot', { unitId: 'p0', targetId: 'e0' })
+    const s = store.getState()
+    expect(s.units.find((u) => u.id === 'e0')).toBeDefined()
+    expect(s.killedHp.player).toBe(0)
   })
 })
