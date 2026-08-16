@@ -47,7 +47,7 @@ interface Player {
 
 **GameState 变更（全部改玩家绑定，势力仅作显示标签；用户确认）**：
 - 新增 `players: Player[]`（参与回合的玩家序列，顺序 = 轮转顺序）
-- 新增 `currentPlayerId: string | null`（当前行动玩家，替代 `currentFaction` 作为轮转游标；`currentFaction` 删除，渲染层从 `players[currentPlayerId].faction` 取势力色）
+- 新增 `currentPlayerId: string | null`（当前行动玩家，替代 `currentFaction` 作为轮转游标；**`currentFaction` 彻底删除**（用户确认），渲染层从 `players[currentPlayerId].faction` 取势力色）
 - **资源**：`resources: Record<FactionId, Resources>` → `Record<PlayerId, Resources>`（同势力玩家各自独立资源）
 - **迷雾**：`visibility: Record<FactionId, ...>` → `Record<PlayerId, ...>`（同势力玩家各自独立视野，不串）
 - **资源点占领**：`NodeState.owner: FactionId | null` → `PlayerId | null`（谁占领归谁，含同势力区分）
@@ -98,11 +98,15 @@ advanceTurn(state):
 - 简单布局（不做美化），视口固定右侧
 
 ### 5. 战斗交互 — 渲染 + core
-- **触发流程（先移动到相邻再战）**：点击存活守将/未歼灭杂兵格 → 英雄先**走到目标格相邻格**（扣该格移动代价，reducer `moveHeroTo` 放行到相邻格，目标格本身仍因守将/杂兵占据不可走入）→ 进入战斗。胜利后英雄**移入目标格**（`campaign/resolveBattle` 扩展：胜利 → 参战英雄 position = 目标格，**不清空剩余移动力**，仅已扣走进相邻格的代价）；失败 → 回城（最近己方城，MVP = `startTowns[0]` 城格）。
-- **悬停高亮/光标**：`updateHover`/`drawOverlay`——悬停存活守将/未歼灭杂兵格，若该格相邻（可走到邻格后战）→ 刀剑光标 + 目标格交战高亮（红/刀剑）。AdventureScene 当前无刀剑光标逻辑，需新加（参照 BattleScene 的 sword hover 视觉）。
+- **触发流程（直接移动上去交战；用户确认修订）**：点击存活守将/未歼灭杂兵格 → 英雄**直接移动到目标格本身**（reducer `moveHeroTo` 允许把存活守将/未歼灭杂兵格作为移动终点，走进即触发战斗）→ 到达后进入战斗。**相邻格不触发交战**（点相邻普通格只做普通移动，点相邻守将格才走进触发）。**移动路径不能穿过任何武将**（己方英雄/敌方守将/杂兵占据的格在寻路中不可通行；目标格本身作为终点可进入）。
+- **胜利**：英雄移入目标格（已通过移动到位占据），**不清空剩余移动力**（已扣走进去的移动代价）。
+- **失败**：英雄回最近己方城（MVP = 玩家第一城格），行动力=0。
+- **悬停高亮/光标**：`updateHover`/`drawOverlay`——悬停存活守将/未歼灭杂兵格（英雄可达该格）→ 刀剑光标 + 目标格交战高亮（红/刀剑）。AdventureScene 当前无刀剑光标逻辑，需新加（参照 BattleScene 的 sword hover 视觉）。
 - 实现位置：
-  - `triggerBattle` 改造：先 `animateMove` 到相邻格（dispatch `hero/move`），再进 Battle。
-  - `campaign/resolveBattle` 扩展：payload 加 `targetPosition: Axial`（胜利后英雄位置）；胜利 → 英雄 position=target、扣 `moveCost(target)` 行动力（已在移动相邻格时扣了进相邻格的，移入目标格再扣一格代价）；失败 → 英雄 position=最近城、行动力=0。
+  - `triggerBattle` 改造：点击守将/杂兵格 → `animateMove` 到该格本身（dispatch `hero/move`，reducer 放行走入）→ 到达触发战斗。目标格在 `moveHeroTo` 中从「不可通行」改为「可作为移动终点（战斗目标）」。
+  - **「不能穿过」**：`moveHeroTo` 的相邻格校验——若相邻格被**其他英雄**占据（含己方）→ 拒绝（不能重叠，问题2）；若相邻格是**存活守将/未歼灭杂兵**——作为移动终点放行（走进触发战斗），作为路径中间格（寻路 `makeMapCosts`）→ 不可通行（不能穿过）。
+  - `campaign/resolveBattle` 扩展：失败 → 英雄 position=最近城、行动力=0（胜利时英雄已在目标格，无需额外移动）。
+  - `makeMapCosts`：所有武将占据格（己方英雄/存活守将/未歼灭杂兵）寻路不可通行（不能穿过）；目标格单独作为移动终点处理。
 
 ## 不做（YAGNI）
 

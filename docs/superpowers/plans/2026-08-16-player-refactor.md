@@ -204,15 +204,16 @@ advanceTurn(state):
 - Produces: `ResolveBattlePayload.targetPosition: Axial`（胜利后英雄位置）
 
 **改动：**
-1. **触发**（问题5）：`triggerBattle` 改为——点击存活守将/未歼灭杂兵格 → 英雄先 `animateMove` 到**目标格相邻格**（`dispatch('hero/move', { heroId, to: adjacent })`，目标格本身因占据不可走入）→ 进 Battle。
-2. **resolveBattle 扩展**：payload 加 `targetPosition: Axial`（胜利后英雄移入目标格）+ `moveCost: number`（已扣走进相邻格代价）。胜利 → 英雄 `position = targetPosition`，**不清空剩余移动力**；失败 → 英雄回最近己方城（MVP = 玩家第一城格），行动力=0。
-3. **悬停刀剑**（问题5）：`updateHover` 悬停存活守将/未歼灭杂兵格，若该格相邻（`hexDistance === 1`）→ `cursorKind='sword'` + `drawOverlay` 目标格红色交战高亮（参照 BattleScene 刀剑视觉）。
+1. **触发（直接移动上去交战；用户确认修订）**：点击存活守将/未歼灭杂兵格 → 英雄**直接移动到目标格本身**（`animateMove` 到该格，`moveHeroTo` 允许把存活守将/未歼灭杂兵格作为移动终点放行）→ 到达触发战斗。**相邻格不触发交战**。**移动路径不能穿过任何武将**（寻路 `makeMapCosts`：所有武将占据格——己方英雄/存活守将/未歼灭杂兵——不可通行）。
+2. **「不能穿过」+「不能重叠」**（问题2 + 问题5）：`moveHeroTo` 相邻格校验——被**其他英雄**占据 → 拒绝（不能重叠）；存活守将/未歼灭杂兵格 → 作为移动终点放行（走进触发战斗）。寻路把武将格全挡（不能穿过），目标格单独经 `hero/move` 终点处理。
+3. **resolveBattle 扩展**：失败 → 英雄回最近己方城（MVP = 玩家第一城格），行动力=0；胜利时英雄已在目标格（移动到位即占据），无需额外移动，**不清空剩余移动力**（已扣走进去的代价）。
+4. **悬停刀剑**（问题5）：`updateHover` 悬停存活守将/未歼灭杂兵格（英雄可达该格）→ `cursorKind='sword'` + `drawOverlay` 目标格红色交战高亮（参照 BattleScene 刀剑视觉）。
 
-- [ ] **Step 1: 写失败测试** — e2e：点杂兵 → 英雄先移相邻 → 战 → 胜 → 英雄 position=杂兵格 + 行动力保留；败 → 回城。悬停守将 → cursorKind sword
+- [ ] **Step 1: 写失败测试** — e2e：点杂兵 → 英雄直接移动到杂兵格 → 战 → 胜 → 英雄 position=杂兵格 + 行动力保留；败 → 回城。悬停守将 → cursorKind sword。英雄不能移动穿过另一英雄/守将格
 - [ ] **Step 2: 运行确认失败**
 - [ ] **Step 3: 实现**
 - [ ] **Step 4: 运行确认通过**
-- [ ] **Step 5: 提交** — `feat: 战斗相邻触发 + 胜利移入目标格/失败回城 + 悬停刀剑交战高亮`
+- [ ] **Step 5: 提交** — `feat: 战斗直接移动上去触发 + 胜利占格/失败回城 + 不能穿过/重叠武将 + 悬停刀剑`
 
 ---
 
