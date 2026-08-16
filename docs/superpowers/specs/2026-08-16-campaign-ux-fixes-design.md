@@ -45,10 +45,16 @@ interface Player {
 }
 ```
 
-**GameState 变更**：
+**GameState 变更（全部改玩家绑定，势力仅作显示标签；用户确认）**：
 - 新增 `players: Player[]`（参与回合的玩家序列，顺序 = 轮转顺序）
-- 新增 `currentPlayerId: string | null`（当前行动玩家；替代 currentFaction 作为轮转游标，currentFaction 可保留兼容渲染）
-- `HeroUnit` 新增 `playerId: string`（该英雄归谁控制）；**保留 `faction`**（迷雾/资源/友城判定仍按势力：同势力玩家共享视野与资源）
+- 新增 `currentPlayerId: string | null`（当前行动玩家，替代 `currentFaction` 作为轮转游标；`currentFaction` 删除，渲染层从 `players[currentPlayerId].faction` 取势力色）
+- **资源**：`resources: Record<FactionId, Resources>` → `Record<PlayerId, Resources>`（同势力玩家各自独立资源）
+- **迷雾**：`visibility: Record<FactionId, ...>` → `Record<PlayerId, ...>`（同势力玩家各自独立视野，不串）
+- **资源点占领**：`NodeState.owner: FactionId | null` → `PlayerId | null`（谁占领归谁，含同势力区分）
+- **城池归属**：`Town.owner: FactionId` → `PlayerId`（城池归玩家；同势力玩家各自有城）
+- **英雄**：`HeroUnit` 新增 `playerId`；**保留 `faction`**（仅作势力色显示；迷雾/资源判定改用 `playerId` 查询所属玩家）
+- `computeDailyIncome`/`canAfford`/`applyDailyIncome` 改按 PlayerId 结算（城池/矿的 owner 是 PlayerId）
+- 每日结算按玩家循环（`state.players`）而非按势力
 
 **CampaignConfig 变更**：
 - 新增 `players: Player[]`（战役：`[{id:'p1', faction:'shu', kind:'human'}, {id:'ai1', faction:'wei', kind:'ai'}]`；探索：`[{id:'p1', faction:'shu', kind:'human'}]`）
@@ -107,9 +113,9 @@ advanceTurn(state):
 
 ## 测试
 
-- core：`Campaign.test.ts` 补 advanceTurn 单势力/玩家→AI→system、AI no-op、英雄重叠阻挡；`GameState.test.ts` 适配
-- e2e：world-snapshot 回归；新增切换武将、战斗胜利移动/失败回城、结束回合下一天
-- 现有 `resources.spec.ts` 回合断言适配单势力
+- **core**：`GameState.test.ts`/`Movement.test.ts`/`Campaign.test.ts` 全部势力键断言（`resources.shu`/`visibility.shu`/`nodeStates.owner`/`town.owner`）适配为 PlayerId；`Campaign.test.ts` 补 advanceTurn 单玩家/玩家→AI→system、AI no-op、英雄重叠阻挡；每日结算按玩家
+- **e2e**：`resources.spec.ts`/`movement.spec.ts`/`sfx.spec.ts` 等势力/迷雾断言适配玩家键；world-snapshot 回归；新增切换武将、战斗胜利移动/失败回城、结束回合下一天
+- **渲染层**：AdventureScene 20+ 处 `.faction` 查询（迷雾/资源/友城）改经 `currentPlayer(state)` 取 playerId → visibility/resources 键
 
 ## 关键文件
 
