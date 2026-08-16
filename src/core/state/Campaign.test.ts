@@ -11,6 +11,7 @@ import { hexKey } from '../hex/HexGrid'
 import { MapMovementCost } from '../pathfinding/MapMovementCost'
 import { createInitialState, type GameState } from './GameState'
 import { gameReducer } from './reducer'
+import { makeSetup } from '../testing/setup'
 import { CAMPAIGNS } from '../../data/campaigns'
 
 /** 用东岭关战役配置启动 CommandLog（campaign/start） */
@@ -93,6 +94,63 @@ describe('game/advanceTurn 多英雄回合', () => {
     store.dispatch('game/advanceTurn')
     expect(store.getState().turn).toBe(2)
     expect(store.getState().currentPlayerId).toBe('p1')
+  })
+})
+
+describe('game/advanceTurn 探索模式 + system 结算', () => {
+  test('探索模式结束回合：回 p1 + 天数+1 + 行动力回满（结束回合 = 下一天 + 回满）', () => {
+    const store = makeCampaignStore('explore')
+    // 关羽 (0,-1)→(0,0) 耗 1 点移动力（平地；探索模式不放守将，可达）
+    store.dispatch('hero/move', { heroId: 'g-guan', to: { q: 0, r: 0 } })
+    let s = store.getState()
+    expect(s.currentPlayerId).toBe('p1')
+    expect(s.turn).toBe(1)
+    expect(s.heroes.find((h) => h.generalId === 'g-guan')!.movementLeft).toBe(5)
+    // 结束回合 → 回 p1（campaign/start 探索模式 players=[p1,ai1]，AI 自动 no-op 后跨圈进 system）
+    // + 下一天 + ALL 英雄行动力回满；单玩家 [p1] 路径见下方「单玩家」测试
+    store.dispatch('game/advanceTurn')
+    s = store.getState()
+    expect(s.currentPlayerId).toBe('p1')
+    expect(s.turn).toBe(2)
+    for (const gid of ['g-guan', 'g-zhoucang', 'g-sunqian']) {
+      expect(s.heroes.find((h) => h.generalId === gid)!.movementLeft).toBe(6)
+    }
+  })
+
+  test('system 结算：结束回合跨圈 → 天数+1 + 城池每日产金到账（applyDailyIncome）', () => {
+    const store = makeCampaignStore()
+    // p1 初始金 80（START_RESOURCES）；东岭城 t-dongling Lv1 归 p1 → +10金/天
+    expect(store.getState().resources.p1!.gold).toBe(80)
+    // 战役：p1 → ai1（AI 自动行动 no-op）→ 回 p1 跨圈 → system 结算
+    store.dispatch('game/advanceTurn')
+    const s = store.getState()
+    expect(s.turn).toBe(2)
+    expect(s.resources.p1!.gold).toBe(90) // 80 + 城池日收 10
+  })
+
+  test('单玩家（players=[p1]）结束回合：p1 → 直接 system → 回 p1，天数+1 + 行动力回满', () => {
+    // 探索测试单玩家路径：game/setup 用 START_PLAYERS=[p1]（不含 AI）
+    const store = new CommandLog<GameState>(createInitialState(), gameReducer)
+    store.dispatch('game/setup', makeSetup())
+    expect(store.getState().players).toHaveLength(1)
+    expect(store.getState().currentPlayerId).toBe('p1')
+    store.dispatch('unit/move', { to: { q: 1, r: 0 } }) // 平地耗 1 移动力
+    expect(store.getState().heroes[0]!.movementLeft).toBe(5)
+    // 结束回合：单玩家一圈即回起点 → system 结算（天数+1 + 行动力回满）
+    store.dispatch('game/advanceTurn')
+    const s = store.getState()
+    expect(s.currentPlayerId).toBe('p1')
+    expect(s.turn).toBe(2)
+    expect(s.heroes[0]!.movementLeft).toBe(6)
+  })
+
+  test('players 为空（初始态）→ advanceTurn 原样返回（不崩溃）', () => {
+    const store = new CommandLog<GameState>(createInitialState(), gameReducer)
+    store.dispatch('game/advanceTurn')
+    const s = store.getState()
+    expect(s.players).toHaveLength(0)
+    expect(s.currentPlayerId).toBeNull()
+    expect(s.turn).toBe(1)
   })
 })
 
