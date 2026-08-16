@@ -28,6 +28,7 @@ import { RESOURCE_NODE_DEFS } from '../data/resourceNode'
 import { BgmManager, getBgmManager } from '../audio/BgmManager'
 import { BgmControls } from '../ui/BgmControls'
 import { RightPanel } from '../ui/RightPanel'
+import { StatusBar } from '../ui/StatusBar'
 import { TownPanel } from '../ui/TownPanel'
 import { openInfo } from '../ui/Modal'
 import { fadeAndStart, fadeIn } from '../ui/fade'
@@ -154,6 +155,8 @@ export class AdventureScene extends Phaser.Scene {
   private nodeDetailText!: Phaser.GameObjects.Text
   /** 右侧武将/城池列表面板（屏幕固定；Task 4：点击切换英雄 / 打开城池面板 / 下一个(h)；Task 3：含「结束回合」按钮） */
   private rightPanel: RightPanel | null = null
+  /** 底部当前武将信息条（屏幕固定；Task 4：名字/等级/移动力/带部队列表） */
+  private statusBar: StatusBar | null = null
   /** 胜利面板已展示（每次 create 只弹一次；Task 9） */
   private victoryPanelShown = false
   /** 胜利面板打开中：屏蔽地图输入 / 结束回合（与 townPanel 同机制；Task 9） */
@@ -261,6 +264,8 @@ export class AdventureScene extends Phaser.Scene {
       onNextHero: () => this.nextHero(),
       onEndTurn: () => this.endTurn()
     })
+    // 底部当前武将信息条（Task 4：屏幕最底部一行；首帧由 refreshViews 渲染）
+    this.statusBar = new StatusBar(this)
     this.refreshViews()
     this.setupInput()
     // 战役胜利判定（resolveBattle 已写回 outcome）：达成 → 弹胜利面板（Task 9）
@@ -279,6 +284,7 @@ export class AdventureScene extends Phaser.Scene {
     })
     this.events.once('shutdown', () => this.bgmControls?.destroy())
     this.events.once('shutdown', () => this.rightPanel?.destroy())
+    this.events.once('shutdown', () => this.statusBar?.destroy())
   }
 
   /** 结束回合：dispatch game/advanceTurn，推进到下一势力（跨周自动结算） */
@@ -880,6 +886,8 @@ export class AdventureScene extends Phaser.Scene {
     this.updateHud()
     // 右侧武将/城池列表随状态刷新（选中高亮 / 兵力数 / 城池列表）
     this.rightPanel?.refresh(this.state)
+    // 底部当前武将信息条随状态刷新（名字/等级/移动力/部队列表）
+    this.statusBar?.refresh(this.state)
   }
 
   /** 在指定 Graphics 上画一个填充六角格 */
@@ -1443,6 +1451,8 @@ export class AdventureScene extends Phaser.Scene {
       townPanel: this.townPanel?.getDebugState() ?? null,
       // 右侧武将/城池列表面板（e2e 断言列表内容 + 读坐标点击）
       rightPanel: this.rightPanel?.getDebugState() ?? null,
+      // 底部当前武将信息条（e2e 断言信息条文本 / 移动力变化 / 切武将后更新）
+      statusBar: this.statusBar?.getDebugState() ?? null,
       nodeStates: {
         picked: Object.values(state.nodeStates).filter((n) => n.visited).length,
         claimedMines: Object.values(state.nodeStates).filter((n) => n.owner !== null).length
