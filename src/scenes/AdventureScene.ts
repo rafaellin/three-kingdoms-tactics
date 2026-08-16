@@ -25,12 +25,14 @@ import { RESOURCE_NODE_DEFS } from '../data/resourceNode'
 import { BgmManager, getBgmManager } from '../audio/BgmManager'
 import { BgmControls } from '../ui/BgmControls'
 import { TownPanel } from '../ui/TownPanel'
-import { fadeIn } from '../ui/fade'
+import { openInfo } from '../ui/Modal'
+import { fadeAndStart, fadeIn } from '../ui/fade'
 import { SfxManager } from '../audio/SfxManager'
 import { HERO_STARTS, START_FACTIONS, START_GENERALS, START_TOWNS, TURN_ORDER } from '../data/bootstrap'
 import { CAMPAIGNS } from '../data/campaigns'
 import { GENERAL_BASES } from '../data/generals'
 import { BattleScene, type BattleFlowReturn } from './BattleScene'
+import { MainMenuScene } from './MainMenuScene'
 
 /** 势力显示颜色（渲染层专用）：魏红 蜀绿 吴蓝 群紫 */
 const FACTION_COLORS: Record<FactionId, number> = {
@@ -139,6 +141,10 @@ export class AdventureScene extends Phaser.Scene {
   private nodeDetailText!: Phaser.GameObjects.Text
   /** 结束回合按钮 */
   private endTurnButton!: Phaser.GameObjects.Text
+  /** 胜利面板已展示（每次 create 只弹一次；Task 9） */
+  private victoryPanelShown = false
+  /** 胜利面板打开中：屏蔽地图输入 / 结束回合（与 townPanel 同机制；Task 9） */
+  private victoryModalOpen = false
 
   /**
    * 视口分区（从上到下）：HUD → Map → Tools。
@@ -196,6 +202,9 @@ export class AdventureScene extends Phaser.Scene {
     // 读主菜单传入的模式/战役（fadeAndStart → scene.start 的 data）；战斗回流也带 mode/campaignId
     this.mode = data?.mode ?? undefined
     this.campaignId = (data?.campaignId as 'dongling') ?? 'dongling'
+    // 场景实例被 scene.start 复用：重置跨场景残留的胜利面板状态（每次 create 允许重新弹一次）
+    this.victoryPanelShown = false
+    this.victoryModalOpen = false
     // BGM 管理器先创建（createLayers 中 BGM 控件依赖它）
     this.bgm = getBgmManager(this)
     fadeIn(this)
@@ -214,6 +223,8 @@ export class AdventureScene extends Phaser.Scene {
     }
     this.refreshViews()
     this.setupInput()
+    // 战役胜利判定（resolveBattle 已写回 outcome）：达成 → 弹胜利面板（Task 9）
+    this.maybeShowVictoryPanel()
     // 地图中心（世界原点）居中到屏幕中心。视口 1920×1080 → scroll(-960,-540)
     this.cameras.main.centerOn(0, 0)
     this.bgm.switchToCategory('explore')
@@ -230,7 +241,7 @@ export class AdventureScene extends Phaser.Scene {
 
   /** 结束回合：dispatch game/advanceTurn，推进到下一势力（跨周自动结算） */
   private endTurn(): void {
-    if (this.busy || this.townPanel) return
+    if (this.busy || this.townPanel || this.victoryModalOpen) return
     this.store.dispatch('game/advanceTurn')
     this.refreshViews()
   }
@@ -815,8 +826,8 @@ export class AdventureScene extends Phaser.Scene {
   private setupInput(): void {
     const cam = this.cameras.main
     this.input.on('pointerdown', (p: Phaser.Input.Pointer) => {
-      // 城池面板打开期间 / 面板刚关闭的手势锁 / 非左键 → 不处理地图输入（防面板按钮泄漏成地图拖拽/点击）
-      if (this.townPanel || this.modalGestureLock || p.button !== 0) return
+      // 城池面板/胜利面板打开期间 / 面板刚关闭的手势锁 / 非左键 → 不处理地图输入（防面板按钮泄漏成地图拖拽/点击）
+      if (this.townPanel || this.victoryModalOpen || this.modalGestureLock || p.button !== 0) return
       // 仅在 Map 区启动拖拽；HUD / 工具栏区不触发地图交互
       if (!this.isInMapZone(p.y)) return
       this.dragging = true
@@ -824,7 +835,7 @@ export class AdventureScene extends Phaser.Scene {
       this.lastPointer = { x: p.x, y: p.y }
     })
     this.input.on('pointermove', (p: Phaser.Input.Pointer) => {
-      if (this.townPanel || this.modalGestureLock) return // 面板期间 / 手势锁 → 不处理拖拽/悬停
+      if (this.townPanel || this.victoryModalOpen || this.modalGestureLock) return // 面板期间 / 手势锁 → 不处理拖拽/悬停
       if (this.dragging) {
         const dx = (p.x - this.lastPointer.x) / cam.zoom
         const dy = (p.y - this.lastPointer.y) / cam.zoom
@@ -838,7 +849,7 @@ export class AdventureScene extends Phaser.Scene {
     this.input.on('pointerup', (p: Phaser.Input.Pointer) => {
       if (p.button !== 0) return // 仅左键触发地图交互
       // 面板打开期间或面板刚关闭的手势收尾 → 吞掉本次 pointerup，防触发地图操作；手势收尾（up）时解锁
-      if (this.townPanel || this.modalGestureLock) {
+      if (this.townPanel || this.victoryModalOpen || this.modalGestureLock) {
         if (!p.isDown) this.modalGestureLock = false
         return
       }
@@ -1011,6 +1022,31 @@ export class AdventureScene extends Phaser.Scene {
     })
   }
 
+  /**
+   * 战役胜利面板（Task 9）：`campaign/resolveBattle` 写回后若 `outcome==='won'` → 弹层。
+   * MVP：openInfo「胜利！」/「击败孔秀，东岭关告破」+「返回主菜单」按钮（confirm → fadeAndStart 回主菜单）。
+   * - guard：每次 create 只弹一次（victoryPanelShown）；
+   * - explore 模式 victory 为 null → checkVictory no-op → outcome 恒 null，不会误触发；
+   * - 弹层期间置 victoryModalOpen 屏蔽地图输入 / 结束回合（与 TownPanel 同机制）。
+   */
+  private maybeShowVictoryPanel(): void {
+    if (this.state.outcome !== 'won') return
+    if (this.victoryPanelShown) return
+    this.victoryPanelShown = true
+    this.victoryModalOpen = true
+    // onClose 同步复位输入状态（吞掉尾随 pointerup），随后 resolve → fadeAndStart 回主菜单
+    void openInfo(this, {
+      title: '胜利！',
+      message: '击败孔秀，东岭关告破',
+      closeLabel: '返回主菜单',
+      onClose: () => {
+        this.victoryModalOpen = false
+        this.modalGestureLock = true
+        this.dragging = false
+      }
+    }).then(() => fadeAndStart(this, MainMenuScene.KEY))
+  }
+
   /** 打开城池界面：传 getState 读最新 core 状态，动作接线到 reducer 命令 + 重绘面板 + 刷新地图 */
   private openTownPanel(townId: string): void {
     if (this.townPanel) return
@@ -1148,6 +1184,8 @@ export class AdventureScene extends Phaser.Scene {
       campaignId: state.campaignId,
       // 战役结局（达成胜利 → 'won'；战斗回流写回后 e2e 断言）
       outcome: state.outcome,
+      // 胜利面板（Task 9）：shown = 本次 create 已弹过；open = 弹层仍在展示中（e2e 断言用）
+      victoryPanel: { shown: this.victoryPanelShown, open: this.victoryModalOpen },
       heroes: state.heroes.map((h) => ({
         generalId: h.generalId,
         faction: h.faction,

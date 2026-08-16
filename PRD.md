@@ -528,7 +528,9 @@ else:            战斗
 - [x] 窄路关卡阻塞：存活守将格不可通行（`makeMapCosts` garrisonAt + reducer `moveHeroTo` 拦存活守将格）；杂兵格渲染层阻塞、**reducer 不阻塞**——杂兵战斗由「点击占据格」触发而非移动进入（Task 8 决策，见下方战斗回流）
 - [x] 城池界面 TownPanel（驻军/驻城/访问 + 移兵/驻守/换将/出城）
 - [x] **战斗回流（2026-08 Task 8）**：点存活守将/未歼灭杂兵格 → 构建双方 `BattleArmyConfig`（攻方=当前英雄 army+武将属性；守将=units+`GENERAL_BASES`+`deriveStats`；杂兵=units 无武将「野怪」）→ `scene.start('Battle', { enter: { mode, campaignId, heroId, garrisonId/neutralId, player, enemy, grid } })`；BattleScene `create(data.enter)` 用外部阵容开局（无 enter 仍走战斗测试固定阵容）；结算后「返回主菜单」按钮若带回流上下文 → 回 Adventure 携带 `BattleResult`；AdventureScene `create(data.result)` → `campaign/resolveBattle` 写回（剩余兵力/经验 `general/gainXp`/守将 `alive=false`/杂兵 `defeated=true`/`checkVictory` 胜利判定）；e2e `src/e2e/campaign-battle.spec.ts`
-- [ ] 胜利画面（Task 9：MVP 仅 `outcome` 写入 core + getDebugState 暴露；完整胜利面板未做）
+- [x] **胜利面板（2026-08 Task 9）**：`campaign/resolveBattle` 写回后 `outcome==='won'` → 弹层（`openInfo`「胜利！」/「击败孔秀，东岭关告破」+「返回主菜单」按钮 → `fadeAndStart` 回主菜单）；guard 每次 create 只弹一次；弹层期间屏蔽地图输入/结束回合（与 TownPanel 同机制）；explore 模式 `victory` 为 null → `checkVictory` no-op → outcome 恒 null 不触发；e2e `src/e2e/campaign-full.spec.ts`；完整战役结算/奖励画面未做
+- [ ] 世界状态保持（MVP 已知缺口）：每次战斗返回都会重建 AdventureScene（`campaign/start` 全新状态），仅 `campaign/resolveBattle` 写回持久化（杂兵 defeated / 守将 alive / 经验 / outcome）——城池驻军、英雄位置等世界状态在战斗返回后重置；完整实现需战斗返回时增量写回或携带世界状态快照
+- [ ] 对战模式：当前战役为单机 PvE（玩家方 vs 守将/杂兵 AI 回合制战斗），无玩家对战/热座模式
 
 ### 资源与经济（2026-08 基础版）
 - [x] 资源类型：金 / 木 / 石 / 铁（无"粮食"概念）
@@ -600,7 +602,8 @@ else:            战斗
 - [ ] 右侧城池列表
 - [ ] 选中武将详情
 - [ ] 消息日志
-- [ ] 胜利/失败画面
+- [x] 胜利画面（2026-08 Task 9 战役胜利面板：`outcome==='won'` 弹层「胜利！」+「返回主菜单」按钮 → 回主菜单；MVP 见 §15 战役模式）
+- [ ] 失败画面（战斗失利仍只有战斗内结果文字「战败」，无大地图失败结算/重试入口）
 
 ---
 
