@@ -85,6 +85,14 @@ const getState = (page: import('@playwright/test').Page): Promise<DebugGameState
     return g?.getState() ?? {}
   })
 
+/** 主菜单「探索测试」现走 campaign/start explore（东岭关小地图）；本 spec 复算用随机地图（radius 6），
+ *  故用 setSeed 强制切回 dev 随机地图路径（hero 出生点 (0,0)），与下方 core 复算口径一致 */
+const setSeed = (page: import('@playwright/test').Page, seed: number) =>
+  page.evaluate(
+    (s) => (window as { __game?: { setSeed(seed: number): void } }).__game?.setSeed(s),
+    seed
+  )
+
 
 const waitHeroAt = (page: import('@playwright/test').Page, pos: Axial) =>
   page.waitForFunction(
@@ -97,6 +105,7 @@ const waitHeroAt = (page: import('@playwright/test').Page, pos: Axial) =>
 
 test('初始化：hero 就位 (0,0)、移动力 6、视野 = 同种子 core 复算（无阻挡 BFS 半径 3）', async ({ page }) => {
   await gotoAdventure(page)
+  await setSeed(page, SEED)
 
   const s = await getState(page)
   expect(s.hero?.position).toEqual({ q: 0, r: 0 })
@@ -109,6 +118,7 @@ test('初始化：hero 就位 (0,0)、移动力 6、视野 = 同种子 core 复�
 
 test('点击可达格：A* 路径逐格移动、移动力扣除、迷雾逐步揭开、未探索格不可入', async ({ page }) => {
   await gotoAdventure(page)
+  await setSeed(page, SEED)
   await page.evaluate(() => (window as { __game?: { setAnimationSpeed(n: number): void } }).__game?.setAnimationSpeed(0))
 
   const startFog = visionFor(START, {})
@@ -146,6 +156,7 @@ test('点击可达格：A* 路径逐格移动、移动力扣除、迷雾逐步�
 
 test('移动动画：默认步进耗时下 busy 期间移动，动画结束后状态一致', async ({ page }) => {
   await gotoAdventure(page)
+  await setSeed(page, SEED)
 
   const startFog = visionFor(START, {})
   const target = pickTarget(startFog)

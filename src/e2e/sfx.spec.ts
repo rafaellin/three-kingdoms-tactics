@@ -102,8 +102,17 @@ const waitHeroAt = (page: import('@playwright/test').Page, pos: Axial) =>
     pos
   )
 
+/** 探索测试现走 campaign/start explore（东岭关小地图）；本 spec 复算用随机地图（radius 6），
+ *  故用 setSeed 强制切回 dev 随机地图路径（hero 出生点 (0,0)），与下方 core 复算口径一致 */
+const setSeed = (page: import('@playwright/test').Page, seed: number) =>
+  page.evaluate(
+    (s) => (window as { __game?: { setSeed(seed: number): void } }).__game?.setSeed(s),
+    seed
+  )
+
 test('移动音效：移动时循环播放、移动结束停止；与 BGM 同时播放', async ({ page }) => {
   await gotoAdventure(page)
+  await setSeed(page, SEED)
   await waitSfxReady(page)
 
   // 未移动：音效就绪、默认音量 0.3、未在循环

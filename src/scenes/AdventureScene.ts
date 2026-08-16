@@ -21,6 +21,8 @@ import { BgmControls } from '../ui/BgmControls'
 import { fadeIn } from '../ui/fade'
 import { SfxManager } from '../audio/SfxManager'
 import { HERO_STARTS, START_FACTIONS, START_GENERALS, START_TOWNS, TURN_ORDER } from '../data/bootstrap'
+import { CAMPAIGNS } from '../data/campaigns'
+import { GENERAL_BASES } from '../data/generals'
 
 /** 势力显示颜色（渲染层专用）：魏红 蜀绿 吴蓝 群紫 */
 const FACTION_COLORS: Record<FactionId, number> = {
@@ -81,6 +83,10 @@ export class AdventureScene extends Phaser.Scene {
   private seed = 42
   private readonly mapRadius = 6
   private readonly layout = new HexLayout({ size: 36, origin: { x: 0, y: 0 } })
+  /** 当前模式：explore/campaign（读战役配置）；undefined = dev 随机地图路径（game/setup） */
+  private mode: 'explore' | 'campaign' | undefined = undefined
+  /** 战役 id（从 MainMenu 传入；默认东岭关） */
+  private campaignId: 'dongling' = 'dongling'
 
   private store!: CommandLog<GameState>
   /** BGM 背景音乐（渲染层；首次交互后随机起播，默认 10% 音量） */
@@ -98,7 +104,14 @@ export class AdventureScene extends Phaser.Scene {
   private nodeGraphics!: Phaser.GameObjects.Graphics
   private townGraphics!: Phaser.GameObjects.Graphics
   private overlayGraphics!: Phaser.GameObjects.Graphics
-  private heroSprite!: Phaser.GameObjects.Graphics
+  /** 守将渲染层（红城寨格 + 名字标签；与城池同 depth） */
+  private garrisonGraphics!: Phaser.GameObjects.Graphics
+  private garrisonLabels = new Map<string, Phaser.GameObjects.Text>()
+  /** 杂兵渲染层（深绿野怪格 + 兵力数标签） */
+  private neutralGraphics!: Phaser.GameObjects.Graphics
+  private neutralLabels = new Map<string, Phaser.GameObjects.Text>()
+  /** 多英雄精灵（generalId → 圆点）；选中英雄金点+白描边，其余银青小点 */
+  private heroSprites = new Map<string, Phaser.GameObjects.Graphics>()
   /** 顶部 HUD：资源条（图标 + 数值(+每日产出)）+ 日期 */
   private hudResourceCols!: { resource: keyof Resources; icon: Phaser.GameObjects.Image; text: Phaser.GameObjects.Text }[]
   private hudDateText!: Phaser.GameObjects.Text
@@ -164,7 +177,10 @@ export class AdventureScene extends Phaser.Scene {
     super(AdventureScene.KEY)
   }
 
-  create(): void {
+  create(data?: { mode?: 'explore' | 'campaign'; campaignId?: 'dongling' }): void {
+    // 读主菜单传入的模式/战役（fadeAndStart → scene.start 的 data）
+    this.mode = data?.mode ?? undefined
+    this.campaignId = data?.campaignId ?? 'dongling'
     // BGM 管理器先创建（createLayers 中 BGM 控件依赖它）
     this.bgm = getBgmManager(this)
     fadeIn(this)
@@ -199,30 +215,38 @@ export class AdventureScene extends Phaser.Scene {
     return this.store.getState()
   }
 
-  /** 新建 CommandLog 并 dispatch game/setup（用种子生成确定性地图） */
+  /** 新建 CommandLog 并初始化状态：有 mode → 读战役配置 campaign/start；否则随机地图 game/setup（dev 换种子） */
   private buildStore(): void {
     this.store = new CommandLog<GameState>(createInitialState(), gameReducer)
-    const map = generateMap(this.seed, this.mapRadius)
-    this.store.dispatch('game/setup', {
-      turnOrder: [...TURN_ORDER],
-      factions: START_FACTIONS.map((f) => ({ ...f })),
-      generals: START_GENERALS.map((g) => ({ ...g })),
-      towns: START_TOWNS.map((t) => ({ ...t })),
-      map,
-      mapSeed: this.seed,
-      heroStarts: [...HERO_STARTS]
-    })
+    const mode = this.mode
+    if (mode) {
+      // 战役/探索测试：从 CAMPAIGNS 读手工窄路地图（多英雄/守将/杂兵）
+      this.store.dispatch('campaign/start', { mode, campaign: CAMPAIGNS[this.campaignId] })
+    } else {
+      const map = generateMap(this.seed, this.mapRadius)
+      this.store.dispatch('game/setup', {
+        turnOrder: [...TURN_ORDER],
+        factions: START_FACTIONS.map((f) => ({ ...f })),
+        generals: START_GENERALS.map((g) => ({ ...g })),
+        towns: START_TOWNS.map((t) => ({ ...t })),
+        map,
+        mapSeed: this.seed,
+        heroStarts: [...HERO_STARTS]
+      })
+    }
     this.mapKeys = new Set(this.state.map?.hexes.map(hexKey) ?? [])
     this.drawMap()
     this.drawTowns()
     this.drawNodes()
   }
 
-  /** 重建游戏（dev：换种子重开） */
+  /** 重建游戏（dev：换种子重开，强制走随机地图路径） */
   setSeed(seed: number): void {
     this.seed = seed
     this.hoverHex = null
     this.busy = false
+    // dev 换种子：清空 mode → buildStore 走随机地图（game/setup，含资源点/单英雄）
+    this.mode = undefined
     // 重建（dev 换种子）时若恰在移动，停止脚步循环音效
     this.sfx?.stopLooped()
     this.buildStore()
@@ -271,12 +295,9 @@ export class AdventureScene extends Phaser.Scene {
     this.nodeGraphics = this.mapOnly(this.add.graphics().setDepth(2))
     this.townGraphics = this.mapOnly(this.add.graphics().setDepth(2))
     this.overlayGraphics = this.mapOnly(this.add.graphics().setDepth(3))
-    this.heroSprite = this.mapOnly(this.add.graphics().setDepth(4))
-    // hero 精灵绘制在局部原点（0,0），位置由 syncHeroSprite 按核心坐标设置
-    this.heroSprite.fillStyle(0xffd166, 1)
-    this.heroSprite.fillCircle(0, 0, 10)
-    this.heroSprite.lineStyle(2, 0xffffff, 1)
-    this.heroSprite.strokeCircle(0, 0, 10)
+    this.garrisonGraphics = this.mapOnly(this.add.graphics().setDepth(2))
+    this.neutralGraphics = this.mapOnly(this.add.graphics().setDepth(2))
+    // 多英雄精灵在 syncHeroSprites 中按需创建（绘制在局部原点 (0,0)，位置按 core 坐标设置）
     // 顶部 HUD：资源条（图标 + 数值(+每日产出)）+ 日期（固定视口坐标，非世界坐标）。
     // 流式布局：每个资源列 = 图标紧跟其数值文本，按文本实际宽度自左向右排布；
     // 图标不做固定绝对定位（否则 (+N) 变长会与图标重叠），列宽由 updateHud 按实际内容推进。
@@ -493,6 +514,100 @@ export class AdventureScene extends Phaser.Scene {
     }
   }
 
+  /**
+   * 守将渲染：存活守将画红城寨格（深红六角底 + 亮红边框 + 金色旗标）与名字标签；
+   * 被歼（alive=false）后从地图移除（标签随 seen 清理销毁）。
+   * 与城池同 depth；未探索区域的守将不可见。
+   */
+  private drawGarrisons(): void {
+    this.garrisonGraphics.clear()
+    const hero = currentHero(this.state)
+    if (!hero) return
+    const fog = this.state.visibility[hero.faction] ?? {}
+    const seen = new Set<string>()
+    for (const g of this.state.garrisons) {
+      if (!g.alive) continue
+      if (fog[hexKey(g.position)] === 'unexplored') continue
+      seen.add(g.id)
+      // 守将名字：通常不在 state.generals（战役 startGenerals 只含我方武将）→ 从基础表补查
+      const name =
+        this.state.generals.find((gen) => gen.id === g.generalId)?.name ??
+        GENERAL_BASES[g.generalId as keyof typeof GENERAL_BASES]?.name ??
+        ''
+      // 城寨：深红六角底 + 亮红边框
+      this.fillHexScaled(this.garrisonGraphics, g.position, 0.72, 0x7a1f1f, 0.9)
+      this.garrisonGraphics.lineStyle(2, 0xff5555, 1)
+      this.garrisonGraphics.strokePoints(this.hexPoints(g.position, 0.72), true)
+      // 金色旗标（杆 + 三角旗面）
+      const c = this.layout.hexToPixel(g.position)
+      this.garrisonGraphics.fillStyle(0xffd166, 1)
+      this.garrisonGraphics.fillRect(c.x - 3, c.y - 9, 2, 16)
+      this.garrisonGraphics.fillStyle(0xff5555, 1)
+      this.garrisonGraphics.fillTriangle(c.x - 1, c.y - 9, c.x + 8, c.y - 6, c.x - 1, c.y - 3)
+      // 名字标签（跟随地图格，随相机缩放）
+      let label = this.garrisonLabels.get(g.id)
+      if (!label) {
+        label = this.mapOnly(
+          this.add.text(0, 0, '', { fontFamily: 'sans-serif', fontSize: '12px', color: '#ffcccc' })
+            .setOrigin(0.5, 0)
+            .setDepth(2)
+        )
+        this.garrisonLabels.set(g.id, label)
+      }
+      label.setText(name)
+      label.setPosition(c.x, c.y + 18)
+    }
+    // 被歼 / 换种子后清理已不存在守将的标签
+    for (const id of this.garrisonLabels.keys()) {
+      if (!seen.has(id)) {
+        this.garrisonLabels.get(id)?.destroy()
+        this.garrisonLabels.delete(id)
+      }
+    }
+  }
+
+  /**
+   * 杂兵渲染：未歼灭的中立野怪画深绿六角格（野怪格）+ 中央兵力数标签；
+   * 被歼（defeated=true）后从地图移除（标签随 seen 清理销毁）。
+   * 未探索区域的杂兵不可见。
+   */
+  private drawNeutrals(): void {
+    this.neutralGraphics.clear()
+    const hero = currentHero(this.state)
+    if (!hero) return
+    const fog = this.state.visibility[hero.faction] ?? {}
+    const seen = new Set<string>()
+    for (const n of this.state.neutrals) {
+      if (n.defeated) continue
+      if (fog[hexKey(n.position)] === 'unexplored') continue
+      seen.add(n.id)
+      this.fillHexScaled(this.neutralGraphics, n.position, 0.6, 0x3f4f24, 0.85)
+      this.neutralGraphics.lineStyle(1.5, 0x9db85e, 0.9)
+      this.neutralGraphics.strokePoints(this.hexPoints(n.position, 0.6), true)
+      // 中央兵力总数标签
+      const count = n.units.reduce((sum, u) => sum + u.count, 0)
+      let label = this.neutralLabels.get(n.id)
+      if (!label) {
+        label = this.mapOnly(
+          this.add.text(0, 0, '', { fontFamily: 'sans-serif', fontSize: '13px', color: '#e8f5c8' })
+            .setOrigin(0.5)
+            .setDepth(2)
+        )
+        this.neutralLabels.set(n.id, label)
+      }
+      const c = this.layout.hexToPixel(n.position)
+      label.setText(String(count))
+      label.setPosition(c.x, c.y)
+    }
+    // 被歼 / 换种子后清理已不存在杂兵的标签
+    for (const id of this.neutralLabels.keys()) {
+      if (!seen.has(id)) {
+        this.neutralLabels.get(id)?.destroy()
+        this.neutralLabels.delete(id)
+      }
+    }
+  }
+
   /** 顶部 HUD：金/木/石/铁 图标+数值(+每日产出) + 第X周第X天（视口固定；流式布局自适应列宽） */
   private updateHud(): void {
     const state = this.state
@@ -572,22 +687,51 @@ export class AdventureScene extends Phaser.Scene {
     }
   }
 
-  /** hero 精灵对齐 core 坐标 */
-  private syncHeroSprite(): void {
-    const hero = currentHero(this.state)
-    if (!hero) return
-    const c = this.layout.hexToPixel(hero.position)
-    this.heroSprite.setPosition(c.x, c.y)
+  /** 多英雄精灵对齐 core 坐标：遍历 state.heroes 每个英雄画一个圆点（选中金点+白描边，其余银青小点） */
+  private syncHeroSprites(): void {
+    const seen = new Set<string>()
+    for (const hero of this.state.heroes) {
+      seen.add(hero.generalId)
+      let sprite = this.heroSprites.get(hero.generalId)
+      if (!sprite) {
+        sprite = this.mapOnly(this.add.graphics().setDepth(4))
+        this.heroSprites.set(hero.generalId, sprite)
+      }
+      sprite.clear()
+      const c = this.layout.hexToPixel(hero.position)
+      sprite.setPosition(c.x, c.y)
+      const selected = hero.generalId === this.state.selectedHeroId
+      if (selected) {
+        sprite.fillStyle(0xffd166, 1)
+        sprite.fillCircle(0, 0, 10)
+        sprite.lineStyle(2, 0xffffff, 1)
+        sprite.strokeCircle(0, 0, 10)
+      } else {
+        sprite.fillStyle(0x9fb4c7, 1)
+        sprite.fillCircle(0, 0, 8)
+        sprite.lineStyle(1, 0xffffff, 0.7)
+        sprite.strokeCircle(0, 0, 8)
+      }
+    }
+    // 换种子 / 重建后清理已不存在英雄的精灵
+    for (const id of this.heroSprites.keys()) {
+      if (!seen.has(id)) {
+        this.heroSprites.get(id)?.destroy()
+        this.heroSprites.delete(id)
+      }
+    }
   }
 
-  /** 状态变化后统一刷新：迷雾 + 资源点 + 城池 + 可达 + 高亮 + hero 位置 + HUD */
+  /** 状态变化后统一刷新：迷雾 + 资源点 + 城池 + 守将 + 杂兵 + 可达 + 高亮 + 多英雄位置 + HUD */
   private refreshViews(): void {
     this.drawFog()
     this.drawNodes()
     this.drawTowns()
+    this.drawGarrisons()
+    this.drawNeutrals()
     this.computeReachable()
     this.drawOverlay()
-    this.syncHeroSprite()
+    this.syncHeroSprites()
     this.updateHud()
   }
 
@@ -621,15 +765,27 @@ export class AdventureScene extends Phaser.Scene {
 
   // ---------- 寻路 / 状态查询 ----------
 
-  /** 地形 × 迷雾 的寻路代价（只允许走进当前可见格） */
+  /** 地形 × 迷雾 × 守将/杂兵 的寻路代价（只允许走进当前可见格；窄路关卡由守将格阻塞） */
   private makeMapCosts(): MapMovementCost {
     const map = this.state.map
     const hero = currentHero(this.state)
     if (!map || !hero) throw new Error('map/hero 未就绪')
     return new MapMovementCost({
       terrainAt: (h) => map.terrain[hexKey(h)] ?? 'plain',
-      fogAt: (h) => this.state.visibility[hero.faction]?.[hexKey(h)]
+      fogAt: (h) => this.state.visibility[hero.faction]?.[hexKey(h)],
+      // 窄路：存活守将 / 未歼灭杂兵 占据格不可通行（需先战斗，Task 8 接线）；
+      // 守将被歼 / 杂兵被歼后该格自动恢复可通行
+      garrisonAt: (h) => this.isBlockedHex(h)
     })
+  }
+
+  /** 不可通行格：存活守将驻点（窄路关卡阻塞）+ 未歼灭中立杂兵（点击不触发移动，战斗接线 Task 8） */
+  private isBlockedHex(h: Axial): boolean {
+    const k = hexKey(h)
+    return (
+      this.state.garrisons.some((g) => g.alive && hexKey(g.position) === k) ||
+      this.state.neutrals.some((n) => !n.defeated && hexKey(n.position) === k)
+    )
   }
 
   private computeReachable(): void {
@@ -751,6 +907,7 @@ export class AdventureScene extends Phaser.Scene {
     this.hideTownDetail()
     this.hideNodeTooltip()
     if (!hero || !this.mapKeys.has(hexKey(hex))) return
+    // 守将/杂兵占据格在 makeMapCosts 中不可通行 → 不在可达集 → 自然 no-op（战斗接线 Task 8）
     if (!this.reachable.has(hexKey(hex))) return
     const path = findPath(hero.position, hex, this.makeMapCosts())
     if (!path || path.length < 2) return
@@ -795,7 +952,7 @@ export class AdventureScene extends Phaser.Scene {
         if (this.animationMs > 0) {
           await this.tweenHeroTo(after)
         } else {
-          this.syncHeroSprite()
+          this.syncHeroSprites()
         }
         // 到达该格后：迷雾揭开（computeVision 已更新）→ 可达范围随新视野重算
         this.refreshViews()
@@ -808,10 +965,13 @@ export class AdventureScene extends Phaser.Scene {
   }
 
   private tweenHeroTo(hex: Axial): Promise<void> {
+    const hero = currentHero(this.state)
+    const sprite = hero ? this.heroSprites.get(hero.generalId) : undefined
+    if (!sprite) return Promise.resolve()
     const target = this.layout.hexToPixel(hex)
     return new Promise((resolve) => {
       this.tweens.add({
-        targets: this.heroSprite,
+        targets: sprite,
         x: target.x,
         y: target.y,
         duration: this.animationMs,
@@ -847,6 +1007,26 @@ export class AdventureScene extends Phaser.Scene {
       turn: state.turn,
       week: weekOf(state.turn),
       currentFaction: state.currentFaction,
+      mode: this.mode ?? null,
+      campaignId: state.campaignId,
+      heroes: state.heroes.map((h) => ({
+        generalId: h.generalId,
+        faction: h.faction,
+        position: h.position,
+        movementLeft: h.movementLeft,
+        maxMovement: h.maxMovement
+      })),
+      garrisons: state.garrisons.map((g) => ({
+        id: g.id,
+        generalId: g.generalId,
+        position: g.position,
+        alive: g.alive
+      })),
+      neutrals: state.neutrals.map((n) => ({
+        id: n.id,
+        position: n.position,
+        defeated: n.defeated
+      })),
       hero: hero
         ? {
             position: hero.position,
