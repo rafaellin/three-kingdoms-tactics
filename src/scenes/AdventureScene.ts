@@ -32,10 +32,12 @@ import { RightPanel } from '../ui/RightPanel'
 import { StatusBar } from '../ui/StatusBar'
 import { TownPanel } from '../ui/TownPanel'
 import { openInfo } from '../ui/Modal'
+import { CampaignIntroModal } from '../ui/CampaignIntroModal'
 import { fadeAndStart, fadeIn } from '../ui/fade'
 import { SfxManager } from '../audio/SfxManager'
 import { HERO_STARTS, START_GENERALS, START_PLAYERS, START_TOWNS } from '../data/bootstrap'
-import { CAMPAIGNS } from '../data/campaigns'
+import { getCampaign, type CampaignConfig, type CampaignIntro } from '../data/campaigns'
+import { resolveSession, type GameSession } from '../data/session'
 import { GENERAL_BASES } from '../data/generals'
 import { BattleScene, type BattleFlowReturn } from './BattleScene'
 import { MainMenuScene } from './MainMenuScene'
@@ -108,8 +110,12 @@ export class AdventureScene extends Phaser.Scene {
   private readonly layout = new HexLayout({ size: 36, origin: { x: 0, y: 0 } })
   /** 当前模式：explore/campaign（读战役配置）；undefined = dev 随机地图路径（game/setup） */
   private mode: 'explore' | 'campaign' | undefined = undefined
-  /** 战役 id（从 MainMenu 传入；默认东岭关） */
-  private campaignId: 'dongling' = 'dongling'
+  /** 战役 id（从 session/战斗回流解析；默认东岭关） */
+  private campaignId: string = 'dongling'
+  /** 当前战役配置（buildStore 的 campaign/start 用；由 session 解析而来，非战役为 null） */
+  private campaign: CampaignConfig | null = null
+  /** 开场剧情（仅战役新开局非 null；modal 显示 + 朗读） */
+  private intro: CampaignIntro | null = null
 
   private store!: CommandLog<GameState>
   /** BGM 背景音乐（渲染层；首次交互后随机起播，默认 10% 音量） */
@@ -165,6 +171,12 @@ export class AdventureScene extends Phaser.Scene {
   private victoryPanelShown = false
   /** 胜利面板打开中：屏蔽地图输入 / 结束回合（与 townPanel 同机制；Task 9） */
   private victoryModalOpen = false
+  /** 开场剧情 modal 已展示（每次 create 只弹一次） */
+  private introShown = false
+  /** 开场剧情 modal 打开中：屏蔽地图输入 / 结束回合（与 victoryModalOpen 同机制） */
+  private introModalOpen = false
+  /** 开场剧情 modal 实例（getDebugState 暴露按钮态供 e2e） */
+  private introModal: CampaignIntroModal | null = null
 
   /**
    * 视口分区（从上到下）：HUD → Map → Tools。
@@ -224,18 +236,32 @@ export class AdventureScene extends Phaser.Scene {
 
   /** 场景 data：主菜单传 {mode, campaignId}；战斗回流回传 enter 上下文 + result */
   create(
-    data?: { mode?: 'explore' | 'campaign'; campaignId?: string } & Omit<BattleFlowReturn, 'result'> & {
+    data?: { session?: GameSession } & Omit<BattleFlowReturn, 'result'> & {
       result?: BattleResult
     }
   ): void {
-    // 读主菜单传入的模式/战役（fadeAndStart → scene.start 的 data）；战斗回流也带 mode/campaignId
-    this.mode = data?.mode ?? undefined
-    this.campaignId = (data?.campaignId as 'dongling') ?? 'dongling'
-    // 场景实例被 scene.start 复用：重置跨场景残留的胜利面板/升级提示状态（每次 create 允许重新弹一次）
+    // 读会话（fadeAndStart → scene.start 的 data）：新开局经 session 解析战役/沙盘配置；
+    // 战斗回流不传 session，沿用 mode/campaignId 上下文（不弹开场剧情）。
+    if (data?.session) {
+      const session = resolveSession(data.session)
+      this.mode = session.mode
+      this.campaignId = session.campaign.id
+      this.campaign = session.campaign
+      this.intro = session.intro
+    } else {
+      this.mode = data?.mode ?? undefined
+      this.campaignId = data?.campaignId ?? 'dongling'
+      this.campaign = getCampaign(this.campaignId) ?? null
+      this.intro = null
+    }
+    // 场景实例被 scene.start 复用：重置跨场景残留的胜利面板/升级提示/开场剧情状态（每次 create 允许重新弹一次）
     this.victoryPanelShown = false
     this.victoryModalOpen = false
     this.levelUpNotice = null
     this.levelUpModalOpen = false
+    this.introShown = false
+    this.introModalOpen = false
+    this.introModal = null
     // BGM 管理器先创建（createLayers 中 BGM 控件依赖它）
     this.bgm = getBgmManager(this)
     fadeIn(this)
@@ -287,13 +313,20 @@ export class AdventureScene extends Phaser.Scene {
     this.cameras.main.centerOn(0, 0)
     this.bgm.switchToCategory('explore')
     this.sfx = new SfxManager(this)
+    // 战役新开局：弹开场剧情 modal（显示文稿 + 朗读，与 BGM 叠加）；explore/战斗回流跳过
+    this.maybeShowIntro()
     // E 键结束回合（与右侧「结束回合」按钮等效）
     this.input.keyboard?.on('keydown-E', () => this.endTurn())
     // H 键：循环切换选中英雄（与右侧「下一个(h)」按钮等效）
     this.input.keyboard?.on('keydown-H', () => this.nextHero())
-    // 窗口大小变化时：地图保持居中（BGM 控件由 BgmControls 自行处理 resize）
+    // 窗口大小变化时：地图保持居中 + 固定 UI 重排。
+    // 关键：uiCam 是 cameras.add 的附加相机，Phaser RESIZE 只自动调整主相机——附加相机
+    // 视口不会跟随窗口，必须手动 setSize，否则固定 UI（HUD/右侧面板等）仍按旧视口渲染。
     this.scale.on('resize', () => {
+      this.uiCam.setSize(this.scale.width, this.scale.height)
       this.cameras.main.centerOn(0, 0)
+      // 重排固定 UI（右侧面板位置按新宽度重算；StatusBar/BgmControls 各自有 onResize）
+      this.refreshViews()
     })
     this.events.once('shutdown', () => this.bgmControls?.destroy())
     this.events.once('shutdown', () => this.rightPanel?.destroy())
@@ -302,7 +335,7 @@ export class AdventureScene extends Phaser.Scene {
 
   /** 结束回合：dispatch game/advanceTurn，推进到下一势力（跨周自动结算） */
   private endTurn(): void {
-    if (this.busy || this.townPanel || this.victoryModalOpen || this.levelUpModalOpen) return
+    if (this.busy || this.townPanel || this.victoryModalOpen || this.levelUpModalOpen || this.introModalOpen) return
     this.store.dispatch('game/advanceTurn')
     this.refreshViews()
   }
@@ -312,7 +345,7 @@ export class AdventureScene extends Phaser.Scene {
    * 顺序 = state.heroes 数组序（战役 = 关羽→周仓→孙乾→…循环）；无选中时落到列表第一个。
    */
   private nextHero(): void {
-    if (this.busy || this.townPanel || this.victoryModalOpen || this.levelUpModalOpen) return
+    if (this.busy || this.townPanel || this.victoryModalOpen || this.levelUpModalOpen || this.introModalOpen) return
     const state = this.state
     const player = currentPlayer(state)
     if (!player) return
@@ -348,8 +381,8 @@ export class AdventureScene extends Phaser.Scene {
     this.store = new CommandLog<GameState>(createInitialState(), gameReducer)
     const mode = this.mode
     if (mode) {
-      // 战役/探索测试：从 CAMPAIGNS 读手工窄路地图（多英雄/守将/杂兵）
-      this.store.dispatch('campaign/start', { mode, campaign: CAMPAIGNS[this.campaignId] })
+      // 战役/探索测试：从会话解析的战役配置读手工窄路地图（多英雄/守将/杂兵）
+      this.store.dispatch('campaign/start', { mode, campaign: this.campaign! })
     } else {
       const map = generateMap(this.seed, this.mapRadius)
       this.store.dispatch('game/setup', {
@@ -1005,7 +1038,7 @@ export class AdventureScene extends Phaser.Scene {
     const cam = this.cameras.main
     this.input.on('pointerdown', (p: Phaser.Input.Pointer) => {
       // 城池面板/胜利面板/升级提示打开期间 / 面板刚关闭的手势锁 / 非左键 → 不处理地图输入（防面板按钮泄漏成地图拖拽/点击）
-      if (this.townPanel || this.victoryModalOpen || this.levelUpModalOpen || this.modalGestureLock || p.button !== 0) return
+      if (this.townPanel || this.victoryModalOpen || this.levelUpModalOpen || this.introModalOpen || this.modalGestureLock || p.button !== 0) return
       // 仅在 Map 区启动拖拽；HUD / 工具栏 / 右侧面板区不触发地图交互
       if (!this.isInMapZone(p.y, p.x)) return
       this.dragging = true
@@ -1013,7 +1046,7 @@ export class AdventureScene extends Phaser.Scene {
       this.lastPointer = { x: p.x, y: p.y }
     })
     this.input.on('pointermove', (p: Phaser.Input.Pointer) => {
-      if (this.townPanel || this.victoryModalOpen || this.levelUpModalOpen || this.modalGestureLock) return // 面板期间 / 手势锁 → 不处理拖拽/悬停
+      if (this.townPanel || this.victoryModalOpen || this.levelUpModalOpen || this.introModalOpen || this.modalGestureLock) return // 面板期间 / 手势锁 → 不处理拖拽/悬停
       if (this.dragging) {
         const dx = (p.x - this.lastPointer.x) / cam.zoom
         const dy = (p.y - this.lastPointer.y) / cam.zoom
@@ -1027,7 +1060,7 @@ export class AdventureScene extends Phaser.Scene {
     this.input.on('pointerup', (p: Phaser.Input.Pointer) => {
       if (p.button !== 0) return // 仅左键触发地图交互
       // 面板打开期间或面板刚关闭的手势收尾 → 吞掉本次 pointerup，防触发地图操作；手势收尾（up）时解锁
-      if (this.townPanel || this.victoryModalOpen || this.levelUpModalOpen || this.modalGestureLock) {
+      if (this.townPanel || this.victoryModalOpen || this.levelUpModalOpen || this.introModalOpen || this.modalGestureLock) {
         if (!p.isDown) this.modalGestureLock = false
         return
       }
@@ -1042,6 +1075,8 @@ export class AdventureScene extends Phaser.Scene {
       this.dragging = false
     })
     this.input.on('wheel', (pointer: Phaser.Input.Pointer) => {
+      // 开场剧情 modal 打开时滚轮不缩放相机（modal 自己处理正文滚动）
+      if (this.introModalOpen) return
       // 仅在 Map 区滚轮缩放地图；HUD / 工具栏 / 右侧面板区滚轮不触发（与拖拽/点击同一分区规则）
       if (!this.isInMapZone(pointer.y, pointer.x)) return
       const zoom = Phaser.Math.Clamp(cam.zoom - (pointer.deltaY ?? 0) * 0.001, 0.4, 2)
@@ -1297,6 +1332,26 @@ export class AdventureScene extends Phaser.Scene {
   }
 
   /**
+   * 战役开场剧情 modal：有 intro（战役新开局）且未弹过 → 弹 CampaignIntroModal。
+   * - 显示文稿 + 朗读（SfxManager.playNarration，与 BGM 叠加）；
+   * - 朗读中「跳过」→ 结束后「开始」→ 点「开始」才解锁地图输入；
+   * - 弹层期间 introModalOpen 屏蔽地图输入 / 结束回合（与 victoryModalOpen 同机制）；
+   * - explore/战斗回流 intro 为 null → 跳过。
+   */
+  private maybeShowIntro(): void {
+    if (!this.intro || this.introShown) return
+    this.introShown = true
+    this.introModalOpen = true
+    this.introModal = new CampaignIntroModal(this, this.intro, this.sfx!, () => {
+      this.introModal = null
+      this.introModalOpen = false
+      // onStart 同步复位输入状态（吞掉尾随 pointerup，防泄漏成地图操作）
+      this.modalGestureLock = true
+      this.dragging = false
+    })
+  }
+
+  /**
    * 战斗返回后的弹层串行（spec §8 接口预留）：先弹升级提示（若有），关闭后再判胜利面板，
    * 避免两个 openInfo 弹层叠放。升级提示 = `升級！` 含新等级；技能 2 选 1 界面因技能系统未做
    * 不实现（注释标明 hook：未来 skillSlots 递增 → skillOffer 事件 → 2 选 1 UI）。
@@ -1469,6 +1524,14 @@ export class AdventureScene extends Phaser.Scene {
       outcome: state.outcome,
       // 胜利面板（Task 9）：shown = 本次 create 已弹过；open = 弹层仍在展示中（e2e 断言用）
       victoryPanel: { shown: this.victoryPanelShown, open: this.victoryModalOpen },
+      // 开场剧情 modal：open = 弹层在展示中；button = 按钮态（'skip' 朗读中 / 'start' 已就绪；null = 未弹）
+      // buttonX/Y = 按钮屏幕坐标（e2e 点击用）
+      intro: {
+        open: this.introModalOpen,
+        button: this.introModal?.getPhase() ?? null,
+        buttonX: this.introModal?.getButtonPos().x ?? null,
+        buttonY: this.introModal?.getButtonPos().y ?? null
+      },
       // 悬停光标类型（'sword' = 可交战战斗目标；e2e 断言）
       cursorKind: this.cursorKind,
       // 悬停格 tooltip：当前文本（null = 未显示；e2e 断言地形/驻军/城名）

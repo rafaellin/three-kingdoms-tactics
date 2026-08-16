@@ -12,12 +12,12 @@ import { MapMovementCost } from '../pathfinding/MapMovementCost'
 import { createInitialState, type GameState } from './GameState'
 import { gameReducer } from './reducer'
 import { makeSetup } from '../testing/setup'
-import { CAMPAIGNS } from '../../data/campaigns'
+import { getCampaign } from '../../data/campaigns'
 
 /** 用东岭关战役配置启动 CommandLog（campaign/start） */
 function makeCampaignStore(mode: 'campaign' | 'explore' = 'campaign'): CommandLog<GameState> {
   const store = new CommandLog<GameState>(createInitialState(), gameReducer)
-  store.dispatch('campaign/start', { mode, campaign: CAMPAIGNS.dongling })
+  store.dispatch('campaign/start', { mode, campaign: getCampaign('dongling')! })
   return store
 }
 
@@ -53,7 +53,7 @@ describe('campaign/start 战役启动', () => {
     store.dispatch('hero/move', { heroId: 'g-guan', to: { q: 0, r: 0 } })
     const s = store.getState()
     // 关羽移动了位置，但战役配置里的英雄初始位置不受影响
-    expect(CAMPAIGNS.dongling.heroStarts.find((h) => h.generalId === 'g-guan')?.position).toEqual({ q: 0, r: -1 })
+    expect(getCampaign('dongling')!.heroStarts.find((h) => h.generalId === 'g-guan')?.position).toEqual({ q: 0, r: -1 })
     expect(s.heroes.find((h) => h.generalId === 'g-guan')?.position).toEqual({ q: 0, r: 0 })
     expect(s.garrisons[0]!.alive).toBe(true)
   })

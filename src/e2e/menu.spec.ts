@@ -45,11 +45,11 @@ test('主菜单：点击探索测试进入大地图', async ({ page }) => {
   expect(s.ready).toBe(true)
 })
 
-test('主菜单：点击开始战役进入大地图（fadeAndStart 传 data）', async ({ page }) => {
+test('主菜单：点击开始战役进入战役选择界面（fadeAndStart 传 data）', async ({ page }) => {
   await gotoBooted(page)
   await page.mouse.click(MENU_CAMPAIGN.x, MENU_CAMPAIGN.y)
   await page.waitForFunction(() => {
     const s = (window as { __game?: { getState(): DebugState } }).__game?.getState()
-    return s?.scene === 'adventure' && s?.ready === true
+    return s?.scene === 'campaignSelect'
   })
 })

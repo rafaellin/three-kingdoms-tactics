@@ -1,5 +1,6 @@
 import Phaser from 'phaser'
 import { AdventureScene } from './AdventureScene'
+import { CampaignSelectScene } from './CampaignSelectScene'
 import { BattleScene } from './BattleScene'
 import { getBgmManager } from '../audio/BgmManager'
 import { COLORS, css, FONT_DISPLAY, FONT_SEAL } from '../ui/theme'
@@ -53,10 +54,10 @@ export class MainMenuScene extends Phaser.Scene {
     // 标题 + 印章整体水平居中
     this.positionTitle()
     this.startBtn = this.createButton(width / 2, height * 0.5, '探索测试', () => {
-      if (this.buttonsEnabled) fadeAndStart(this, AdventureScene.KEY, { mode: 'explore', campaignId: 'dongling' })
+      if (this.buttonsEnabled) fadeAndStart(this, AdventureScene.KEY, { session: { kind: 'explore', campaignId: 'dongling' } })
     })
     this.campaignBtn = this.createButton(width / 2, height * 0.63, '开始战役', () => {
-      if (this.buttonsEnabled) fadeAndStart(this, AdventureScene.KEY, { mode: 'campaign', campaignId: 'dongling' })
+      if (this.buttonsEnabled) fadeAndStart(this, CampaignSelectScene.KEY)
     })
     this.battleBtn = this.createButton(width / 2, height * 0.76, '战斗测试', () => {
       if (this.buttonsEnabled) fadeAndStart(this, BattleScene.KEY)

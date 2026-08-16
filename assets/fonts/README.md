@@ -26,8 +26,4 @@ uvx --from fonttools --with brotli pyftsubset /tmp/MaShanZheng-Regular.ttf \
   --text-file=显示字符.txt --flavor=woff2 --output-file=assets/fonts/MaShanZheng-display.woff2
 ```
 
-当前子集包含的字符：
-
-```
-三国志战术传说：开始游戏战斗测试返回主菜单点击进入刀弓民枪骑兵胜利战败第周天魏蜀吴群！…0123456789，。？（）-×+%·、
-```
+当前子集包含的字符：见同目录 `显示字符.txt`（pyftsubset `--text-file` 直接引用；新增显示用字时**追加到该文件**再重新子集化）。含主菜单/战斗用字 + 战役标题用字（千里走单骑东岭关选择役）。

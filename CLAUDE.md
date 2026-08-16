@@ -104,6 +104,7 @@ claude plugin install frontend-design@claude-plugins-official --scope project
   - 洗牌/推进逻辑在 `src/audio/playlist.ts`（纯函数，可单测）；`buildPlaylist(tracks, theme, rng)`（themeSong 优先版）已废弃但保留（有单测）。
 - 共享控件：`src/ui/BgmControls.ts`（上一首/曲名♪/下一首/音量按钮+滑块），Adventure（UI 相机 uiOnly）与 Battle 左下角复用；`destroy()` 注销 BGM 监听。
 - 移动音效：`src/audio/SfxManager.ts`，`animateMove` 开始时 `playLooped('hero move')`、结束（finally）`stopLooped()`，默认音量 0.3；音频由 LoadingScene 预载，构造时直接检查 `game.cache.audio`，`load()` 为兼容 no-op。
+- **SFX 同名多格式去重**：`assetKeys.dedupeAudio` 按「文件名去扩展名」去重、优先 mp3 > m4a > ogg > wav（`SFX_AUDIO` 为去重后 map）。`assets/sound/campaign/` 下同时放 `campaign 1.mp3`（加载用）+ `campaign 1.wav`（源文件保留不加载）时只载 mp3，避免重复加载大文件、缓存 key 冲突。战役旁白用 `SfxManager.playNarration(key, onComplete)`（可中途 stop，返回声音实例）。
 - 音量控制走各自 `setVolume`；未来"设置"界面（见 PRD todo）接线；dev bridge 已暴露 `setBgmVolume` / `setSfxVolume` 与 `getState().bgm / .sfx` 供 e2e / 调试。
 
 ## 调试 / 回归工作流

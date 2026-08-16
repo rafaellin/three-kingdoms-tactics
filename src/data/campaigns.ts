@@ -31,9 +31,23 @@ export interface Neutral {
   units: { defId: UnitDefId; count: number }[]
 }
 
+/** 战役开场介绍（进战役 modal 显示 + 语音朗读） */
+export interface CampaignIntro {
+  /** modal 标题 */
+  title: string
+  /** 文稿正文（朗读 + 显示，多段 \n 分隔） */
+  body: string
+  /** 任务目标（modal 底部显示） */
+  objective: string
+  /** 朗读音频缓存 key（assets/sound/campaign/<name>.wav 去扩展名） */
+  narration: string
+}
+
 export interface CampaignConfig {
-  id: 'dongling'
+  id: string
   name: string
+  /** 开场介绍（进战役 modal 显示 + 朗读） */
+  intro: CampaignIntro
   /** 参与回合的玩家序列（战役 = 玩家 p1 → AI ai1） */
   players: Player[]
   /** 战役地图（含窄路关卡地形布局） */
@@ -46,6 +60,8 @@ export interface CampaignConfig {
   neutrals: Neutral[]
   /** 胜利条件：击败孔秀守将 */
   victory: { kind: 'defeatGarrison'; targetId: string }
+  /** 失败条件（声明式；本期不实现战败判定，仅入配置） */
+  defeat: { kind: 'heroesDefeated'; description: string }
   /** 无酒馆（MVP 不可招募新武将） */
   tavernEnabled: boolean
 }
@@ -78,10 +94,22 @@ function buildDonglingMap(): MapData {
   return { hexes, terrain, nodes: {} }
 }
 
-export const CAMPAIGNS: Record<'dongling', CampaignConfig> = {
-  dongling: {
+export const CAMPAIGNS: CampaignConfig[] = [
+  {
     id: 'dongling',
     name: '千里走单骑·东岭关',
+    intro: {
+      title: '千里走单骑 · 东岭关',
+      body: [
+        '建安五年，曹操大破徐州。关羽为护刘备家眷，兵困土山，不得已暂投曹操。曹操礼遇甚厚——封侯赐金，更赠赤兔神驹，却终究留不住一颗归汉之心。',
+        '得知义兄刘备下落，关羽挂印封金，护送两位皇嫂，提青龙偃月刀，跨赤兔马，千里单骑，踏上寻兄之路。然而这一路关隘重重，五关六将，无人肯放行。',
+        '东岭关，是第一道天堑。守将孔秀据关而守，厉声喝道："无丞相文凭，休想过关！"',
+        '关羽冷眉一横，青龙刀出鞘——',
+        '过五关、斩六将，便从这一关开始。'
+      ].join('\n'),
+      objective: '任务目标：击败孔秀。',
+      narration: 'campaign 1'
+    },
     players: [
       { id: 'p1', faction: 'shu', kind: 'human' },
       { id: 'ai1', faction: 'wei', kind: 'ai' }
@@ -133,6 +161,15 @@ export const CAMPAIGNS: Record<'dongling', CampaignConfig> = {
       { id: 'neu-2', position: { q: 1, r: -2 }, units: [{ defId: 'archer', count: 6 }] }
     ],
     victory: { kind: 'defeatGarrison', targetId: 'gar-kongxiu' },
+    defeat: { kind: 'heroesDefeated', description: '关羽阵亡，千里走单骑功败垂成。' },
     tavernEnabled: false
   }
+]
+
+export function listCampaigns(): CampaignConfig[] {
+  return CAMPAIGNS
+}
+
+export function getCampaign(id: string): CampaignConfig | undefined {
+  return CAMPAIGNS.find((c) => c.id === id)
 }

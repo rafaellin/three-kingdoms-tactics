@@ -2,7 +2,7 @@ import Phaser from 'phaser'
 import { MainMenuScene } from './MainMenuScene'
 import { getBgmManager, type BgmManager } from '../audio/BgmManager'
 import { fadeAndStart } from '../ui/fade'
-import { BGM_URLS, SFX_URLS, ICON_URLS, FONT_URLS, baseKey } from '../audio/assetKeys'
+import { BGM_URLS, SFX_AUDIO, ICON_URLS, FONT_URLS, baseKey } from '../audio/assetKeys'
 
 /**
  * 加载页（渲染层）：第一个场景，一次性预载 icon / BGM / SFX 进 Phaser 全局缓存，
@@ -46,8 +46,8 @@ export class LoadingScene extends Phaser.Scene {
     for (const [path, url] of Object.entries(BGM_URLS)) {
       this.load.audio(baseKey(path), url)
     }
-    for (const [path, url] of Object.entries(SFX_URLS)) {
-      this.load.audio(baseKey(path), url)
+    for (const [key, url] of Object.entries(SFX_AUDIO)) {
+      this.load.audio(key, url)
     }
 
     this.load.on('progress', (v: number) => {

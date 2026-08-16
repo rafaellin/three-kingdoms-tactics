@@ -1,6 +1,6 @@
 import type Phaser from 'phaser'
 import { setSoundVolume } from './sound'
-import { SFX_URLS, baseKey } from './assetKeys'
+import { SFX_AUDIO } from './assetKeys'
 
 /**
  * 音效管理器（渲染层）。
@@ -41,8 +41,8 @@ export class SfxManager {
   private ready = false
 
   constructor(private readonly scene: Phaser.Scene) {
-    for (const [path] of Object.entries(SFX_URLS)) {
-      const key = baseKey(path)
+    // 去重后 key 集（同名多格式只留 mp3，如 campaign 1）；与 LoadingScene 预载一致
+    for (const key of Object.keys(SFX_AUDIO)) {
       this.keys.add(key)
     }
     // 音频由 LoadingScene 预载进全局缓存 → 构造即可用（无需再加载）
@@ -81,6 +81,22 @@ export class SfxManager {
     const s = this.scene.sound.add(key, { volume: this.volume })
     s.play()
     s.once('complete', () => s.destroy())
+  }
+
+  /**
+   * 播放一次性旁白（剧情朗读）：返回实例供外部中途 stop；complete 时回调（供「跳过→开始」切换）。
+   * 未就绪 / 无此 key → 返回 null（调用方需能优雅降级，不卡流程）。
+   */
+  playNarration(key: string, onComplete?: () => void): Phaser.Sound.BaseSound | null {
+    if (!this.ready || !this.keys.has(key)) return null
+    this.lastOnceKey = key
+    const s = this.scene.sound.add(key, { volume: this.volume })
+    s.play()
+    s.once('complete', () => {
+      s.destroy()
+      onComplete?.()
+    })
+    return s
   }
 
   /** 设置音量（0~1，clamp）；未来"设置"界面用 */

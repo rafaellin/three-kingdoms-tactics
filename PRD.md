@@ -523,7 +523,7 @@ else:            战斗
 - [ ] AI 敌方英雄移动
 
 ### 战役模式（东岭关 · 千里走单骑）
-- [x] 战役配置 `src/data/campaigns.ts`：`CAMPAIGNS['dongling']`（手工窄路地图 / 城池 / 3 我方武将（关羽/周仓/孙乾 Lv5 带兵）/ 英雄出生点 / 守将孔秀 / 2 组中立杂兵 / 胜利条件=击败孔秀）
+- [x] 战役配置 `src/data/campaigns.ts`：`CAMPAIGNS` 数组 + `listCampaigns()`/`getCampaign(id)`（手工窄路地图 / 城池 / 3 我方武将（关羽/周仓/孙乾 Lv5 带兵）/ 英雄出生点 / 守将孔秀 / 2 组中立杂兵 / 胜利条件=击败孔秀 / **开场剧情 `intro`（title/body/objective/narration）+ 失败条件 `defeat`（声明式，战败判定未做）**）；**战役专属 reducer 逻辑抽至 `src/core/campaign/campaignReducer.ts`**（`campaignStart`/`campaignResolveBattle`/`campaignCheckVictory`，主 reducer 只留路由委托；共享 `gainXp`/`computeVisionFor` 移至 `core/state/shared.ts`，避免循环 import）
 - [x] 战役启动 `campaign/start`（mode=campaign 放守将+胜利、完整玩家序列 [p1,ai1]；mode=explore 不放守将自由探索、**单玩家 [p1]**——Spec §3：只保留 human 玩家，AI 不参与轮转）；多英雄渲染（每武将一英雄：六角格边框 + 格内姓氏大字，选中武将黄框 0xffd166/其他灰蓝框 0x9fb4c7，姓氏字 26px 居中、选中金字/其他浅字、深描边，**去圆点**；武将名存繁体 關羽/周倉/孫乾/呂布，地图/右侧列表/城池面板/战斗武将卡自动生效）
 - [x] 守将渲染（红城寨格 + 格内姓氏大字，白字 26px 深描边，替代原旗标 + 名字标签）；杂兵渲染（深绿野怪格 + 中央士兵 logo（程序化头盔），无数字标签——兵力详情 hover tooltip 逐兵种 `野怪：民兵 ×10`）；被歼/被灭后从地图移除
 - [x] 窄路关卡阻塞：**移动路径不能穿过任何武将**（存活守将 / 未歼灭杂兵 / 其他英雄占据格在寻路 `makeMapCosts` 中不可通行，含己方英雄——不能穿过/重叠）；**战斗目标格放行**：点击存活守将/未歼灭杂兵格 → 英雄**直接移动上去交战**（reducer `moveHeroTo` 把守将/杂兵格作为移动终点放行、走进触发战斗；原「拦存活守将格」移除；目标格在 `makeMapCosts(goalHex)` 中不作为障碍，其余武将格照旧挡）
@@ -533,6 +533,8 @@ else:            战斗
 - [x] **胜利面板（2026-08 Task 9）**：`campaign/resolveBattle` 写回后 `outcome==='won'` → 弹层（`openInfo`「胜利！」/「击败孔秀，东岭关告破」+「返回主菜单」按钮 → `fadeAndStart` 回主菜单）；guard 每次 create 只弹一次；弹层期间屏蔽地图输入/结束回合（与 TownPanel 同机制）；explore 模式 `victory` 为 null → `checkVictory` no-op → outcome 恒 null 不触发；e2e `src/e2e/campaign-full.spec.ts`；完整战役结算/奖励画面未做
 - [x] **世界状态持久化（2026-08 世界快照）**：进战斗前把当前 `GameState` 序列化存渲染层模块级 `worldSnapshot`；战斗返回 `create(data)` 检测快照 → 用 `deserializeState` 恢复为 CommandLog 初始态（不 `campaign/start`）→ 再 `campaign/resolveBattle` 写回战斗结果。城池驻军/移兵/英雄位置/回合/资源跨战斗保留；仅会话内（刷新即丢）。e2e `src/e2e/world-snapshot.spec.ts`
 - [x] **战斗往返 sprite 重建（2026-08 问题1 修复 + 回归 e2e）**：`createLayers()` 开头清空 sprite/label Map（`heroSprites`/`townSprites`/`nodeSprites`/`garrisonLabels`）——scene.start 复用场景实例时旧 GameObject 被 Phaser 销毁、Map 残留死引用 → draw* 复用 no-op → 武将/城池/资源点图标消失；清空后按需重建。`getDebugState` 暴露 `renderedHeroes`（渲染层**存活**英雄 sprite generalId 列表，`filter(s.active)` 过滤死引用——旧 bug 下死对象 key 仍在、仅列 key 会漏检），e2e 断言战斗返回后与 `state.heroes` 一致（`src/e2e/campaign-battle.spec.ts`「问题1 回归」）
+- [x] **通用 session 运行时 + 战役选择界面（2026-08）**：`src/data/session.ts` 定义 `GameSession`（`campaign`/`explore` 联合）+ `resolveSession()`（解析出 `ResolvedSession`：mode + campaign + intro）；`AdventureScene` 改为通用运行时——`create(data.session)` 经 `resolveSession` 读战役配置，不再 scene 内 `CAMPAIGNS[campaignId]` 硬查；主菜单「开始战役」→ **`CampaignSelectScene`**（`listCampaigns()` 自动列全部战役，选择 → Adventure）；探索测试 → `{ session: { kind:'explore' } }`；对战侧仅抽象（沿用探索沙盘作非战役 session，PvP/PvE 未来挂）；e2e `src/e2e/menu.spec.ts`（开始战役 → campaignSelect）
+- [x] **战役开场剧情 modal + 语音朗读（2026-08）**：战役新开局弹 `CampaignIntroModal`（大面板显示 标题/文稿/任务目标，数据来自 `campaign.intro`，正文多段 `\n` 分隔）；**正文 `wordWrap.useAdvancedWrap` 按字符断行**（无空格中文不溢出面板宽度），**超高（>300px）右侧滚动条**（滚轮 + 拖滑块，`setCrop` 裁剪可视窗口）；窗口 resize 时整组元素按相机中心重定位（`layout()`）；旁白经 `SfxManager.playNarration` 播放（`assets/sound/campaign/*.mp3`，`assetKeys` glob 递归 `**/*` 自动发现、**同名多格式去重 `dedupeAudio` 优先 mp3**（wav 保留作源文件），与 BGM 叠加）；朗读中按钮「跳过」→ 点跳过或朗读自然结束 → 变「开始」→ 点「开始」才解锁地图输入（`introModalOpen` 屏蔽地图/结束回合/滚轮缩放，同 victoryModalOpen 机制；每次 create 只弹一次 `introShown`）；explore/战斗回流无 intro 不弹；e2e `src/e2e/campaign-intro.spec.ts`
 - [ ] 持久存档/读档（跨刷新恢复世界状态）：世界快照仅存会话内变量，刷新页面即重置；完整存档需 localStorage/文件 + 多存档槽
 - [ ] 对战模式：当前战役为单机 PvE（玩家方 vs 守将/杂兵 AI 回合制战斗），无玩家对战/热座模式
 
@@ -549,7 +551,7 @@ else:            战斗
 - [ ] 市场交易 / 建筑资源消耗
 
 ### 主菜单
-- [x] 主菜单三入口（探索测试 → 大地图探索模式；开始战役 → 大地图战役模式，携带 `{mode, campaignId:'dongling'}`；战斗测试 → 固定部队 PVE 战斗；`fadeAndStart` 支持 scene.start 传 data；标题+按钮淡入动画 500ms Cubic.easeOut 完成后按钮可点；**resize 时标题/按钮按新窗口比例重排**，2026-08 完成）
+- [x] 主菜单三入口（探索测试 → 大地图探索模式，携带 `{session:{kind:'explore', campaignId:'dongling'}}`；开始战役 → **战役选择界面 CampaignSelectScene**（选战役 → Adventure `{session:{kind:'campaign', campaignId}}`）；战斗测试 → 固定部队 PVE 战斗；`fadeAndStart` 支持 scene.start 传 data；标题+按钮淡入动画 500ms Cubic.easeOut 完成后按钮可点；**resize 时标题/按钮按新窗口比例重排**，2026-08 完成）
 - [x] 主菜单视觉身份（2026-08 M1）：标题换**书法 display 字体**（马善政子集 woff2，OFL，`assets/fonts/`）；右侧**朱砂印**（程序化毛边红描边框 + 红字「戰」繁体、无填充——印章盖纸效果；戰 用霞鹜文楷子集，马善政 GB2312 无繁体）；按钮用共享 `src/ui/button.ts`（hover 变亮 / pressed 按压缩放 / 统一宽度 280px）；场景切换统一 `fadeAndStart` 淡出→淡入 220ms
 - [x] 自适应与地图拖拽（2026-08）：Adventure/Battle resize 时相机重新居中、右下角按钮贴视口；Battle 支持**拖拽平移相机**（位移>6px 视为拖拽，不误触点击移动/攻击；按下/抬起都在 UI 控件上时不触发地图拖拽或操作——BGM 音量条拖动不再平移地图）
 - [x] 战斗重入状态重置（2026-08）：scene.start 复用场景实例，create() 重置跨场景残留渲染状态（dragging/visualPos/busy/hover/logBuffer/hitFlashCount 等），撤退→重进不再"像按着鼠标"、初始画面不再残留上一场
@@ -607,7 +609,7 @@ else:            战斗
 - [ ] 选中武将详情
 - [ ] 消息日志
 - [x] 胜利画面（2026-08 Task 9 战役胜利面板：`outcome==='won'` 弹层「胜利！」+「返回主菜单」按钮 → 回主菜单；MVP 见 §15 战役模式）
-- [ ] 失败画面（战斗失利仍只有战斗内结果文字「战败」，无大地图失败结算/重试入口）
+- [ ] 失败画面（战斗失利仍只有战斗内结果文字「战败」，无大地图失败结算/重试入口；战役 `defeat` 字段已入配置——声明式 `{ kind:'heroesDefeated', description }`，战败判定/败局弹层未做）
 
 ---
 

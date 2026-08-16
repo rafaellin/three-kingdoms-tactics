@@ -22,7 +22,7 @@ const readState = (page: import('@playwright/test').Page): Promise<DebugState> =
   page.evaluate(() => (window as { __game?: { getState(): DebugState } }).__game?.getState() ?? {})
 
 /**
- * 战役地图 e2e：AdventureScene 读 CAMPAIGNS['dongling'] 配置。
+ * 战役地图 e2e：AdventureScene 经 resolveSession 读 CAMPAIGNS 注册表（getCampaign('dongling')）配置。
  * - 开始战役（campaign mode）→ 3 英雄 + 1 守将（孔秀 @ 窄路 (0,1)）+ 2 组杂兵 + 胜利条件；
  * - 探索测试（explore mode）→ 同读东岭关配置，但不放守将（自由探索，杂兵仍在）。
  * 断言一律程序化（window.__game.getState()），不依赖看截图。
