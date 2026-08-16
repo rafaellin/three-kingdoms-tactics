@@ -9,6 +9,9 @@ import { hexKey, hexNeighbor, type Axial, type HexDir } from '../hex/HexGrid'
 import type { MapData } from '../map/MapGen'
 import { getTerrain } from '../../data/terrain'
 import { completeResources, RESOURCE_NODE_DEFS } from '../../data/resourceNode'
+import { START_FACTIONS, TURN_ORDER } from '../../data/bootstrap'
+import type { CampaignConfig } from '../../data/campaigns'
+import type { UnitDefId } from '../../data/units'
 import { GENERAL_BASES } from '../../data/generals'
 import { deriveStats } from '../generals'
 import { MAX_LEVEL, xpToNext } from '../growth'
@@ -57,6 +60,69 @@ export interface MovePayload {
 export interface GainXpPayload {
   generalId: string
   amount: number
+}
+
+/** 战役启动：mode=campaign 放守将+胜利条件；mode=explore 不放守将（自由探索） */
+export interface CampaignStartPayload {
+  mode: 'campaign' | 'explore'
+  campaign: CampaignConfig
+}
+
+/** 英雄移动：显式指定英雄 id（多英雄） */
+export interface HeroMovePayload {
+  heroId: string
+  to: Axial
+}
+
+/** 选中英雄（null 清空选中） */
+export interface HeroSelectPayload {
+  heroId: string | null
+}
+
+/** 英雄进城：英雄在城格上 → 设访问武将、从 heroes 移除 */
+export interface EnterTownPayload {
+  heroId: string
+  townId: string
+}
+
+/** 访问→驻守：访问武将转为驻城武将 */
+export interface GarrisonPayload {
+  heroId: string
+  townId: string
+}
+
+/** 出城：驻守/访问武将回 heroes */
+export interface LeaveTownPayload {
+  heroId: string
+  townId: string
+}
+
+/** 驻城↔访问互换 */
+export interface SwapHeroesPayload {
+  townId: string
+}
+
+/** 城与英雄部队之间移兵 */
+export interface TransferTroopsPayload {
+  townId: string
+  from: 'hero' | 'garrison'
+  defId: UnitDefId
+  count: number
+}
+
+/** 战斗回流：写回参战英雄 army + 经验 + 击败守将/中立 + 胜利检查 */
+export interface ResolveBattlePayload {
+  result: {
+    outcome: 'won' | 'lost'
+    remainingTroops: { defId: UnitDefId; count: number }[]
+    expGained: number
+  }
+  /** 打的是守将 → 胜利时标记 alive=false */
+  garrisonId?: string
+  /** 打的是中立杂兵 → 胜利时标记 defeated=true */
+  neutralId?: string
+  /** 参战英雄（heroId = generalId） */
+  heroId: string
 }
 
 /** 为该势力重算视野（旧 fog 决定 explored 持久化） */
@@ -118,6 +184,82 @@ function setup(state: GameState, payload: SetupPayload): GameState {
     garrisons: [],
     neutrals: [],
     victory: null,
+    outcome: null
+  }
+}
+
+/**
+ * 战役启动：按 mode 填 守将（campaign）/中立（都放）/胜利（explore null）。
+ * 武将/城池/英雄来自战役配置；英雄移动力/视野基准与 setup 一致；selectedHeroId = 第一英雄。
+ * 确定性：只读配置、不改动共享战役数据（武将 army/守将 units 均深拷贝）。
+ */
+function campaignStart(state: GameState, payload: CampaignStartPayload): GameState {
+  const camp = payload.campaign
+  const turnOrder: FactionId[] = [...TURN_ORDER]
+  // 战役沿用沙盒初始资源（MVP；campaign 配置未定义资源）
+  const resources: Record<FactionId, Resources> = {
+    wei: { ...ZERO_RESOURCES },
+    shu: { ...ZERO_RESOURCES },
+    wu: { ...ZERO_RESOURCES },
+    qun: { ...ZERO_RESOURCES }
+  }
+  for (const f of START_FACTIONS) resources[f.id] = { ...f.resources }
+  // 英雄：每武将一英雄，从 heroStarts 构造（移动力/视野基准与 setup 一致）
+  const heroes: HeroUnit[] = camp.heroStarts.map((hs) => {
+    const general = camp.startGenerals.find((g) => g.id === hs.generalId)
+    return {
+      generalId: hs.generalId,
+      faction: general?.faction ?? (turnOrder[0] ?? 'shu'),
+      position: { ...hs.position },
+      movementLeft: BASE_MAX_MOVEMENT,
+      maxMovement: BASE_MAX_MOVEMENT,
+      sightRange: BASE_SIGHT_RANGE
+    }
+  })
+  const selectedHeroId = heroes[0]?.generalId ?? null
+  const selectedHero = heroes[0] ?? null
+  // 资源点状态：地图上每个资源点 → 无主、未拾取
+  const nodeStates: Record<string, { owner: FactionId | null; visited: boolean }> = {}
+  for (const hex of Object.keys(camp.map.nodes ?? {})) {
+    nodeStates[hex] = { owner: null, visited: false }
+  }
+  return {
+    ...state,
+    turn: 1,
+    currentFaction: turnOrder[0] ?? null,
+    turnOrder,
+    resources,
+    generals: camp.startGenerals.map((g) => ({ ...g, army: (g.army ?? []).map((u) => ({ ...u })) })),
+    towns: camp.startTowns.map((t) => ({
+      ...t,
+      garrison: (t.garrison ?? []).map((u) => ({ ...u })),
+      visitorGeneralId: t.visitorGeneralId ?? null
+    })),
+    map: camp.map,
+    mapSeed: 0,
+    heroes,
+    selectedHeroId,
+    visibility: selectedHero
+      ? { ...state.visibility, [selectedHero.faction]: computeVisionFor(camp.map, selectedHero, {}) }
+      : state.visibility,
+    nodeStates,
+    campaignId: camp.id,
+    garrisons:
+      payload.mode === 'campaign'
+        ? camp.garrisons.map((g) => ({
+            ...g,
+            position: { ...g.position },
+            units: g.units.map((u) => ({ ...u })),
+            alive: true
+          }))
+        : [],
+    neutrals: camp.neutrals.map((n) => ({
+      ...n,
+      position: { ...n.position },
+      units: n.units.map((u) => ({ ...u })),
+      defeated: false
+    })),
+    victory: payload.mode === 'campaign' ? camp.victory : null,
     outcome: null
   }
 }
@@ -199,21 +341,30 @@ function isNeighbor(a: Axial, b: Axial): boolean {
   return false
 }
 
+/** 选中英雄：heroId 必须在 heroes 中存在或是 null（无效 id → no-op） */
+function selectHero(state: GameState, { heroId }: HeroSelectPayload): GameState {
+  if (heroId === null) return { ...state, selectedHeroId: null }
+  if (state.heroes.some((h) => h.generalId === heroId)) return { ...state, selectedHeroId: heroId }
+  return state
+}
+
 /**
- * 单步移动（动画由渲染层逐格驱动）：
+ * 单步移动核心（unit/move 与 hero/move 共用）：
  * 1. to 必须是当前格六邻居
  * 2. to 已探索（explored，永久可见才可走入；未探索格挡住）
  * 3. to 地形可通过
- * 4. 剩余移动力足够支付地形代价
- * 5. 扣移动力 → 更新位置 → 重算视野
- * 6. 抵达含资源点的格：宝箱一次性拾取；无主矿被占领
+ * 4. to 不是存活守将驻点（需先击败守将才可通行）
+ * 5. 剩余移动力足够支付地形代价
+ * 6. 扣移动力 → 更新位置 → 重算视野
+ * 7. 抵达含资源点的格：宝箱一次性拾取；无主矿被占领
  */
-function moveHero(state: GameState, { to }: MovePayload): GameState {
-  const hero = currentHero(state)
+function moveHeroTo(state: GameState, hero: HeroUnit, to: Axial): GameState {
   const map = state.map
-  if (!hero || !map) return state
+  if (!map) return state
   if (hexKey(hero.position) === hexKey(to)) return state
   if (!isNeighbor(hero.position, to)) return state
+  // 守将驻点（存活）不可通行：需先击败守将
+  if (state.garrisons.some((g) => g.alive && hexKey(g.position) === hexKey(to))) return state
   const fog = state.visibility[hero.faction] ?? {}
   if (fog[hexKey(to)] !== 'explored') return state
   const terrain = getTerrain(map.terrain[hexKey(to)] ?? 'plain')
@@ -235,6 +386,20 @@ function moveHero(state: GameState, { to }: MovePayload): GameState {
     next = interactNode(next, hero.faction, hexKey(to), nodeType)
   }
   return next
+}
+
+/** 单步移动（unit/move 向后兼容：操作当前选中英雄） */
+function moveHero(state: GameState, { to }: MovePayload): GameState {
+  const hero = currentHero(state)
+  if (!hero) return state
+  return moveHeroTo(state, hero, to)
+}
+
+/** 单步移动（hero/move：显式指定英雄 id，多英雄并行） */
+function moveHeroById(state: GameState, { heroId, to }: HeroMovePayload): GameState {
+  const hero = state.heroes.find((h) => h.generalId === heroId)
+  if (!hero) return state
+  return moveHeroTo(state, hero, to)
 }
 
 /** 走到含资源点的格：宝箱一次性拾取（visited），无主矿占领（owner） */
@@ -269,6 +434,192 @@ function interactNode(
   return state
 }
 
+/** 向 army/garrison 栈表加数（已存在则累加，否则追加） */
+function addUnitStack(
+  stacks: { defId: UnitDefId; count: number }[],
+  defId: UnitDefId,
+  count: number
+): { defId: UnitDefId; count: number }[] {
+  const existing = stacks.find((u) => u.defId === defId)
+  if (existing) return stacks.map((u) => (u.defId === defId ? { ...u, count: u.count + count } : u))
+  return [...stacks, { defId, count }]
+}
+
+/** 英雄进城：英雄在城格上时 → 设为访问武将、从 heroes 移除（同一时刻英雄要么在地图要么在城） */
+function enterTown(state: GameState, { heroId, townId }: EnterTownPayload): GameState {
+  const hero = state.heroes.find((h) => h.generalId === heroId)
+  const town = state.towns.find((t) => t.id === townId)
+  if (!hero || !town) return state
+  if (hexKey(hero.position) !== hexKey(town.position)) return state
+  return {
+    ...state,
+    towns: state.towns.map((t) => (t.id === townId ? { ...t, visitorGeneralId: heroId } : t)),
+    heroes: state.heroes.filter((h) => h.generalId !== heroId)
+  }
+}
+
+/** 访问→驻守：仅当英雄是该城访问武将时，转入驻守槽 */
+function garrisonTown(state: GameState, { heroId, townId }: GarrisonPayload): GameState {
+  const town = state.towns.find((t) => t.id === townId)
+  if (!town || town.visitorGeneralId !== heroId) return state
+  return {
+    ...state,
+    towns: state.towns.map((t) =>
+      t.id === townId ? { ...t, garrisonGeneralId: heroId, visitorGeneralId: null } : t
+    )
+  }
+}
+
+/** 出城：清空驻守/访问槽 → 英雄回 heroes（位置=城格、满移动力、视野基准与 setup 一致） */
+function leaveTown(state: GameState, { heroId, townId }: LeaveTownPayload): GameState {
+  const town = state.towns.find((t) => t.id === townId)
+  if (!town) return state
+  const asGarrison = town.garrisonGeneralId === heroId
+  const asVisitor = town.visitorGeneralId === heroId
+  if (!asGarrison && !asVisitor) return state
+  const general = state.generals.find((g) => g.id === heroId)
+  if (!general) return state
+  const hero: HeroUnit = {
+    generalId: heroId,
+    faction: general.faction,
+    position: { ...town.position },
+    movementLeft: BASE_MAX_MOVEMENT,
+    maxMovement: BASE_MAX_MOVEMENT,
+    sightRange: BASE_SIGHT_RANGE
+  }
+  return {
+    ...state,
+    towns: state.towns.map((t) =>
+      t.id === townId
+        ? {
+            ...t,
+            garrisonGeneralId: asGarrison ? null : t.garrisonGeneralId,
+            visitorGeneralId: asVisitor ? null : t.visitorGeneralId
+          }
+        : t
+    ),
+    heroes: [...state.heroes, hero]
+  }
+}
+
+/** 驻城↔访问互换（两个槽都非空才换） */
+function swapHeroes(state: GameState, { townId }: SwapHeroesPayload): GameState {
+  const town = state.towns.find((t) => t.id === townId)
+  if (!town || !town.garrisonGeneralId || !town.visitorGeneralId) return state
+  return {
+    ...state,
+    towns: state.towns.map((t) =>
+      t.id === townId
+        ? { ...t, garrisonGeneralId: town.visitorGeneralId, visitorGeneralId: town.garrisonGeneralId }
+        : t
+    )
+  }
+}
+
+/**
+ * 城与英雄部队之间移兵（数量增减，>=0）。
+ * from='hero' → 英雄 army 减、城 garrison 加；from='garrison' 反向。
+ * 可移动数 clamp 到持有方现有数量；数量归零的条目删除。
+ * 操作对象 = 该城的驻守武将（无驻守则访问武将）。
+ */
+function transferTroops(state: GameState, { townId, from, defId, count }: TransferTroopsPayload): GameState {
+  if (count <= 0) return state
+  const town = state.towns.find((t) => t.id === townId)
+  if (!town) return state
+  const actorGeneralId = town.garrisonGeneralId ?? town.visitorGeneralId
+  if (!actorGeneralId) return state
+  const general = state.generals.find((g) => g.id === actorGeneralId)
+  if (!general) return state
+
+  if (from === 'hero') {
+    // 英雄 army 失去、城 garrison 获得
+    const src = general.army.find((u) => u.defId === defId)
+    if (!src || src.count <= 0) return state
+    const actual = Math.min(count, src.count)
+    return {
+      ...state,
+      generals: state.generals.map((g) =>
+        g.id === actorGeneralId
+          ? {
+              ...g,
+              army: general.army
+                .map((u) => (u.defId === defId ? { ...u, count: u.count - actual } : u))
+                .filter((u) => u.count > 0)
+            }
+          : g
+      ),
+      towns: state.towns.map((t) =>
+        t.id === townId ? { ...t, garrison: addUnitStack(town.garrison, defId, actual) } : t
+      )
+    }
+  }
+  // from === 'garrison'：城 garrison 失去、英雄 army 获得
+  const src = town.garrison.find((u) => u.defId === defId)
+  if (!src || src.count <= 0) return state
+  const actual = Math.min(count, src.count)
+  return {
+    ...state,
+    generals: state.generals.map((g) =>
+      g.id === actorGeneralId ? { ...g, army: addUnitStack(general.army, defId, actual) } : g
+    ),
+    towns: state.towns.map((t) =>
+      t.id === townId
+        ? {
+            ...t,
+            garrison: town.garrison
+              .map((u) => (u.defId === defId ? { ...u, count: u.count - actual } : u))
+              .filter((u) => u.count > 0)
+          }
+        : t
+    )
+  }
+}
+
+/**
+ * 战斗回流：把战斗结果写回大地图。
+ * - 参战英雄（heroId = generalId）的 army = remainingTroops；
+ * - expGained > 0 → 复用 general/gainXp 的升级逻辑；
+ * - outcome === 'won' 且 garrisonId → 该守将 alive=false；neutralId → 该中立 defeated=true；
+ * - 然后跑 campaign/checkVictory 胜利检查。
+ */
+function resolveBattle(state: GameState, payload: ResolveBattlePayload): GameState {
+  const { result, garrisonId, neutralId, heroId } = payload
+  if (!state.generals.some((g) => g.id === heroId)) return state
+  let next: GameState = {
+    ...state,
+    generals: state.generals.map((g) =>
+      g.id === heroId ? { ...g, army: result.remainingTroops.map((r) => ({ ...r })) } : g
+    )
+  }
+  if (result.expGained > 0) {
+    next = gainXp(next, { generalId: heroId, amount: result.expGained })
+  }
+  if (result.outcome === 'won') {
+    if (garrisonId) {
+      next = {
+        ...next,
+        garrisons: next.garrisons.map((g) => (g.id === garrisonId ? { ...g, alive: false } : g))
+      }
+    }
+    if (neutralId) {
+      next = {
+        ...next,
+        neutrals: next.neutrals.map((n) => (n.id === neutralId ? { ...n, defeated: true } : n))
+      }
+    }
+  }
+  return checkVictory(next)
+}
+
+/** 胜利检查：victory.kind==='defeatGarrison' 且目标守将已阵亡 → outcome='won' */
+function checkVictory(state: GameState): GameState {
+  const v = state.victory
+  if (v?.kind !== 'defeatGarrison') return state
+  const target = state.garrisons.find((g) => g.id === v.targetId)
+  if (target && !target.alive) return { ...state, outcome: 'won' }
+  return state
+}
+
 /** 游戏 reducer：dispatch 的入口 */
 export const gameReducer: Reducer<GameState> = (state, cmd: Command) => {
   switch (cmd.type) {
@@ -284,6 +635,26 @@ export const gameReducer: Reducer<GameState> = (state, cmd: Command) => {
       return moveHero(state, cmd.payload as MovePayload)
     case 'general/gainXp':
       return gainXp(state, cmd.payload as GainXpPayload)
+    case 'campaign/start':
+      return campaignStart(state, cmd.payload as CampaignStartPayload)
+    case 'hero/select':
+      return selectHero(state, cmd.payload as HeroSelectPayload)
+    case 'hero/move':
+      return moveHeroById(state, cmd.payload as HeroMovePayload)
+    case 'hero/enterTown':
+      return enterTown(state, cmd.payload as EnterTownPayload)
+    case 'hero/garrison':
+      return garrisonTown(state, cmd.payload as GarrisonPayload)
+    case 'hero/leaveTown':
+      return leaveTown(state, cmd.payload as LeaveTownPayload)
+    case 'town/swapHeroes':
+      return swapHeroes(state, cmd.payload as SwapHeroesPayload)
+    case 'town/transferTroops':
+      return transferTroops(state, cmd.payload as TransferTroopsPayload)
+    case 'campaign/resolveBattle':
+      return resolveBattle(state, cmd.payload as ResolveBattlePayload)
+    case 'campaign/checkVictory':
+      return checkVictory(state)
     default:
       return state
   }

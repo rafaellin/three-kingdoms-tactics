@@ -15,12 +15,15 @@ export interface MapMovementCostInput {
   terrainAt: (hex: Axial) => TerrainId
   /** 查询某格迷雾状态（undefined = 无记录） */
   fogAt: (hex: Axial) => Visibility | undefined
+  /** 目标格是否被存活守将占据（是 → 不可通行，需先击败守将） */
+  garrisonAt?: (hex: Axial) => boolean
 }
 
 export class MapMovementCost implements MovementCost {
   constructor(private readonly input: MapMovementCostInput) {}
 
   cost(_from: Axial, to: Axial): number {
+    if (this.input.garrisonAt?.(to)) return Number.POSITIVE_INFINITY
     if (this.input.fogAt(to) !== 'explored') return Number.POSITIVE_INFINITY
     return getTerrain(this.input.terrainAt(to)).moveCost
   }
