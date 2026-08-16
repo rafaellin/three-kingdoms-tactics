@@ -128,8 +128,8 @@ describe('battle/move（移动即行动）', () => {
 describe('battle/attack（近战 v2 + 反击）', () => {
   test('带 to 冲锋近战：移动落点 + 全额伤害 + 触发全额反击', () => {
     // 5×3：p0 民兵20 (0,0) vs e0 刀兵20 (3,0)（q=cols-2，hp20 → 400 血池）
-    // 民兵攻4 刀兵防8 → 差-4 钳-3 → ×0.85 → 伤 round(20×2×0.85)=34
-    // e0 → 366hp count19；e0 反击 19×4×1.1=83.6→84 → p0 200-84=116 count12
+    // 民兵攻4 刀兵防8 → 差-4 → ×0.90 → 伤 round(20×2×0.90)=36
+    // e0 → 364hp count19；e0 反击 19×4×1.1=83.6→84 → p0 200-84=116 count12
     const store = makeStore({
       grid: { cols: 5, rows: 3 },
       player: { side: 'player', generalName: 'P', atkBonus: 0, defBonus: 0, units: [{ defId: 'militia', count: 20 }] },
@@ -141,8 +141,8 @@ describe('battle/attack（近战 v2 + 反击）', () => {
     const t = s.units.find((u) => u.id === 'e0')!
     const a = s.units.find((u) => u.id === 'p0')!
     expect(a.position).toEqual({ q: 2, r: 0 })
-    expect(t.hpLeft).toBe(366)
-    expect(t.count).toBe(19)         // ceil(366/20)
+    expect(t.hpLeft).toBe(364)
+    expect(t.count).toBe(19)         // ceil(364/20)
     expect(t.retaliated).toBe(true)
     expect(a.hpLeft).toBe(116)       // 200 - 84
     expect(a.count).toBe(12)
@@ -150,8 +150,8 @@ describe('battle/attack（近战 v2 + 反击）', () => {
   })
   test('每回合每个单位只反击一次', () => {
     // 同速（民兵4=刀兵4）攻方先行 → 序 [p0,p1,e0]
-    // p0 冲锋：伤34 → e0 366hp count19、反击84 → p0 116hp
-    // p1 从 (0,1) 冲锋到 (3,1)（e0 邻格）：伤 round(1×2×0.85)=2 → e0 364hp count19；e0 已反击 → 不再反击
+    // p0 冲锋：伤36 → e0 364hp count19、反击84 → p0 116hp
+    // p1 从 (0,1) 冲锋到 (3,1)（e0 邻格）：伤 round(1×2×0.90)=2 → e0 362hp count19；e0 已反击 → 不再反击
     const store = makeStore({
       grid: { cols: 5, rows: 3 },
       player: { side: 'player', generalName: 'P', atkBonus: 0, defBonus: 0,
@@ -165,13 +165,13 @@ describe('battle/attack（近战 v2 + 反击）', () => {
     const s = store.getState()
     const t = s.units.find((u) => u.id === 'e0')!
     const p1 = s.units.find((u) => u.id === 'p1')!
-    expect(t.hpLeft).toBe(364)
+    expect(t.hpLeft).toBe(362)
     expect(t.count).toBe(19)
     expect(p1.hpLeft).toBe(10)       // 无反击 → 满血（hp10）
     expect(p1.hasActed).toBe(true)
   })
   test('远程兵近战按 30% 攻取值；灭队即判胜', () => {
-    // 弓兵100 攻6×0.3=1.8，民兵25 防4 → 差-2.2 → ×0.89 → 伤 round(100×3×0.89)=267 > 民兵25×hp10=250 池 → 全灭
+    // 弓兵100 攻6×0.3=1.8，民兵25 防4 → 差-2.2 → ×0.945 → 伤 round(100×3×0.945)=284 > 民兵25×hp10=250 池 → 全灭
     const store = makeStore({
       grid: { cols: 4, rows: 3 },
       player: { side: 'player', generalName: 'P', atkBonus: 0, defBonus: 0, units: [{ defId: 'archer', count: 100 }] },
@@ -181,7 +181,7 @@ describe('battle/attack（近战 v2 + 反击）', () => {
     const s = store.getState()
     expect(s.units.find((u) => u.id === 'e0')).toBeUndefined()
     expect(s.phase).toBe('won')
-    expect(s.log.some((l) => l.includes('267'))).toBe(true)
+    expect(s.log.some((l) => l.includes('284'))).toBe(true)
   })
   test('1×2 骑兵原地攻击：目标贴自身东邻格即可（无需主体格相邻）', () => {
     // 骑兵 p0 (0,0) 占 (0,0)+(1,0)；敌 e0 (2,0) 贴东邻格 (1,0) 但距主体 (0,0) 为 2
@@ -259,7 +259,7 @@ describe('battle/shoot（远程）', () => {
   })
   test('1×2 目标：任意身体格在射程内即满额', () => {
     // e0 骑兵 (6,0) 占 (6,0)+(7,0)；距 (0,0) 为 6 ≤ 6 → 满额
-    // 攻6 防7 → 差-1 → 0.95；mid 3（弓兵）→ 伤 round(10×3×0.95)=29 → 骑兵30×hp30=900-29=871 count=ceil(871/30)=30
+    // 攻6 防7 → 差-1 → 0.975；mid 3（弓兵）→ 伤 round(10×3×0.975)=29 → 骑兵30×hp30=900-29=871 count=ceil(871/30)=30
     const store = makeStore({
       grid: { cols: 8, rows: 3 },
       player: { side: 'player', generalName: 'P', atkBonus: 0, defBonus: 0, units: [{ defId: 'archer', count: 10 }] },
@@ -295,7 +295,7 @@ describe('battle/shoot（远程）', () => {
     expect(store.getState().currentUnitId).toBe('p0')
   })
   test('射击伤害用目标方 defBonus（回归）', () => {
-    // 攻6 防14 → 差-8 钳-3 → 0.85 → 伤 round(10×3×0.85)=26 → 民兵50×hp10=500-26=474
+    // 攻6 防14 → 差-8 → ×0.80 → 伤 round(10×3×0.80)=24 → 民兵50×hp10=500-24=476
     const store = makeStore({
       grid: { cols: 5, rows: 3 },
       player: { side: 'player', generalName: 'P', atkBonus: 0, defBonus: 0, units: [{ defId: 'archer', count: 10 }] },
@@ -303,8 +303,8 @@ describe('battle/shoot（远程）', () => {
     })
     store.dispatch('battle/shoot', { unitId: 'p0', targetId: 'e0' })
     const t = store.getState().units.find((u) => u.id === 'e0')!
-    expect(t.hpLeft).toBe(474)
-    expect(t.count).toBe(48)         // ceil(474/10)
+    expect(t.hpLeft).toBe(476)
+    expect(t.count).toBe(48)         // ceil(476/10)
   })
   test('灭队即判胜', () => {
     const store = makeStore({
