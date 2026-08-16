@@ -607,8 +607,8 @@ describe('battle/init 武将当前属性', () => {
     expect(g.atkBonus).toBe(30)   // round(90/3)
     expect(g.defBonus).toBe(23)   // round(70/3)
     expect(g.level).toBe(1)
-    expect(g.maxMana).toBe(50)    // round(int50 × MANA_COEF1)
-    expect(g.currentMana).toBe(50)
+    expect(g.maxMana).toBe(100)   // round(int50 × MANA_COEF2)
+    expect(g.currentMana).toBe(100)
     expect(g.passives).toEqual([{ name: '铁壁', level: 1 }])
   })
   test('无 general：旧字段反推展示值，行为不变', () => {

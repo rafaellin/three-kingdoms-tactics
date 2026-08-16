@@ -776,20 +776,20 @@ test('战斗数值展示：左右武将卡（六维/蓝量/被动）+ 主菜单�
   expect(s.general?.player).toMatchObject({
     name: '关羽', level: 20,
     stats: { atk: 96, def: 70, int: 50, pol: 60, cha: 80 },
-    maxMana: 50, currentMana: 50,
+    maxMana: 100, currentMana: 100,
     passives: [{ name: '铁壁', level: 1 }]
   })
   // 守方（右）吕布卡
   expect(s.general?.enemy).toMatchObject({
     name: '吕布', level: 20,
     stats: { atk: 100, def: 80, int: 30, pol: 20, cha: 40 },
-    maxMana: 30, currentMana: 30,
+    maxMana: 60, currentMana: 60,
     passives: [{ name: '狂暴', level: 1 }]
   })
   // 卡已渲染（debug 暴露可见文本）
   expect(s.generalCardText?.player).toContain('关羽')
   expect(s.generalCardText?.player).toContain('武力 96')
-  expect(s.generalCardText?.player).toContain('蓝量 50/50')
+  expect(s.generalCardText?.player).toContain('蓝量 100/100')
   expect(s.generalCardText?.player).toContain('被动 铁壁 Lv1')
   expect(s.generalCardText?.enemy).toContain('吕布')
   expect(s.generalCardText?.enemy).toContain('武力 100')

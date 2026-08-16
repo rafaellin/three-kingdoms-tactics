@@ -12,8 +12,8 @@ import { computeBail } from './result'
 import { effectiveSpeed, occupiedHexes, type BattleArmyConfig, type BattleState, type BattleUnit } from './types'
 import { maxUnits } from '../growth'
 
-/** 魔法值上限系数：maxMana = round(智力 × MANA_COEF)（PRD §5.3：智力×系数；系数暂定 1） */
-const MANA_COEF = 1
+/** 魔法值上限系数：maxMana = round(智力 × MANA_COEF)（用户定：智力×2） */
+const MANA_COEF = 2
 
 /** 进入战斗的武将信息 → 战斗武将态（六维/蓝量/被动；攻防加成从当前武力/统御推导） */
 function buildGeneral(cfg: BattleArmyConfig): BattleState['general']['player'] {
