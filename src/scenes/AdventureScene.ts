@@ -152,9 +152,7 @@ export class AdventureScene extends Phaser.Scene {
   private modalGestureLock = false
   /** 资源点详情 tag（悬停资源点显示：名称 + 每日产出/一次性 + 状态） */
   private nodeDetailText!: Phaser.GameObjects.Text
-  /** 结束回合按钮 */
-  private endTurnButton!: Phaser.GameObjects.Text
-  /** 右侧武将/城池列表面板（屏幕固定；Task 4：点击切换英雄 / 打开城池面板 / 下一个(h)） */
+  /** 右侧武将/城池列表面板（屏幕固定；Task 4：点击切换英雄 / 打开城池面板 / 下一个(h)；Task 3：含「结束回合」按钮） */
   private rightPanel: RightPanel | null = null
   /** 胜利面板已展示（每次 create 只弹一次；Task 9） */
   private victoryPanelShown = false
@@ -167,7 +165,7 @@ export class AdventureScene extends Phaser.Scene {
    */
   /** 顶部 HUD 保留高度（px） */
   private static readonly HUD_H = 48
-  /** 底部工具栏保留高度（px）：BGM 控件 + 结束回合按钮 */
+  /** 底部工具栏保留高度（px）：底部留白区（结束回合按钮已移入右侧面板；BGM 控件在右上角自行布局） */
   private static readonly TOOLS_H = 72
   /** 右侧面板区占用宽度（px）：RightPanel 左缘 = width-170（含背景 box 取整 178）；此 x 右侧视为面板区，不处理地图输入 */
   private static readonly PANEL_EXCLUDE_W = 178
@@ -260,7 +258,8 @@ export class AdventureScene extends Phaser.Scene {
         this.refreshViews()
       },
       onOpenTown: (townId) => this.openTownPanel(townId),
-      onNextHero: () => this.nextHero()
+      onNextHero: () => this.nextHero(),
+      onEndTurn: () => this.endTurn()
     })
     this.refreshViews()
     this.setupInput()
@@ -270,14 +269,13 @@ export class AdventureScene extends Phaser.Scene {
     this.cameras.main.centerOn(0, 0)
     this.bgm.switchToCategory('explore')
     this.sfx = new SfxManager(this)
-    // E 键结束回合（与右下角按钮等效）
+    // E 键结束回合（与右侧「结束回合」按钮等效）
     this.input.keyboard?.on('keydown-E', () => this.endTurn())
     // H 键：循环切换选中英雄（与右侧「下一个(h)」按钮等效）
     this.input.keyboard?.on('keydown-H', () => this.nextHero())
-    // 窗口大小变化时：地图保持居中 + 重新排布底部控件
+    // 窗口大小变化时：地图保持居中（BGM 控件由 BgmControls 自行处理 resize）
     this.scale.on('resize', () => {
       this.cameras.main.centerOn(0, 0)
-      this.repositionBottomControls()
     })
     this.events.once('shutdown', () => this.bgmControls?.destroy())
     this.events.once('shutdown', () => this.rightPanel?.destroy())
@@ -379,13 +377,6 @@ export class AdventureScene extends Phaser.Scene {
     this.sfx?.setVolume(v)
   }
 
-  /** 窗口 resize 时重新排布结束回合按钮（BGM 控件由 BgmControls 自行处理） */
-  private repositionBottomControls(): void {
-    const cam = this.cameras.main
-    const y = cam.height - 56
-    this.endTurnButton.setPosition(cam.width - 140, y)
-  }
-
   /** 等待移动动画结束（供 e2e 轮询） */
   async waitForMove(): Promise<void> {
     while (this.busy) {
@@ -480,24 +471,7 @@ export class AdventureScene extends Phaser.Scene {
         .setScrollFactor(0)
         .setVisible(false)
     )
-    // 结束回合按钮（右下角，视口固定）
-    {
-      const cam = this.cameras.main
-      this.endTurnButton = this.uiOnly(
-        this.add
-          .text(cam.width - 140, cam.height - 56, '结束回合 [E]', {
-            fontFamily: 'sans-serif',
-            fontSize: '20px',
-            color: '#ffffff',
-            backgroundColor: '#33415c'
-          })
-          .setDepth(12)
-          .setScrollFactor(0)
-          .setPadding(14, 8)
-          .setInteractive({ useHandCursor: true })
-      )
-      this.endTurnButton.on('pointerdown', () => this.endTurn())
-    }
+    // 「结束回合」按钮已移入右侧面板（Task 3）：右下角不再渲染，E 键快捷键保留
     // BGM 播放控件（左下角）：共享组件，对象归入 UI 相机（不随大地图缩放）
     this.bgmControls = new BgmControls(this, this.bgm!, { onCreateObject: (obj) => this.uiOnly(obj) })
   }

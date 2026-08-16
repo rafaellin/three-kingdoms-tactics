@@ -308,6 +308,6 @@ test('每日结算：拾取宝箱 + 占矿后推进到第2周，城池每日产�
   expect(s8.resources?.stone).toBe(START_RESOURCES.p1!.stone)
   expect(s8.resources?.iron).toBe(START_RESOURCES.p1!.iron)
 
-  // ⑤ 截图交人工目检：资源点渲染（宝箱/矿）、HUD 资源条、右下角结束回合按钮
+  // ⑤ 截图交人工目检：资源点渲染（宝箱/矿）、HUD 资源条、右侧面板「结束回合」按钮
   await page.screenshot({ path: 'screenshots/resources-crossweek.png' })
 })

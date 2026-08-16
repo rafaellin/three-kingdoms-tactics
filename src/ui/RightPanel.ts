@@ -11,13 +11,18 @@ export interface RightPanelActions {
   onOpenTown(townId: string): void
   /** 点击「下一个(h)」/ 按 h 键 → 循环切换选中英雄 */
   onNextHero(): void
+  /** 点击「结束回合」→ 结束当前回合（game/advanceTurn；与 E 键等效） */
+  onEndTurn(): void
 }
 
-/** 武将行调试信息（e2e 读坐标点击 / 断言高亮） */
+/** 武将行调试信息（e2e 读坐标点击 / 断言高亮 / 断言 label 不含误导数字） */
 export interface RightPanelHeroRowDebug {
   generalId: string
   name: string
   level: number
+  /** 行显示文本（`關羽 Lv5`；已去掉 armyCount 兵力总数——误导数字） */
+  label: string
+  /** 兵力总数（e2e 兼容保留；不在行 label 中显示） */
   armyCount: number
   selected: boolean
   x: number
@@ -37,9 +42,10 @@ export interface RightPanelTownRowDebug {
  * 右侧武将/城池列表面板（渲染层组件，简单列表，不做美化——美化后置）。
  *
  * 内容（按当前玩家 players[currentPlayerId]）：
- * - 武将行：名字 / 等级 / 兵力总数，点击 → hero/select 切换选中英雄，当前选中行高亮（绿底，呼应英雄金点高亮）；
+ * - 武将行：名字 / 等级（去掉了兵力总数——误导），点击 → hero/select 切换选中英雄，当前选中行高亮（绿底，呼应英雄金点高亮）；
  * - 城池行：名字 / 等级，点击 → 打开城池面板（openTownPanel）；
- * - 「下一个(h)」按钮：在当前玩家英雄列表中循环切换（与 H 键等效）。
+ * - 「下一个(h)」按钮：在当前玩家英雄列表中循环切换（与 H 键等效）；
+ * - 「结束回合」按钮：结束当前回合（game/advanceTurn，与 E 键等效；从右下角移入面板）。
  *
  * 固定屏幕右侧（UI 相机渲染，setScrollFactor(0) 不随地图缩放/滚动）。
  * refresh(state) 每次读 core 最新状态整体重绘；destroy() 清理全部对象。
@@ -62,6 +68,7 @@ export class RightPanel {
   private heroRows: RightPanelHeroRowDebug[] = []
   private townRows: RightPanelTownRowDebug[] = []
   private nextBtn: { x: number; y: number; label: string } | null = null
+  private endTurnBtn: { x: number; y: number; label: string } | null = null
   private destroyed = false
 
   constructor(scene: Phaser.Scene, actions: RightPanelActions) {
@@ -96,12 +103,14 @@ export class RightPanel {
         const general = state.generals.find((g) => g.id === hero.generalId)
         const armyCount = (general?.army ?? []).reduce((sum, u) => sum + u.count, 0)
         const selected = hero.generalId === state.selectedHeroId
-        const label = `${general?.name ?? hero.generalId} Lv${general?.level ?? '?'} ${armyCount}`
+        // 行 label 去掉兵力总数（那个数字是兵力总数，误导）；armyCount 保留在 debug 供 e2e 断言
+        const label = `${general?.name ?? hero.generalId} Lv${general?.level ?? '?'}`
         const btn = this.addRow(centerX, y, label, () => this.actions.onSelectHero(hero.generalId), selected)
         this.heroRows.push({
           generalId: hero.generalId,
           name: general?.name ?? hero.generalId,
           level: general?.level ?? 0,
+          label,
           armyCount,
           selected,
           x: btn.x,
@@ -138,6 +147,11 @@ export class RightPanel {
     this.nextBtn = { x: next.x, y: next.y, label: '下一个(h)' }
     y += RightPanel.ROW_H
 
+    // 「结束回合」按钮（Task 3：从右下角移入面板，同回调 endTurn()）
+    const endTurn = this.addButton(centerX, y, '结束回合 [E]', () => this.actions.onEndTurn())
+    this.endTurnBtn = { x: endTurn.x, y: endTurn.y, label: '结束回合 [E]' }
+    y += RightPanel.ROW_H
+
     // 面板底（简单半透明 + 鎏金描边；创建在最后但 depth 更低 → 垫在行之下）
     const bg = this.uiOnly(this.scene.add.graphics().setDepth(13).setScrollFactor(0))
     const top = RightPanel.TOP_Y - 10
@@ -161,7 +175,8 @@ export class RightPanel {
     return {
       heroes: this.heroRows,
       towns: this.townRows,
-      next: this.nextBtn
+      next: this.nextBtn,
+      endTurn: this.endTurnBtn
     }
   }
 
@@ -180,6 +195,7 @@ export class RightPanel {
     this.heroRows = []
     this.townRows = []
     this.nextBtn = null
+    this.endTurnBtn = null
   }
 
   /** 只由 UI 相机渲染（忽略主相机 → 不随地图缩放/滚动） */
