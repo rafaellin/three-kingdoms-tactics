@@ -527,9 +527,10 @@ else:            战斗
 - [x] 守将渲染（红城寨格 + 金色旗标 + 名字标签）；杂兵渲染（深绿野怪格 + 中央兵力数）；被歼/被灭后从地图移除
 - [x] 窄路关卡阻塞：**移动路径不能穿过任何武将**（存活守将 / 未歼灭杂兵 / 其他英雄占据格在寻路 `makeMapCosts` 中不可通行，含己方英雄——不能穿过/重叠）；**战斗目标格放行**：点击存活守将/未歼灭杂兵格 → 英雄**直接移动上去交战**（reducer `moveHeroTo` 把守将/杂兵格作为移动终点放行、走进触发战斗；原「拦存活守将格」移除；目标格在 `makeMapCosts(goalHex)` 中不作为障碍，其余武将格照旧挡）
 - [x] 城池界面 TownPanel（驻军/驻城/访问 + 移兵/驻守/换将/出城）
-- [x] **战斗交互 + 回流（2026-08 Task 8 + Task 5 修订）**：点存活守将/未歼灭杂兵格 → 英雄**直接移动到目标格本身**（`animateMove`；`moveHeroTo` 放行走入；路径中间不穿过武将）→ 到达后触发战斗（构建双方 `BattleArmyConfig`：攻方=当前英雄 army+武将属性；守将=units+`GENERAL_BASES`+`deriveStats`；杂兵=units 无武将「野怪」）→ `scene.start('Battle', { enter: { mode, campaignId, heroId, playerId, targetPosition, garrisonId/neutralId, player, enemy, grid } })`；BattleScene `create(data.enter)` 用外部阵容开局（无 enter 仍走战斗测试固定阵容）；结算后「返回主菜单」按钮若带回流上下文 → 回 Adventure 携带 `BattleResult`；AdventureScene `create(data.result)` → `campaign/resolveBattle` 写回（剩余兵力/经验 `general/gainXp`/守将 `alive=false`/杂兵 `defeated=true`/**胜利占格**（英雄 position=targetPosition、不清空剩余移动力，已扣走进去的代价）/**失败回城**（英雄回玩家第一城格、行动力=0）`checkVictory` 胜利判定）；悬停守将/杂兵格（英雄可达）→ 刀剑光标 `cursorKind='sword'` + 目标格红色交战高亮；e2e `src/e2e/campaign-battle.spec.ts`
+- [x] **战斗交互 + 回流（2026-08 Task 8 + Task 5 修订）**：点存活守将/未歼灭杂兵格 → 英雄**直接移动到目标格本身**（`animateMove`；`moveHeroTo` 放行走入；路径中间不穿过武将）→ 到达后触发战斗（构建双方 `BattleArmyConfig`：攻方=当前英雄 army+武将属性；守将=units+`GENERAL_BASES`+`deriveStats`；杂兵=units 无武将「野怪」）→ `scene.start('Battle', { enter: { mode, campaignId, heroId, playerId, targetPosition, garrisonId/neutralId, player, enemy, grid } })`；BattleScene `create(data.enter)` 用外部阵容开局（无 enter 仍走战斗测试固定阵容）；结算后「返回主菜单」按钮若带回流上下文 → 回 Adventure 携带 `BattleResult`；AdventureScene `create(data.result)` → `campaign/resolveBattle` 写回（剩余兵力/经验 `general/gainXp`/守将 `alive=false`/杂兵 `defeated=true`/**胜利占格**（英雄 position=targetPosition、不清空剩余移动力，已扣走进去的代价）/**失败回城**（英雄回玩家第一城格、行动力=0）`checkVictory` 胜利判定）；悬停守将/杂兵格（英雄可达）→ 刀剑光标 `cursorKind='sword'` + 目标格红色交战高亮；e2e `src/e2e/campaign-battle.spec.ts`（含**败局回归**：dev bridge 弱我强敌 → defend 循环战败 → 返回 → 英雄回玩家第一城格 + 行动力 0，杂兵不被歼）
 - [x] **胜利面板（2026-08 Task 9）**：`campaign/resolveBattle` 写回后 `outcome==='won'` → 弹层（`openInfo`「胜利！」/「击败孔秀，东岭关告破」+「返回主菜单」按钮 → `fadeAndStart` 回主菜单）；guard 每次 create 只弹一次；弹层期间屏蔽地图输入/结束回合（与 TownPanel 同机制）；explore 模式 `victory` 为 null → `checkVictory` no-op → outcome 恒 null 不触发；e2e `src/e2e/campaign-full.spec.ts`；完整战役结算/奖励画面未做
 - [x] **世界状态持久化（2026-08 世界快照）**：进战斗前把当前 `GameState` 序列化存渲染层模块级 `worldSnapshot`；战斗返回 `create(data)` 检测快照 → 用 `deserializeState` 恢复为 CommandLog 初始态（不 `campaign/start`）→ 再 `campaign/resolveBattle` 写回战斗结果。城池驻军/移兵/英雄位置/回合/资源跨战斗保留；仅会话内（刷新即丢）。e2e `src/e2e/world-snapshot.spec.ts`
+- [x] **战斗往返 sprite 重建（2026-08 问题1 修复 + 回归 e2e）**：`createLayers()` 开头清空 5 个 sprite/label Map（`heroSprites`/`townSprites`/`nodeSprites`/`garrisonLabels`/`neutralLabels`）——scene.start 复用场景实例时旧 GameObject 被 Phaser 销毁、Map 残留死引用 → draw* 复用 no-op → 武将/城池/资源点图标消失；清空后按需重建。`getDebugState` 暴露 `renderedHeroes`（渲染层实际创建的英雄 sprite generalId 列表），e2e 断言战斗返回后与 `state.heroes` 一致（`src/e2e/campaign-battle.spec.ts`「问题1 回归」）
 - [ ] 持久存档/读档（跨刷新恢复世界状态）：世界快照仅存会话内变量，刷新页面即重置；完整存档需 localStorage/文件 + 多存档槽
 - [ ] 对战模式：当前战役为单机 PvE（玩家方 vs 守将/杂兵 AI 回合制战斗），无玩家对战/热座模式
 
@@ -634,6 +635,7 @@ else:            战斗
 - [ ] AI 更智能决策 + 招募 + 内政
 - [x] 战斗指令（等待/防御/反击）—— 已做：等待/防御见 §15 战斗 MVP（`battle/wait` / `battle/defend`）；反击见 §15「反击节奏」
 - [ ] 战斗增强：等待/防御（受击-50%）、士气/幸运、英雄施法、随机伤害、经验/战利品（MVP 已含：矩形战场/移动即行动/近战冲锋/反击/远程三态/AI冲锋/数量与伤兵血显示/逐格动画/提示系统；以上为后续增量）
+- [ ] 失败回城 refine：英雄战败后回**最近**己方城（当前 MVP 回玩家**第一**城格、行动力=0；「回第一城」基线已有败局 e2e `src/e2e/campaign-battle.spec.ts`，最近城距离计算待做）
 - [ ] 战斗特技：连击 / 连射 / 远射 / 抵射 / 无限反击（记入 PRD，MVP 后做）
 - [ ] 武将主动技能（一回合一次，可在任意部队行动时释放；例外：若某回合所有部队都无法行动，则也无法释放主动技能）
 - [x] 顶部资源条显示（金/木/石/铁 + 第X周第X天，2026-08 完成）

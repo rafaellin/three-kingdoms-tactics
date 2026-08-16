@@ -26,6 +26,7 @@ interface DebugGameState {
   turn?: number
   week?: number
   currentFaction?: string
+  currentPlayerId?: string | null
   hero?: { position: Axial; movementLeft: number; maxMovement: number }
   resources?: { gold: number; wood: number; stone: number; iron: number }
   /** HUD 显示的每日产出汇总（当前势力；城池+已占矿） */
@@ -171,7 +172,9 @@ test('初始化：资源条 = shu 初始资源、第1周第1天、成都城池�
   const s = await getState(page)
   expect(s.turn).toBe(1)
   expect(s.week).toBe(1)
-  expect(s.currentFaction).toBe('wei')
+  // 单玩家模型：currentPlayerId='p1'（蜀），无四势力轮转；currentFaction 为渲染派生
+  expect(s.currentPlayerId).toBe('p1')
+  expect(s.currentFaction).toBe('shu')
   // 资源条 = 蜀（关羽）初始资源
   expect(s.resources).toEqual(START_RESOURCES.p1!)
   // HUD 每日产出：成都 Lv1 → +10金/天；开局无占矿 → 木/石/铁 0
@@ -183,9 +186,9 @@ test('初始化：资源条 = shu 初始资源、第1周第1天、成都城池�
   for (const col of hud) expect(col.textX).toBeGreaterThan(col.iconX + 11)
   // 各列自左向右排布（后一列文本左沿在前一列之后）
   for (let i = 1; i < hud.length; i++) expect(hud[i]!.textX).toBeGreaterThan(hud[i - 1]!.textX)
-  // 成都城池：蜀 Lv1，位于 (0,0)（与英雄出生点重合）；沙盒开局 garrisonGeneralId 指向关羽
+  // 成都城池：属玩家 p1（蜀），Lv1，位于 (0,0)（与英雄出生点重合）；沙盒开局 garrisonGeneralId 指向关羽
   expect(s.towns).toEqual([
-    { id: 't-chengdu', name: '成都', owner: 'shu', level: 1, position: { q: 0, r: 0 }, garrison: [], garrisonGeneralId: 'g-guan', visitorGeneralId: null }
+    { id: 't-chengdu', name: '成都', owner: 'p1', level: 1, position: { q: 0, r: 0 }, garrison: [], garrisonGeneralId: 'g-guan', visitorGeneralId: null }
   ])
   // 未探索区域资源不可见：渲染的资源点 = 仅开局已探索的那部分（与 core 复算一致）
   expect(s.visibleNodes).toEqual(visibleNodesFor(initialFog))
@@ -246,26 +249,21 @@ test('占矿：走入无主矿格后 claimedMines=1、资源不变（未拾宝�
   for (const col of hud) expect(col.textX).toBeGreaterThan(col.iconX + 11)
 })
 
-test('结束回合（E 键）：四势力轮完一圈回魏、天数 +1，周不变', async ({ page }) => {
+test('结束回合（E 键）：单玩家 p1 每按一次下一天（无四势力轮转），天数 +1、周不变', async ({ page }) => {
   await gotoAdventure(page)
 
   const s0 = await getState(page)
   expect(s0.turn).toBe(1)
-  expect(s0.currentFaction).toBe('wei')
+  expect(s0.currentPlayerId).toBe('p1')
+  expect(s0.currentFaction).toBe('shu')
 
+  // 单玩家模型（players=[p1]）：圈回自己即进 system → 天数 +1，currentPlayerId 恒为 p1
   await page.keyboard.press('E')
-  await page.waitForFunction(() => (window as { __game?: { getState(): DebugGameState } }).__game?.getState()?.currentFaction === 'shu')
-  expect((await getState(page)).turn).toBe(1)
+  await page.waitForFunction(() => (window as { __game?: { getState(): DebugGameState } }).__game?.getState()?.turn === 2)
 
-  for (const faction of ['wu', 'qun', 'wei']) {
-    await page.keyboard.press('E')
-    await page.waitForFunction(
-      (f) => (window as { __game?: { getState(): DebugGameState } }).__game?.getState()?.currentFaction === f,
-      faction
-    )
-  }
   const s = await getState(page)
-  expect(s.currentFaction).toBe('wei')
+  expect(s.currentFaction).toBe('shu')
+  expect(s.currentPlayerId).toBe('p1')
   expect(s.turn).toBe(2)
   expect(s.week).toBe(1)
 })
@@ -278,9 +276,9 @@ test('每日结算：拾取宝箱 + 占矿后推进到第2周，城池每日产�
   // ① 拾取宝箱（leg1 路径 0,0>0,1>0,2，cost 2）
   await clickAndWait(page, CHEST)
   expect((await getState(page)).nodeStates?.picked).toBe(1)
-  // ② 过回合到蜀（wei→shu 重置移动力为 6），再占木矿（leg2 路径 cost 5）
+  // ② 过回合下一天（单玩家 p1 结束回合 = 下一天 + 移动力回满），再占木矿（leg2 路径 cost 5）
   await page.keyboard.press('E')
-  await page.waitForFunction(() => (window as { __game?: { getState(): DebugGameState } }).__game?.getState()?.currentFaction === 'shu')
+  await page.waitForFunction(() => (window as { __game?: { getState(): DebugGameState } }).__game?.getState()?.turn === 2)
   await clickAndWait(page, MINE)
   expect((await getState(page)).nodeStates?.claimedMines).toBe(1)
 
@@ -289,23 +287,23 @@ test('每日结算：拾取宝箱 + 占矿后推进到第2周，城池每日产�
     wood: (r?.wood ?? 0) - chestReward().wood
   })
 
-  // ③ 推进到 turn=7（第1周）：每日结算已到账 6 次（turn 2..7 每天圈回魏时结算一次）
-  //    成都 Lv1 +10金/天 → +60金；木矿 +2木/天 → +12木（已占矿，从 turn2 起生效）
+  // ③ 推进到 turn=7（第1周）：每日结算已到账 6 次（单玩家每按 E 结算一次：turn 2..7）
+  //    成都 Lv1 +10金/天 → +60金；木矿 +2木/天 → +10木（矿在 turn2 占领，结算自 turn3 起共 5 次）
   const s7 = await pressUntil(page, (s) => s.turn === 7, 40)
   expect(s7.week).toBe(1)
   expect(noChest(s7.resources)).toEqual({
     gold: START_RESOURCES.p1!.gold + 6 * 10,
-    wood: START_RESOURCES.p1!.wood + 6 * 2
+    wood: START_RESOURCES.p1!.wood + 5 * 2
   })
   expect(s7.resources?.stone).toBe(START_RESOURCES.p1!.stone)
   expect(s7.resources?.iron).toBe(START_RESOURCES.p1!.iron)
 
-  // ④ 再推进一圈到 turn=8（第2周）：每日结算累计 7 次，成都 +70金、木矿 +14木
+  // ④ 再推进到 turn=8（第2周）：每日结算累计 7 次，成都 +70金、木矿 +12木（矿结算 6 次）
   const s8 = await pressUntil(page, (s) => s.turn === 8, 10)
   expect(s8.week).toBe(2)
   expect(noChest(s8.resources)).toEqual({
     gold: START_RESOURCES.p1!.gold + 7 * 10,
-    wood: START_RESOURCES.p1!.wood + 7 * 2
+    wood: START_RESOURCES.p1!.wood + 6 * 2
   })
   expect(s8.resources?.stone).toBe(START_RESOURCES.p1!.stone)
   expect(s8.resources?.iron).toBe(START_RESOURCES.p1!.iron)

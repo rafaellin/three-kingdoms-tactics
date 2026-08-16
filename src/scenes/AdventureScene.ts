@@ -1343,6 +1343,9 @@ export class AdventureScene extends Phaser.Scene {
       victoryPanel: { shown: this.victoryPanelShown, open: this.victoryModalOpen },
       // 悬停光标类型（'sword' = 可交战战斗目标；e2e 断言）
       cursorKind: this.cursorKind,
+      // 渲染层实际创建的英雄 sprite generalId 列表（问题1 回归：scene.start 复用后 Map 被
+      // createLayers 清空重建；旧代码残留死引用 → 战斗返回后此列表为空/与 state.heroes 不一致）
+      renderedHeroes: [...this.heroSprites.keys()],
       heroes: state.heroes.map((h) => ({
         generalId: h.generalId,
         faction: h.faction,

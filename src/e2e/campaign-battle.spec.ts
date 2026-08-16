@@ -17,6 +17,8 @@ interface DebugGameState {
   campaignId?: string | null
   outcome?: string | null
   cursorKind?: string
+  /** 渲染层实际创建的英雄 sprite generalId 列表（问题1 回归断言） */
+  renderedHeroes?: string[]
   heroes?: { generalId: string; position: { q: number; r: number }; movementLeft: number; screen?: { x: number; y: number } }[]
   garrisons?: { id: string; generalId: string; position: { q: number; r: number }; alive: boolean; screen?: { x: number; y: number } }[]
   neutrals?: { id: string; position: { q: number; r: number }; defeated: boolean; screen?: { x: number; y: number } }[]
@@ -186,4 +188,73 @@ test('战役：不能重叠/穿过武将格——点其他英雄格不移动；�
   expect(s.scene).toBe('adventure') // 未进战斗
   expect(s.heroes!.find((h) => h.generalId === 'g-guan')!.position).toEqual(guanPos)
   await page.screenshot({ path: 'screenshots/campaign-battle-blocked-path.png' })
+})
+
+test('问题1 回归：战斗返回后渲染层英雄 sprite 与 state.heroes 一致（Map 无死引用残留）', async ({ page }) => {
+  await gotoCampaign(page)
+  await page.evaluate(() => (window as { __game?: { setAnimationSpeed(n: number): void } }).__game?.setAnimationSpeed(0))
+  let s = await readState(page)
+
+  // 初始：渲染层 heroSprites 与 core heroes 一一对应（关羽/周仓/孙乾 3 圆点）
+  const heroesOf = (st: DebugGameState) => st.heroes!.map((h) => h.generalId).sort()
+  const initial = heroesOf(s)
+  expect(initial).toEqual(['g-guan', 'g-sunqian', 'g-zhoucang'])
+  expect(s.renderedHeroes).toBeDefined()
+  expect([...s.renderedHeroes!].sort()).toEqual(initial)
+
+  // 打一场杂兵 → 返回（scene.start 复用场景实例，createLayers 必须清空重建 sprite Map）
+  const neutral = s.neutrals!.find((n) => n.id === 'neu-1')!
+  await page.mouse.click(neutral.screen!.x, neutral.screen!.y)
+  await waitBattleReady(page)
+  expect(await defendToEnd(page)).toBe('won')
+  await clickReturn(page)
+  await waitAdventure(page)
+
+  // 返回后：sprite 重建，renderedHeroes 与 state.heroes 一致（旧代码 Map 残留死引用 → 空/不一致）
+  s = await readState(page)
+  const after = heroesOf(s)
+  expect(after).toEqual(initial)
+  expect([...s.renderedHeroes!].sort()).toEqual(after)
+})
+
+test('败局 e2e：战斗失败 → 返回 → 英雄回玩家第一城 + 行动力 0（失败回城）', async ({ page }) => {
+  await gotoCampaign(page)
+  await page.evaluate(() => (window as { __game?: { setAnimationSpeed(n: number): void } }).__game?.setAnimationSpeed(0))
+  let s = await readState(page)
+  expect(s.mode).toBe('campaign')
+  expect(s.outcome).toBeNull()
+  const guan = s.heroes!.find((h) => h.generalId === 'g-guan')!
+  expect(guan.position).toEqual({ q: 0, r: -1 })
+
+  // 点杂兵格 → 英雄移动到杂兵格 (0,-2) → 进战斗（敌方=野怪）
+  const neutral = s.neutrals!.find((n) => n.id === 'neu-1')!
+  await page.mouse.click(neutral.screen!.x, neutral.screen!.y)
+  await waitBattleReady(page)
+  expect((await readState(page)).general?.enemy?.name).toBe('野怪')
+
+  // 用 dev bridge 重开一场确保必败：玩家极弱（1 民兵） vs 敌方极强（100 刀兵 + 99 攻防）→ defend 循环战败
+  await page.evaluate(() => {
+    const bridge = (window as { __game?: { startBattle?(p: unknown, e: unknown, g: unknown): void } }).__game
+    bridge?.startBattle?.(
+      { side: 'player', generalName: '关羽', atkBonus: 0, defBonus: 0, units: [{ defId: 'militia', count: 1 }] },
+      { side: 'enemy', generalName: '野怪', atkBonus: 99, defBonus: 99, units: [{ defId: 'swordsman', count: 100 }] },
+      { cols: 15, rows: 11 }
+    )
+  })
+  await page.waitForTimeout(100)
+  expect((await readState(page)).phase).toBe('combat')
+
+  const phase = await defendToEnd(page)
+  expect(phase).toBe('lost')
+  await page.screenshot({ path: 'screenshots/campaign-battle-neutral-lost.png' })
+
+  // 点返回 → 回大地图：失败回城（英雄 position = 玩家第一城 (0,0)）+ 行动力 0
+  await clickReturn(page)
+  await waitAdventure(page)
+  s = await readState(page)
+  const guanAfter = s.heroes!.find((h) => h.generalId === 'g-guan')!
+  expect(guanAfter.position).toEqual({ q: 0, r: 0 })
+  expect(guanAfter.movementLeft).toBe(0)
+  // 战败不影响守将/杂兵存活状态（败局不写 killed → 杂兵仍在）
+  expect(s.neutrals!.find((n) => n.id === 'neu-1')!.defeated).toBe(false)
 })
