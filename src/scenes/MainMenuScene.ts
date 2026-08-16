@@ -7,7 +7,8 @@ import { makeButton } from '../ui/button'
 import { fadeAndStart, fadeIn } from '../ui/fade'
 
 /**
- * 主菜单（渲染层）：开始游戏 → 大地图；战斗测试 → 战斗场景。
+ * 主菜单（渲染层）三入口：探索测试 → 大地图（探索模式）；开始战役 → 大地图（战役模式，传 campaignId）；
+ * 战斗测试 → 战斗场景。探索/战役入口经 fadeAndStart 携带 data 传给 AdventureScene 的 create(data)。
  * 标题用书法 display 字体 + 右侧朱砂印（程序化 Graphics，无需美术）；
  * 按钮用共享 makeButton（hover/pressed 两态 + 统一宽度）。
  * 淡入动画完成后按钮才可点（点击回调经 buttonsEnabled 守卫，避免动画期间误点）。
@@ -23,6 +24,7 @@ export class MainMenuScene extends Phaser.Scene {
   private sealGraphics!: Phaser.GameObjects.Graphics
   private sealText!: Phaser.GameObjects.Text
   private startBtn!: Phaser.GameObjects.Text
+  private campaignBtn!: Phaser.GameObjects.Text
   private battleBtn!: Phaser.GameObjects.Text
 
   constructor() {
@@ -50,15 +52,18 @@ export class MainMenuScene extends Phaser.Scene {
     this.createSeal()
     // 标题 + 印章整体水平居中
     this.positionTitle()
-    this.startBtn = this.createButton(width / 2, height * 0.55, '开始游戏', () => {
-      if (this.buttonsEnabled) fadeAndStart(this, AdventureScene.KEY)
+    this.startBtn = this.createButton(width / 2, height * 0.5, '探索测试', () => {
+      if (this.buttonsEnabled) fadeAndStart(this, AdventureScene.KEY, { mode: 'explore', campaignId: 'dongling' })
     })
-    this.battleBtn = this.createButton(width / 2, height * 0.68, '战斗测试', () => {
+    this.campaignBtn = this.createButton(width / 2, height * 0.63, '开始战役', () => {
+      if (this.buttonsEnabled) fadeAndStart(this, AdventureScene.KEY, { mode: 'campaign', campaignId: 'dongling' })
+    })
+    this.battleBtn = this.createButton(width / 2, height * 0.76, '战斗测试', () => {
       if (this.buttonsEnabled) fadeAndStart(this, BattleScene.KEY)
     })
     // 标题 + 印章 + 按钮一起淡入；动画完成才放行点击
     this.tweens.add({
-      targets: [this.title, this.sealGraphics, this.sealText, this.startBtn, this.battleBtn],
+      targets: [this.title, this.sealGraphics, this.sealText, this.startBtn, this.campaignBtn, this.battleBtn],
       alpha: 1,
       duration: 500,
       ease: 'Cubic.easeOut',
@@ -127,7 +132,7 @@ export class MainMenuScene extends Phaser.Scene {
     this.sealText.setPosition(x, y)
   }
 
-  /** 共享按钮：统一宽度 280px（两按钮等宽），字号 28px；淡入前 alpha 0 */
+  /** 共享按钮：统一宽度 280px（三按钮等宽），字号 28px；淡入前 alpha 0 */
   private createButton(x: number, y: number, label: string, onClick: () => void): Phaser.GameObjects.Text {
     return makeButton(this, x, y, label, onClick, { fontSize: 28, minWidth: 280 }).setAlpha(0)
   }
@@ -136,15 +141,23 @@ export class MainMenuScene extends Phaser.Scene {
   private reposition(): void {
     const { width, height } = this.scale
     if (this.title) this.positionTitle()
-    this.startBtn?.setPosition(width / 2, height * 0.55)
-    this.battleBtn?.setPosition(width / 2, height * 0.68)
+    this.startBtn?.setPosition(width / 2, height * 0.5)
+    this.campaignBtn?.setPosition(width / 2, height * 0.63)
+    this.battleBtn?.setPosition(width / 2, height * 0.76)
   }
 
   getDebugState(): Record<string, unknown> {
     return {
       ready: true,
       scene: 'menu',
-      menu: { buttonsEnabled: this.buttonsEnabled },
+      menu: {
+        buttonsEnabled: this.buttonsEnabled,
+        buttons: [
+          { label: '探索测试', x: this.startBtn?.x, y: this.startBtn?.y },
+          { label: '开始战役', x: this.campaignBtn?.x, y: this.campaignBtn?.y },
+          { label: '战斗测试', x: this.battleBtn?.x, y: this.battleBtn?.y }
+        ]
+      },
       bgm: getBgmManager(this).getState()
     }
   }

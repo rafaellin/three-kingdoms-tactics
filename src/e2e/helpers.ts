@@ -1,8 +1,9 @@
 import type { Page } from '@playwright/test'
 
-/** 主菜单按钮中心（1920×1080 设计基准） */
-export const MENU_START = { x: 960, y: 594 }
-export const MENU_BATTLE = { x: 960, y: 734 }
+/** 主菜单按钮中心（1920×1080 设计基准；Y = 1080×0.50 / 0.63 / 0.76） */
+export const MENU_START = { x: 960, y: 540 }
+export const MENU_CAMPAIGN = { x: 960, y: 680 }
+export const MENU_BATTLE = { x: 960, y: 821 }
 
 interface DebugState {
   ready?: boolean
@@ -45,10 +46,20 @@ export async function gotoBooted(page: Page): Promise<void> {
   await readState(page)
 }
 
-/** 主菜单 → 大地图并等待就绪 */
+/** 主菜单 → 大地图（探索测试入口）并等待就绪 */
 export async function gotoAdventure(page: Page): Promise<void> {
   await gotoBooted(page)
   await page.mouse.click(MENU_START.x, MENU_START.y)
+  await page.waitForFunction(() => {
+    const s = (window as { __game?: { getState(): DebugState } }).__game?.getState()
+    return s?.scene === 'adventure' && s?.ready === true
+  })
+}
+
+/** 主菜单 → 大地图（开始战役入口）并等待就绪 */
+export async function gotoCampaign(page: Page): Promise<void> {
+  await gotoBooted(page)
+  await page.mouse.click(MENU_CAMPAIGN.x, MENU_CAMPAIGN.y)
   await page.waitForFunction(() => {
     const s = (window as { __game?: { getState(): DebugState } }).__game?.getState()
     return s?.scene === 'adventure' && s?.ready === true
