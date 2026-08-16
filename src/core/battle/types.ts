@@ -6,6 +6,7 @@
  */
 import { UNIT_DEFS, type UnitDefId } from '../../data/units'
 import type { Axial } from '../hex/HexGrid'
+import type { GeneralStats } from '../state/GameState'
 
 export type Side = 'player' | 'enemy'
 
@@ -67,13 +68,37 @@ export interface BattleUnitConfig {
   speed?: number
 }
 
+/** 进入战斗的武将信息（携带当前属性值；战斗不感知基础配置/成长公式） */
+export interface BattleGeneralConfig {
+  name: string
+  level: number
+  /** 当前六维（调用方从 General.stats 传入） */
+  stats: GeneralStats
+  /** 已生效被动技能（展示） */
+  passives: { name: string; level: number }[]
+}
+
+/** 战斗中一方的武将态（展示 + 攻防/蓝量派生） */
+export interface BattleGeneral {
+  name: string
+  atkBonus: number   // = round(stats.atk/3)
+  defBonus: number   // = round(stats.def/3)
+  stats: GeneralStats
+  level: number
+  maxMana: number    // = round(stats.int × MANA_COEF)
+  currentMana: number
+  passives: { name: string; level: number }[]
+}
+
 export interface BattleArmyConfig {
   side: Side
-  generalName: string
+  /** 武将当前属性（缺省时从 generalName/atkBonus/defBonus 反推展示值） */
+  general?: BattleGeneralConfig
+  generalName?: string
   /** = round(武力/3)，加到此方所有单位实际攻击 */
-  atkBonus: number
+  atkBonus?: number
   /** = round(统御/3)，加到此方所有单位实际防御 */
-  defBonus: number
+  defBonus?: number
   units: BattleUnitConfig[]
 }
 
@@ -82,7 +107,7 @@ export interface BattleState {
   /** 战场障碍物（不可通行、不可占）；init 从配置带入 */
   obstacles: Axial[]
   units: BattleUnit[]
-  general: Record<Side, { name: string; atkBonus: number; defBonus: number }>
+  general: Record<Side, BattleGeneral>
   turn: number
   /** 本回合已完成行动的单位 id（按完成先后追加） */
   completedQueue: string[]

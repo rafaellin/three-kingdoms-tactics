@@ -11,6 +11,41 @@ import { battleFindPath, battleReachableArea } from './pathing'
 import { computeBail } from './result'
 import { effectiveSpeed, occupiedHexes, type BattleArmyConfig, type BattleState, type BattleUnit } from './types'
 
+/** 魔法值上限系数：maxMana = round(智力 × MANA_COEF)（PRD §5.3：智力×系数；系数暂定 1） */
+const MANA_COEF = 1
+
+/** 进入战斗的武将信息 → 战斗武将态（六维/蓝量/被动；攻防加成从当前武力/统御推导） */
+function buildGeneral(cfg: BattleArmyConfig): BattleState['general']['player'] {
+  if (cfg.general) {
+    const atkBonus = Math.round(cfg.general.stats.atk / 3)
+    const defBonus = Math.round(cfg.general.stats.def / 3)
+    const maxMana = Math.round(cfg.general.stats.int * MANA_COEF)
+    return {
+      name: cfg.general.name,
+      atkBonus,
+      defBonus,
+      stats: { ...cfg.general.stats },
+      level: cfg.general.level,
+      maxMana,
+      currentMana: maxMana,
+      passives: cfg.general.passives.map((p) => ({ ...p }))
+    }
+  }
+  // 无 general：旧字段反推展示值（现有测试/e2e 阵容行为不变）
+  const atkBonus = cfg.atkBonus ?? 0
+  const defBonus = cfg.defBonus ?? 0
+  return {
+    name: cfg.generalName ?? '未知',
+    atkBonus,
+    defBonus,
+    stats: { atk: atkBonus * 3, def: defBonus * 3, int: 0, pol: 0, cha: 0 },
+    level: 1,
+    maxMana: 0,
+    currentMana: 0,
+    passives: []
+  }
+}
+
 /** 标准化 log 单位名：`武将的兵种`（如「关羽的骑兵」） */
 function unitName(state: BattleState, unit: Pick<BattleUnit, 'side' | 'defId'>): string {
   return `${state.general[unit.side].name}的${UNIT_DEFS[unit.defId].name}`
@@ -22,8 +57,8 @@ export function createInitialBattleState(): BattleState {
     obstacles: [],
     units: [],
     general: {
-      player: { name: '', atkBonus: 0, defBonus: 0 },
-      enemy: { name: '', atkBonus: 0, defBonus: 0 }
+      player: { name: '', atkBonus: 0, defBonus: 0, stats: { atk: 0, def: 0, int: 0, pol: 0, cha: 0 }, level: 1, maxMana: 0, currentMana: 0, passives: [] },
+      enemy: { name: '', atkBonus: 0, defBonus: 0, stats: { atk: 0, def: 0, int: 0, pol: 0, cha: 0 }, level: 1, maxMana: 0, currentMana: 0, passives: [] }
     },
     turn: 1,
     completedQueue: [],
@@ -100,15 +135,16 @@ function init(state: BattleState, payload: { player: BattleArmyConfig; enemy: Ba
     })
   const units = [...mk(payload.player, 0), ...mk(payload.enemy, payload.grid.cols - 2)]
   const order = sortOrder(units)
+  const general = {
+    player: buildGeneral(payload.player),
+    enemy: buildGeneral(payload.enemy)
+  }
   return {
     ...state,
     grid: payload.grid,
     obstacles: payload.grid.obstacles ?? [],
     units,
-    general: {
-      player: { name: payload.player.generalName, atkBonus: payload.player.atkBonus, defBonus: payload.player.defBonus },
-      enemy: { name: payload.enemy.generalName, atkBonus: payload.enemy.atkBonus, defBonus: payload.enemy.defBonus }
-    },
+    general,
     turn: 1,
     completedQueue: [],
     normalQueue: order,
@@ -120,7 +156,7 @@ function init(state: BattleState, payload: { player: BattleArmyConfig; enemy: Ba
     enter: payload.playerGold !== undefined && payload.opponentKind !== undefined
       ? { playerGold: payload.playerGold, opponentKind: payload.opponentKind }
       : undefined,
-    log: [`战斗开始：${payload.player.generalName} vs ${payload.enemy.generalName}`]
+    log: [`战斗开始：${general.player.name} vs ${general.enemy.name}`]
   }
 }
 

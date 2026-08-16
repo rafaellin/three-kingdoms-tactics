@@ -9,7 +9,7 @@ function mkState(over: Partial<BattleState>): BattleState {
       { id: 'p0', side: 'player', defId: 'militia', count: 30, position: { q: 0, r: 0 }, size: 1, hpLeft: 300, maxHp: 300, hasActed: false, hasMoved: false, retaliated: false },
       { id: 'e0', side: 'enemy', defId: 'cavalry', count: 8, position: { q: 1, r: 0 }, size: 2, hpLeft: 240, maxHp: 240, hasActed: false, hasMoved: false, retaliated: false }
     ],
-    general: { player: { name: 'P', atkBonus: 0, defBonus: 0 }, enemy: { name: 'E', atkBonus: 0, defBonus: 0 } },
+    general: { player: { name: 'P', atkBonus: 0, defBonus: 0, stats: { atk: 0, def: 0, int: 0, pol: 0, cha: 0 }, level: 1, maxMana: 0, currentMana: 0, passives: [] }, enemy: { name: 'E', atkBonus: 0, defBonus: 0, stats: { atk: 0, def: 0, int: 0, pol: 0, cha: 0 }, level: 1, maxMana: 0, currentMana: 0, passives: [] } },
     turn: 1, completedQueue: [], normalQueue: ['p0', 'e0'], waitQueue: [], currentUnitId: 'p0',
     selectedUnitId: null, phase: 'combat', outcome: null, enter: { playerGold: 10000, opponentKind: 'faction' }, log: [],
     ...over

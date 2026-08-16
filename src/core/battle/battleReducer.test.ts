@@ -3,7 +3,7 @@ import { CommandLog } from '../events/CommandLog'
 import { hexKey } from '../hex/HexGrid'
 import { battleReducer, canRetaliate, createInitialBattleState } from './battleReducer'
 import { computeActualAttack, computeActualDefense } from './damage'
-import type { BattleArmyConfig, BattleState } from './types'
+import type { BattleArmyConfig, BattleGeneralConfig, BattleState } from './types'
 
 const TEST_GRID = { cols: 13, rows: 9 }
 const TEST_ARMIES = {
@@ -559,5 +559,38 @@ describe('降/逃/和', () => {
     const store = mkEnter({ opponentKind: 'wild' })
     store.dispatch('battle/negotiate')
     expect(store.getState().phase).toBe('combat')
+  })
+})
+
+describe('battle/init 武将当前属性', () => {
+  const GUAN_GENERAL: BattleGeneralConfig = {
+    name: '关羽',
+    level: 1,
+    stats: { atk: 90, def: 70, int: 50, pol: 60, cha: 80 },
+    passives: [{ name: '铁壁', level: 1 }]
+  }
+  test('有 general：六维/攻防加成/蓝量/被动正确', () => {
+    const s = makeStore({
+      player: { side: 'player', general: GUAN_GENERAL, units: [{ defId: 'militia', count: 10 }] },
+      enemy: { side: 'enemy', generalName: 'E', atkBonus: 0, defBonus: 0, units: [{ defId: 'militia', count: 10 }] }
+    }).getState()
+    const g = s.general.player
+    expect(g.name).toBe('关羽')
+    expect(g.stats).toEqual({ atk: 90, def: 70, int: 50, pol: 60, cha: 80 })
+    expect(g.atkBonus).toBe(30)   // round(90/3)
+    expect(g.defBonus).toBe(23)   // round(70/3)
+    expect(g.level).toBe(1)
+    expect(g.maxMana).toBe(50)    // round(int50 × MANA_COEF1)
+    expect(g.currentMana).toBe(50)
+    expect(g.passives).toEqual([{ name: '铁壁', level: 1 }])
+  })
+  test('无 general：旧字段反推展示值，行为不变', () => {
+    const s = makeStore().getState() // TEST_ARMIES: atkBonus30/defBonus23
+    const g = s.general.player
+    expect(g.atkBonus).toBe(30)
+    expect(g.defBonus).toBe(23)
+    expect(g.stats).toEqual({ atk: 90, def: 69, int: 0, pol: 0, cha: 0 }) // atk=30×3, def=23×3
+    expect(g.maxMana).toBe(0)
+    expect(g.passives).toEqual([])
   })
 })
