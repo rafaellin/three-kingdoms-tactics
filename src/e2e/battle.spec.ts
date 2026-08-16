@@ -511,6 +511,7 @@ test('信息面板：hover 部队 → 兵种/数量/伤兵剩余血', async ({ p
   expect(panel).toContain('刀兵')
   expect(panel).toContain('数量：12')
   expect(panel).toContain('伤兵剩余：20') // swordsman hp20，12 满编 → 末位 240-11×20=20
+  expect(panel).toContain('单兵血量：20') // swordsman hp20
   await page.screenshot({ path: 'screenshots/battle-info-panel.png' })
 })
 
