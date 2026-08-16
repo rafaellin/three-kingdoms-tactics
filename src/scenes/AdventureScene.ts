@@ -194,6 +194,8 @@ export class AdventureScene extends Phaser.Scene {
   private reachable: Set<string> = new Set()
   /** 当前悬停格（路径高亮用；null = 不在地图上） */
   private hoverHex: Axial | null = null
+  /** 悬停光标类型（'sword' = 可交战战斗目标；其余 'none'；e2e 经 getDebugState 断言） */
+  private cursorKind: 'sword' | 'none' = 'none'
 
   /** 拖拽 / 点击判定 */
   private dragging = false
@@ -237,7 +239,9 @@ export class AdventureScene extends Phaser.Scene {
         result: data.result,
         garrisonId: data.garrisonId,
         neutralId: data.neutralId,
-        heroId: data.heroId
+        heroId: data.heroId,
+        playerId: data.playerId,
+        targetPosition: data.targetPosition
       })
     }
     // 右侧武将/城池列表（依赖 store 已就绪；首帧由 refreshViews 渲染）
@@ -773,11 +777,27 @@ export class AdventureScene extends Phaser.Scene {
     return { q: Number(m[1]), r: Number(m[2]) }
   }
 
-  /** 悬停格路径高亮（淡黄）；不再高亮可达范围 */
+  /**
+   * 悬停高亮：普通可达格 → 淡黄路径；战斗目标（存活守将/未歼灭杂兵）英雄可达 → 淡黄路径 + 目标格红色交战高亮，
+   * 并同步 cursorKind（'sword' = 可交战；其余 'none'）。
+   */
   private drawOverlay(): void {
     this.overlayGraphics.clear()
     const hero = currentHero(this.state)
-    if (!hero) return
+    if (!hero) {
+      this.cursorKind = 'none'
+      return
+    }
+    if (this.hoverHex && this.combatTargetAt(this.hoverHex)) {
+      const path = findPath(hero.position, this.hoverHex, this.makeMapCosts(this.hoverHex))
+      if (path && this.pathCostWithin(path, hero.movementLeft)) {
+        this.cursorKind = 'sword'
+        for (const h of path) this.fillHex(this.overlayGraphics, h, 0xfff2b3, 0.4)
+        this.fillHex(this.overlayGraphics, this.hoverHex, 0xff5555, 0.55)
+        return
+      }
+    }
+    this.cursorKind = 'none'
     if (this.hoverHex && this.reachable.has(hexKey(this.hoverHex))) {
       const path = findPath(hero.position, this.hoverHex, this.makeMapCosts())
       if (path) {
@@ -866,28 +886,54 @@ export class AdventureScene extends Phaser.Scene {
 
   // ---------- 寻路 / 状态查询 ----------
 
-  /** 地形 × 迷雾 × 守将/杂兵 的寻路代价（只允许走进当前可见格；窄路关卡由守将格阻塞） */
-  private makeMapCosts(): MapMovementCost {
+  /** 该格是否为战斗目标（存活守将 / 未歼灭杂兵）；无则 null */
+  private combatTargetAt(h: Axial): { kind: 'garrison' | 'neutral'; id: string } | null {
+    const k = hexKey(h)
+    const garrison = this.state.garrisons.find((g) => g.alive && hexKey(g.position) === k)
+    if (garrison) return { kind: 'garrison', id: garrison.id }
+    const neutral = this.state.neutrals.find((n) => !n.defeated && hexKey(n.position) === k)
+    if (neutral) return { kind: 'neutral', id: neutral.id }
+    return null
+  }
+
+  /** 路径总移动代价是否 ≤ 预算（与 reducer 逐格扣减口径一致：地形代价累加） */
+  private pathCostWithin(path: Axial[], budget: number): boolean {
+    const map = this.state.map
+    if (!map) return false
+    let total = 0
+    for (let i = 1; i < path.length; i++) {
+      total += getTerrain(map.terrain[hexKey(path[i]!)] ?? 'plain').moveCost
+      if (total > budget) return false
+    }
+    return true
+  }
+
+  /**
+   * 地形 × 迷雾 × 武将占据格的寻路代价（只允许走进当前可见格）。
+   * goalHex 可选：若目标格是战斗目标（存活守将/未歼灭杂兵）→ 放行（作为移动终点走进触发战斗），
+   * 其余武将占据格照旧不可通行（路径中间不穿过，不能穿过/重叠）。
+   */
+  private makeMapCosts(goalHex?: Axial): MapMovementCost {
     const map = this.state.map
     const hero = currentHero(this.state)
     if (!map || !hero) throw new Error('map/hero 未就绪')
     return new MapMovementCost({
       terrainAt: (h) => map.terrain[hexKey(h)] ?? 'plain',
       fogAt: (h) => this.state.visibility[hero.playerId]?.[hexKey(h)],
-      // 窄路：存活守将 / 未歼灭杂兵 / 其他英雄占据格 不可通行（点击守将/杂兵格触发战斗，Task 8 战斗回流）；
-      // 守将被歼 / 杂兵被歼 / 英雄移走 后该格自动恢复可通行
-      garrisonAt: (h) => this.isBlockedHex(h)
+      // 武将占据格（己方英雄 / 存活守将 / 未歼灭杂兵）不可通行（不能穿过/重叠）；
+      // 目标格若是战斗目标 → 作为移动终点放行（走进触发战斗）
+      garrisonAt: (h) => this.isBlockedHex(h, goalHex)
     })
   }
 
   /**
-   * 不可通行格：存活守将驻点（窄路关卡阻塞）+ 未歼灭中立杂兵（路径不穿过；点击其格触发战斗，Task 8）
-   * + 其他英雄占据格（问题2：不能重叠/穿过，含己方英雄——与 reducer moveHeroTo 的 overlap 阻挡互补，
-   *   寻路不规划穿过被占格）。
+   * 不可通行格：存活守将驻点 + 未歼灭中立杂兵 + 其他英雄占据格（含己方——不能重叠/穿过）。
+   * 例外：goalHex 若是战斗目标（存活守将/未歼灭杂兵）→ 放行（作为移动终点走进触发战斗）。
    */
-  private isBlockedHex(h: Axial): boolean {
+  private isBlockedHex(h: Axial, goalHex?: Axial): boolean {
     const k = hexKey(h)
     const hero = currentHero(this.state)
+    if (goalHex && hexKey(goalHex) === k && this.combatTargetAt(h)) return false
     return (
       this.state.garrisons.some((g) => g.alive && hexKey(g.position) === k) ||
       this.state.neutrals.some((n) => !n.defeated && hexKey(n.position) === k) ||
@@ -1028,18 +1074,18 @@ export class AdventureScene extends Phaser.Scene {
       }
     }
     if (!hero || !this.mapKeys.has(hexKey(hex))) return
-    // 点击存活守将 / 未歼灭杂兵占据格 → 触发战斗（战斗回流 Task 8）。
-    // 这些格在 makeMapCosts 中不可通行（不在可达集），旧逻辑落到下面的 reachable 检查自然 no-op；
-    // 现在在 reachable 检查之前拦截：战斗由「点击占据格」触发，而非「移动进入」。
-    // 因此 reducer 的 moveHeroTo 保持只拦存活守将（守将格不可走入）、不拦杂兵格——
-    // 杂兵战斗由点击触发，无需移动校验（Task 6 渲染层 isBlockedHex 仍拦杂兵格，路径不穿过）。
+    // 点击存活守将 / 未歼灭杂兵占据格 → 直接移动上去触发战斗（问题5 用户确认修订：相邻格不触发交战，
+    // 走进目标格本身才触发）。路径允许目标格作为终点（makeMapCosts(hex) 放行战斗目标），
+    // 路径中间的武将格照旧挡（不能穿过）；英雄在移动力内走进目标格 → 到达后 triggerBattle。
     // 未探索格不触发（迷雾中的守将/杂兵不可见，点击其格视为误点）。
     const fog = this.state.visibility[hero.playerId] ?? {}
     if ((fog[hexKey(hex)] ?? 'unexplored') === 'unexplored') return
     const garrison = this.state.garrisons.find((g) => g.alive && hexKey(g.position) === hexKey(hex))
     const neutral = this.state.neutrals.find((n) => !n.defeated && hexKey(n.position) === hexKey(hex))
     if (garrison || neutral) {
-      this.triggerBattle(hero, garrison, neutral)
+      const path = findPath(hero.position, hex, this.makeMapCosts(hex))
+      if (!path || path.length < 2 || !this.pathCostWithin(path, hero.movementLeft)) return
+      void this.moveToAndBattle(path, hex, garrison, neutral)
       return
     }
     if (!this.reachable.has(hexKey(hex))) return
@@ -1049,7 +1095,24 @@ export class AdventureScene extends Phaser.Scene {
   }
 
   /**
-   * 点击守将/杂兵格 → 进入战斗（Task 8 战斗回流）。
+   * 沿路径走进战斗目标格，到达后触发战斗（问题5 用户确认修订：直接移动上去交战）。
+   * 只有真正走进目标格才触发（移动力耗尽 / 被 reducer 拒绝 → 停在原地不触发）。
+   */
+  private async moveToAndBattle(
+    path: Axial[],
+    target: Axial,
+    garrison: GarrisonState | undefined,
+    neutral: NeutralState | undefined
+  ): Promise<void> {
+    await this.animateMove(path)
+    const hero = currentHero(this.state)
+    if (hero && hexKey(hero.position) === hexKey(target)) {
+      this.triggerBattle(hero, garrison, neutral)
+    }
+  }
+
+  /**
+   * 英雄已走进目标格 → 进入战斗（Task 8 战斗回流；问题5 修订：由 moveToAndBattle 在移动到位后调用）。
    * 攻方 = 当前选中英雄（currentHero）：其 army + 武将当前属性构建 player 阵容；
    * 守将 → garrison.units + 守将基础表（GENERAL_BASES + deriveStats）构建 enemy 阵容；
    * 杂兵 → neutral.units 构建 enemy 阵容（无武将：通用「野怪」名 + 0 攻防加成）。
@@ -1093,12 +1156,15 @@ export class AdventureScene extends Phaser.Scene {
       return
     }
     // 进战斗前保存世界快照：战斗返回时恢复大地图状态（城池驻守/移兵/英雄位置/回合/资源不丢）
+    // hero.position 此刻 = 战斗目标格（已随移动到位）；targetPosition/playerId 供结算胜利占格/失败回城。
     worldSnapshot = serializeState(this.state)
     this.scene.start(BattleScene.KEY, {
       enter: {
         mode: this.mode,
         campaignId: this.campaignId,
         heroId: hero.generalId,
+        playerId: hero.playerId,
+        targetPosition: { ...hero.position },
         ...(garrison ? { garrisonId: garrison.id } : {}),
         ...(neutral ? { neutralId: neutral.id } : {}),
         player,
@@ -1275,12 +1341,15 @@ export class AdventureScene extends Phaser.Scene {
       outcome: state.outcome,
       // 胜利面板（Task 9）：shown = 本次 create 已弹过；open = 弹层仍在展示中（e2e 断言用）
       victoryPanel: { shown: this.victoryPanelShown, open: this.victoryModalOpen },
+      // 悬停光标类型（'sword' = 可交战战斗目标；e2e 断言）
+      cursorKind: this.cursorKind,
       heroes: state.heroes.map((h) => ({
         generalId: h.generalId,
         faction: h.faction,
         position: h.position,
         movementLeft: h.movementLeft,
-        maxMovement: h.maxMovement
+        maxMovement: h.maxMovement,
+        screen: this.hexToScreen(h.position)
       })),
       generals: state.generals.map((g) => ({
         id: g.id,

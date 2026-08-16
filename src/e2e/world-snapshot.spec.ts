@@ -165,9 +165,9 @@ test('世界快照：驻守+移兵 → 打杂兵 → 返回 → 城池驻守/驻
   expect(s.towns![0]!.garrison).toEqual([{ defId: 'swordsman', count: 1 }]) // 驻军保留（此前重建会重置为空）
   expect(s.towns![0]!.garrisonGeneralId).toBeNull() // 关羽出城，驻守槽释放
   expect(s.towns![0]!.visitorGeneralId).toBeNull()
-  // 英雄位置保留（关羽出城后位置 = 城格，不因战斗返回重置到出生点）
+  // 英雄位置保留（战斗胜利占格 = 杂兵格 (0,-2)，不因战斗返回重置到出生点/城格）
   const guanHero = s.heroes!.find((h) => h.generalId === 'g-guan')!
-  expect(guanHero.position).toEqual({ q: 0, r: 0 }) // 出城时 leaveTown 放回城格
+  expect(guanHero.position).toEqual({ q: 0, r: -2 }) // 胜利占杂兵格（Task 5：胜利 → 英雄移入目标格）
   // 经验保留/新增
   expect(s.generals!.find((g) => g.id === 'g-guan')!.xp).toBeGreaterThan(guanXpBefore)
   await page.screenshot({ path: 'screenshots/world-snapshot-persisted.png' })

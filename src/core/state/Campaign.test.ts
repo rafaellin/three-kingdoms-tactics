@@ -1,8 +1,8 @@
 /**
- * 战役命令集测试：campaign/start · hero/select · hero/move（守将格拦截）·
+ * 战役命令集测试：campaign/start · hero/select · hero/move（守将/杂兵终点放行 + 重叠阻挡）·
  * 城池交互（enterTown/garrison/leaveTown/swapHeroes/transferTroops）·
- * 战斗回流（resolveBattle → 守将 alive=false + 经验 + checkVictory）·
- * MapMovementCost 守将格不可通行。
+ * 战斗回流（resolveBattle → 胜利占格/失败回城 + 守将 alive=false + 经验 + checkVictory）·
+ * MapMovementCost 武将格不可通行。
  * 全部走确定性 reducer（CommandLog 折叠），无浏览器依赖。
  */
 import { describe, expect, test } from 'vitest'
@@ -157,16 +157,27 @@ describe('game/advanceTurn 探索模式 + system 结算', () => {
   })
 })
 
-describe('hero/move 英雄移动（守将格拦截 + 重叠阻挡）', () => {
-  test('目标格是存活守将格 → 拒绝（不可通行）', () => {
+describe('hero/move 英雄移动（守将/杂兵终点放行 + 重叠阻挡）', () => {
+  test('目标格是存活守将格 → 可作为移动终点（走进触发战斗，问题5 修订）', () => {
     const store = makeCampaignStore()
-    // 关羽在 (0,-1)，走到 (0,0) 后再试图进 (0,1)（孔秀格）
+    // 关羽在 (0,-1)，走到 (0,0) 后再走进 (0,1)（孔秀格）——守将格作为移动终点放行
     store.dispatch('hero/select', { heroId: 'g-guan' })
     store.dispatch('hero/move', { heroId: 'g-guan', to: { q: 0, r: 0 } })
     store.dispatch('hero/move', { heroId: 'g-guan', to: { q: 0, r: 1 } })
     const s = store.getState()
-    expect(s.heroes.find((h) => h.generalId === 'g-guan')?.position).toEqual({ q: 0, r: 0 }) // 停在 (0,0)，进不了孔秀格
-    expect(s.heroes.find((h) => h.generalId === 'g-guan')?.movementLeft).toBe(5) // 只扣了一次平地
+    expect(s.heroes.find((h) => h.generalId === 'g-guan')?.position).toEqual({ q: 0, r: 1 }) // 走进守将格
+    expect(s.heroes.find((h) => h.generalId === 'g-guan')?.movementLeft).toBe(4) // 两格平地各扣 1
+    expect(s.garrisons[0]!.alive).toBe(true) // 守将状态由渲染层战斗触发结算，reducer 只放行走入
+  })
+
+  test('目标格是未歼灭杂兵格 → 可作为移动终点（走进触发战斗）', () => {
+    const store = makeCampaignStore()
+    // 关羽 (0,-1) 直接走进杂兵 neu-1 (0,-2)（相邻）
+    store.dispatch('hero/move', { heroId: 'g-guan', to: { q: 0, r: -2 } })
+    const s = store.getState()
+    expect(s.heroes.find((h) => h.generalId === 'g-guan')?.position).toEqual({ q: 0, r: -2 })
+    expect(s.heroes.find((h) => h.generalId === 'g-guan')?.movementLeft).toBe(5) // 平地扣 1
+    expect(s.neutrals.find((n) => n.id === 'neu-1')!.defeated).toBe(false) // 杂兵状态由战斗结算处理
   })
 
   test('守将阵亡后 → 可通行', () => {
@@ -208,6 +219,45 @@ describe('campaign/resolveBattle 战斗回流', () => {
     expect(guan.army).toEqual([{ defId: 'swordsman', count: 12 }])
     expect(guan.xp).toBe(500) // Lv5，xpToNext(5)=2074，500 不足升级
     expect(guan.level).toBe(5)
+  })
+
+  test('胜利 → 英雄占目标格（position=targetPosition）、不清空剩余移动力', () => {
+    const store = makeCampaignStore()
+    // 关羽 (0,-1)→(0,0)→(0,1) 走进孔秀格（两格平地 → 移动力 4）
+    store.dispatch('hero/move', { heroId: 'g-guan', to: { q: 0, r: 0 } })
+    store.dispatch('hero/move', { heroId: 'g-guan', to: { q: 0, r: 1 } })
+    store.dispatch('campaign/resolveBattle', {
+      result: { outcome: 'won', remainingTroops: [{ defId: 'swordsman', count: 12 }], expGained: 0 },
+      garrisonId: 'gar-kongxiu',
+      heroId: 'g-guan',
+      playerId: 'p1',
+      targetPosition: { q: 0, r: 1 }
+    })
+    const s = store.getState()
+    expect(s.heroes.find((h) => h.generalId === 'g-guan')!.position).toEqual({ q: 0, r: 1 }) // 胜利占格
+    expect(s.heroes.find((h) => h.generalId === 'g-guan')!.movementLeft).toBe(4) // 不清空剩余移动力
+    expect(s.garrisons[0]!.alive).toBe(false)
+    expect(s.outcome).toBe('won')
+  })
+
+  test('战败 → 英雄回最近己方城（玩家第一城格）、行动力 = 0', () => {
+    const store = makeCampaignStore()
+    // 关羽走进孔秀格 (0,1) 后战败 → 回东岭小城 (0,0)
+    store.dispatch('hero/move', { heroId: 'g-guan', to: { q: 0, r: 0 } })
+    store.dispatch('hero/move', { heroId: 'g-guan', to: { q: 0, r: 1 } })
+    store.dispatch('campaign/resolveBattle', {
+      result: { outcome: 'lost', remainingTroops: [{ defId: 'militia', count: 3 }], expGained: 0 },
+      garrisonId: 'gar-kongxiu',
+      heroId: 'g-guan',
+      playerId: 'p1',
+      targetPosition: { q: 0, r: 1 }
+    })
+    const s = store.getState()
+    expect(s.heroes.find((h) => h.generalId === 'g-guan')!.position).toEqual({ q: 0, r: 0 }) // 回城格
+    expect(s.heroes.find((h) => h.generalId === 'g-guan')!.movementLeft).toBe(0) // 行动力清零
+    expect(s.garrisons[0]!.alive).toBe(true) // 战败守将仍存活
+    expect(s.outcome).toBeNull()
+    expect(s.generals.find((g) => g.id === 'g-guan')!.army).toEqual([{ defId: 'militia', count: 3 }])
   })
 
   test('战败 → 守将仍存活、不获胜，army 仍写回', () => {

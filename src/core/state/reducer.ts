@@ -124,6 +124,10 @@ export interface ResolveBattlePayload {
   neutralId?: string
   /** 参战英雄（heroId = generalId） */
   heroId: string
+  /** 参战英雄所属玩家 id（失败回城找最近己方城用） */
+  playerId?: string
+  /** 战斗发生的目标格（胜利 → 英雄占格，已随移动到位） */
+  targetPosition?: Axial
 }
 
 /** 为该势力重算视野（旧 fog 决定 explored 持久化） */
@@ -378,7 +382,7 @@ function selectHero(state: GameState, { heroId }: HeroSelectPayload): GameState 
  * 1. to 必须是当前格六邻居
  * 2. to 已探索（explored，永久可见才可走入；未探索格挡住）
  * 3. to 地形可通过
- * 4. to 不是存活守将驻点（需先击败守将才可通行）
+ * 4. to 不是其他英雄占据格（不能重叠）；存活守将/未歼灭杂兵格可作为移动终点（走进触发战斗）
  * 5. 剩余移动力足够支付地形代价
  * 6. 扣移动力 → 更新位置 → 重算视野
  * 7. 抵达含资源点的格：宝箱一次性拾取；无主矿被占领
@@ -390,8 +394,9 @@ function moveHeroTo(state: GameState, hero: HeroUnit, to: Axial): GameState {
   if (!isNeighbor(hero.position, to)) return state
   // 目标格被其他英雄占据 → 拒绝（问题2：不能重叠/穿过，含己方英雄）
   if (state.heroes.some((h) => h.generalId !== hero.generalId && hexKey(h.position) === hexKey(to))) return state
-  // 守将驻点（存活）不可通行：需先击败守将
-  if (state.garrisons.some((g) => g.alive && hexKey(g.position) === hexKey(to))) return state
+  // 存活守将 / 未歼灭杂兵格：可作为移动终点放行（英雄走进该格即触发战斗，问题5 用户确认修订）。
+  // 原「守将驻点不可通行」拒绝移除——走进守将/杂兵格 = 走进战斗目标；
+  // 「不能穿过」由渲染层寻路 makeMapCosts 阻挡（路径中间不经过武将格）。
   const fog = state.visibility[hero.playerId] ?? {}
   if (fog[hexKey(to)] !== 'explored') return state
   const terrain = getTerrain(map.terrain[hexKey(to)] ?? 'plain')
@@ -608,11 +613,15 @@ function transferTroops(state: GameState, { townId, from, defId, count }: Transf
  * 战斗回流：把战斗结果写回大地图。
  * - 参战英雄（heroId = generalId）的 army = remainingTroops；
  * - expGained > 0 → 复用 general/gainXp 的升级逻辑；
- * - outcome === 'won' 且 garrisonId → 该守将 alive=false；neutralId → 该中立 defeated=true；
+ * - outcome === 'won' → 英雄胜利占格（position = targetPosition，已随移动到位），不清空剩余移动力；
+ *   若 garrisonId → 该守将 alive=false；neutralId → 该中立 defeated=true；
+ * - outcome === 'lost' → 英雄回最近己方城（MVP = 玩家第一城格）、行动力 = 0；
  * - 然后跑 campaign/checkVictory 胜利检查。
  */
 function resolveBattle(state: GameState, payload: ResolveBattlePayload): GameState {
   const { result, garrisonId, neutralId, heroId } = payload
+  const playerId = payload.playerId ?? state.heroes.find((h) => h.generalId === heroId)?.playerId
+  const targetPosition = payload.targetPosition
   if (!state.generals.some((g) => g.id === heroId)) return state
   let next: GameState = {
     ...state,
@@ -624,6 +633,13 @@ function resolveBattle(state: GameState, payload: ResolveBattlePayload): GameSta
     next = gainXp(next, { generalId: heroId, amount: result.expGained })
   }
   if (result.outcome === 'won') {
+    // 胜利：英雄已随移动到位占据目标格（胜利占格），不清空剩余移动力（已扣走进去的代价）
+    if (targetPosition) {
+      next = {
+        ...next,
+        heroes: next.heroes.map((h) => (h.generalId === heroId ? { ...h, position: { ...targetPosition } } : h))
+      }
+    }
     if (garrisonId) {
       next = {
         ...next,
@@ -634,6 +650,17 @@ function resolveBattle(state: GameState, payload: ResolveBattlePayload): GameSta
       next = {
         ...next,
         neutrals: next.neutrals.map((n) => (n.id === neutralId ? { ...n, defeated: true } : n))
+      }
+    }
+  } else {
+    // 失败：英雄回最近己方城（MVP = 玩家第一城格），行动力 = 0
+    const town = playerId ? next.towns.find((t) => t.owner === playerId) : undefined
+    if (town) {
+      next = {
+        ...next,
+        heroes: next.heroes.map((h) =>
+          h.generalId === heroId ? { ...h, position: { ...town.position }, movementLeft: 0 } : h
+        )
       }
     }
   }

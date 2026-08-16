@@ -33,6 +33,10 @@ export interface BattleFlowEnter {
   campaignId?: string
   /** 参战英雄 id（= generalId；结算写回目标） */
   heroId?: string
+  /** 参战英雄所属玩家 id（失败回城找最近己方城用） */
+  playerId?: string
+  /** 战斗发生的目标格（胜利 → 英雄占格） */
+  targetPosition?: Axial
   /** 打的是守将 → 胜利时标记 alive=false */
   garrisonId?: string
   /** 打的是中立杂兵 → 胜利时标记 defeated=true */
@@ -154,6 +158,8 @@ export class BattleScene extends Phaser.Scene {
           mode: enter.mode,
           campaignId: enter.campaignId,
           heroId: enter.heroId,
+          playerId: enter.playerId,
+          targetPosition: enter.targetPosition,
           garrisonId: enter.garrisonId,
           neutralId: enter.neutralId
         }
