@@ -600,7 +600,7 @@ else:            战斗
 - [x] 视口分区（HUD 区 / Map 交互区 / Tools 区；地图拖拽/点击/滚轮缩放仅在 Map 区生效，HUD/工具栏经独立固定 UI 相机渲染、不随地图缩放）
 - [x] 共享 UI 基建（2026-08 M1）：`src/ui/theme.ts` 调色板 token（nightInk/cinnabar/jade/gilt/parchment/slateAzure）+ `src/ui/button.ts` 带状态按钮 + `src/ui/fade.ts` 场景淡转场；全量颜色替换与正文字体见 §16「UI 美化」
 - [ ] 底部英雄栏
-- [ ] 右侧城池列表
+- [x] 右侧武将/城池列表（2026-08 Task 4 `src/ui/RightPanel.ts`：当前玩家武将行（名字/等级/兵力总数，点击 → `hero/select` 切换，选中行绿底高亮）+ 城池行（名字/等级，点击 → 打开 TownPanel）+「下一个(h)」按钮 / H 键在当前玩家英雄中循环切换；固定屏幕右侧不随地图缩放，简单列表未美化；敌方城池/驻将信息、列表美化见 §16）
 - [ ] 选中武将详情
 - [ ] 消息日志
 - [x] 胜利画面（2026-08 Task 9 战役胜利面板：`outcome==='won'` 弹层「胜利！」+「返回主菜单」按钮 → 回主菜单；MVP 见 §15 战役模式）

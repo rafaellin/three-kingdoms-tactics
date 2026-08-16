@@ -27,6 +27,7 @@ import { getTerrain } from '../data/terrain'
 import { RESOURCE_NODE_DEFS } from '../data/resourceNode'
 import { BgmManager, getBgmManager } from '../audio/BgmManager'
 import { BgmControls } from '../ui/BgmControls'
+import { RightPanel } from '../ui/RightPanel'
 import { TownPanel } from '../ui/TownPanel'
 import { openInfo } from '../ui/Modal'
 import { fadeAndStart, fadeIn } from '../ui/fade'
@@ -151,6 +152,8 @@ export class AdventureScene extends Phaser.Scene {
   private nodeDetailText!: Phaser.GameObjects.Text
   /** 结束回合按钮 */
   private endTurnButton!: Phaser.GameObjects.Text
+  /** 右侧武将/城池列表面板（屏幕固定；Task 4：点击切换英雄 / 打开城池面板 / 下一个(h)） */
+  private rightPanel: RightPanel | null = null
   /** 胜利面板已展示（每次 create 只弹一次；Task 9） */
   private victoryPanelShown = false
   /** 胜利面板打开中：屏蔽地图输入 / 结束回合（与 townPanel 同机制；Task 9） */
@@ -237,6 +240,15 @@ export class AdventureScene extends Phaser.Scene {
         heroId: data.heroId
       })
     }
+    // 右侧武将/城池列表（依赖 store 已就绪；首帧由 refreshViews 渲染）
+    this.rightPanel = new RightPanel(this, {
+      onSelectHero: (heroId) => {
+        this.store.dispatch('hero/select', { heroId })
+        this.refreshViews()
+      },
+      onOpenTown: (townId) => this.openTownPanel(townId),
+      onNextHero: () => this.nextHero()
+    })
     this.refreshViews()
     this.setupInput()
     // 战役胜利判定（resolveBattle 已写回 outcome）：达成 → 弹胜利面板（Task 9）
@@ -247,18 +259,38 @@ export class AdventureScene extends Phaser.Scene {
     this.sfx = new SfxManager(this)
     // E 键结束回合（与右下角按钮等效）
     this.input.keyboard?.on('keydown-E', () => this.endTurn())
+    // H 键：循环切换选中英雄（与右侧「下一个(h)」按钮等效）
+    this.input.keyboard?.on('keydown-H', () => this.nextHero())
     // 窗口大小变化时：地图保持居中 + 重新排布底部控件
     this.scale.on('resize', () => {
       this.cameras.main.centerOn(0, 0)
       this.repositionBottomControls()
     })
     this.events.once('shutdown', () => this.bgmControls?.destroy())
+    this.events.once('shutdown', () => this.rightPanel?.destroy())
   }
 
   /** 结束回合：dispatch game/advanceTurn，推进到下一势力（跨周自动结算） */
   private endTurn(): void {
     if (this.busy || this.townPanel || this.victoryModalOpen) return
     this.store.dispatch('game/advanceTurn')
+    this.refreshViews()
+  }
+
+  /**
+   * 「下一个(h)」：在当前玩家的英雄列表中循环切换选中英雄（右侧按钮 / H 键共用）。
+   * 顺序 = state.heroes 数组序（战役 = 关羽→周仓→孙乾→…循环）；无选中时落到列表第一个。
+   */
+  private nextHero(): void {
+    if (this.busy || this.townPanel || this.victoryModalOpen) return
+    const state = this.state
+    const player = currentPlayer(state)
+    if (!player) return
+    const mine = state.heroes.filter((h) => h.playerId === player.id)
+    if (mine.length === 0) return
+    const idx = mine.findIndex((h) => h.generalId === state.selectedHeroId)
+    const next = mine[(idx + 1) % mine.length]!
+    this.store.dispatch('hero/select', { heroId: next.generalId })
     this.refreshViews()
   }
 
@@ -800,6 +832,8 @@ export class AdventureScene extends Phaser.Scene {
     this.drawOverlay()
     this.syncHeroSprites()
     this.updateHud()
+    // 右侧武将/城池列表随状态刷新（选中高亮 / 兵力数 / 城池列表）
+    this.rightPanel?.refresh(this.state)
   }
 
   /** 在指定 Graphics 上画一个填充六角格 */
@@ -1234,6 +1268,7 @@ export class AdventureScene extends Phaser.Scene {
       // currentFaction 已从 core 删除；此处为 e2e 兼容派生（当前行动玩家的势力）
       currentFaction: currentPlayer(state)?.faction ?? null,
       currentPlayerId: state.currentPlayerId,
+      selectedHeroId: state.selectedHeroId,
       mode: this.mode ?? null,
       campaignId: state.campaignId,
       // 战役结局（达成胜利 → 'won'；战斗回流写回后 e2e 断言）
@@ -1294,6 +1329,8 @@ export class AdventureScene extends Phaser.Scene {
         visitorGeneralId: t.visitorGeneralId
       })),
       townPanel: this.townPanel?.getDebugState() ?? null,
+      // 右侧武将/城池列表面板（e2e 断言列表内容 + 读坐标点击）
+      rightPanel: this.rightPanel?.getDebugState() ?? null,
       nodeStates: {
         picked: Object.values(state.nodeStates).filter((n) => n.visited).length,
         claimedMines: Object.values(state.nodeStates).filter((n) => n.owner !== null).length
