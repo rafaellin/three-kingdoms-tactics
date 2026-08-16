@@ -126,13 +126,13 @@ export class AdventureScene extends Phaser.Scene {
   private nodeGraphics!: Phaser.GameObjects.Graphics
   private townGraphics!: Phaser.GameObjects.Graphics
   private overlayGraphics!: Phaser.GameObjects.Graphics
-  /** 守将渲染层（红城寨格 + 名字标签；与城池同 depth） */
+  /** 守将渲染层（红城寨格 + 格内姓氏大字；与城池同 depth） */
   private garrisonGraphics!: Phaser.GameObjects.Graphics
   private garrisonLabels = new Map<string, Phaser.GameObjects.Text>()
   /** 杂兵渲染层（深绿野怪格 + 兵力数标签） */
   private neutralGraphics!: Phaser.GameObjects.Graphics
   private neutralLabels = new Map<string, Phaser.GameObjects.Text>()
-  /** 多英雄精灵（generalId → 六角格边框 + 圆点）；选中英雄金点+白描边，其余银青小点 */
+  /** 多英雄精灵（generalId → 六角格边框）；选中英雄黄框、其余灰蓝框 */
   private heroSprites = new Map<string, Phaser.GameObjects.Graphics>()
   /** 多英雄格内姓氏文本（generalId → 名字首字繁体；mapOnly Text，随 sprite 定位） */
   private heroLabels = new Map<string, Phaser.GameObjects.Text>()
@@ -620,7 +620,7 @@ export class AdventureScene extends Phaser.Scene {
   }
 
   /**
-   * 守将渲染：存活守将画红城寨格（深红六角底 + 亮红边框 + 金色旗标）与名字标签；
+   * 守将渲染：存活守将画红城寨格（深红六角底 + 亮红边框）+ 格内姓氏大字（白字 + 深描边）；
    * 被歼（alive=false）后从地图移除（标签随 seen 清理销毁）。
    * 与城池同 depth；未探索区域的守将不可见。
    */
@@ -643,24 +643,27 @@ export class AdventureScene extends Phaser.Scene {
       this.fillHexScaled(this.garrisonGraphics, g.position, 0.72, 0x7a1f1f, 0.9)
       this.garrisonGraphics.lineStyle(2, 0xff5555, 1)
       this.garrisonGraphics.strokePoints(this.hexPoints(g.position, 0.72), true)
-      // 金色旗标（杆 + 三角旗面）
+      // 格内姓氏大字（名字第一个字，繁体）：白字 + 深描边，叠在红城寨底中央
+      // （替代原金色旗标 + 12px 名字标签，保证六角格内可读）
       const c = this.layout.hexToPixel(g.position)
-      this.garrisonGraphics.fillStyle(0xffd166, 1)
-      this.garrisonGraphics.fillRect(c.x - 3, c.y - 9, 2, 16)
-      this.garrisonGraphics.fillStyle(0xff5555, 1)
-      this.garrisonGraphics.fillTriangle(c.x - 1, c.y - 9, c.x + 8, c.y - 6, c.x - 1, c.y - 3)
-      // 名字标签（跟随地图格，随相机缩放）
       let label = this.garrisonLabels.get(g.id)
       if (!label) {
         label = this.mapOnly(
-          this.add.text(0, 0, '', { fontFamily: 'sans-serif', fontSize: '12px', color: '#ffcccc' })
-            .setOrigin(0.5, 0)
+          this.add
+            .text(0, 0, '', {
+              fontFamily: 'sans-serif',
+              fontSize: '26px',
+              color: '#ffffff',
+              stroke: '#0b0f18',
+              strokeThickness: 3
+            })
+            .setOrigin(0.5)
             .setDepth(2)
         )
         this.garrisonLabels.set(g.id, label)
       }
-      label.setText(name)
-      label.setPosition(c.x, c.y + 18)
+      label.setText(name ? name[0]! : '')
+      label.setPosition(c.x, c.y)
     }
     // 被歼 / 换种子后清理已不存在守将的标签
     for (const id of this.garrisonLabels.keys()) {
@@ -817,7 +820,7 @@ export class AdventureScene extends Phaser.Scene {
 
   /**
    * 多英雄精灵对齐 core 坐标：每个英雄画六角格边框（当前操作武将黄色 0xffd166，其余灰蓝 0x9fb4c7）
-   * + 格内姓氏文本（名字第一个字，繁体）；当前武将保留金点高亮（金点 + 白描边）。
+   * + 格内姓氏大字（名字第一个字，繁体；26px 居中、深描边，选中金字/其他浅字；不再画圆点）。
    * 姓氏文本为独立 mapOnly Text，随 sprite 定位到格中心。
    */
   private syncHeroSprites(): void {
@@ -840,19 +843,7 @@ export class AdventureScene extends Phaser.Scene {
       sprite.fillPoints(hexPts, true)
       sprite.lineStyle(selected ? 2.5 : 1.5, borderColor, selected ? 1 : 0.9)
       sprite.strokePoints(hexPts, true)
-      // 金点高亮：选中金点+白圈，其余银青小点（保留现状）
-      if (selected) {
-        sprite.fillStyle(0xffd166, 1)
-        sprite.fillCircle(0, 0, 10)
-        sprite.lineStyle(2, 0xffffff, 1)
-        sprite.strokeCircle(0, 0, 10)
-      } else {
-        sprite.fillStyle(0x9fb4c7, 1)
-        sprite.fillCircle(0, 0, 8)
-        sprite.lineStyle(1, 0xffffff, 0.7)
-        sprite.strokeCircle(0, 0, 8)
-      }
-      // 格内姓氏文本：name 第一个字符（繁体），随 sprite 定位在格中心
+      // 格内姓氏大字：name 第一个字符（繁体），随 sprite 定位在格中心（26px，深描边保证可读）
       const name =
         this.state.generals.find((g) => g.id === hero.generalId)?.name ??
         GENERAL_BASES[hero.generalId as keyof typeof GENERAL_BASES]?.name ??
@@ -863,8 +854,8 @@ export class AdventureScene extends Phaser.Scene {
           this.add
             .text(0, 0, '', {
               fontFamily: 'sans-serif',
-              fontSize: '15px',
-              color: '#f5f2e8',
+              fontSize: '26px',
+              color: '#e8eef5',
               stroke: '#0b0f18',
               strokeThickness: 2
             })
@@ -1507,13 +1498,22 @@ export class AdventureScene extends Phaser.Scene {
         xp: g.xp,
         army: g.army
       })),
-      garrisons: state.garrisons.map((g) => ({
-        id: g.id,
-        generalId: g.generalId,
-        position: g.position,
-        alive: g.alive,
-        screen: this.hexToScreen(g.position)
-      })),
+      garrisons: state.garrisons.map((g) => {
+        const gName =
+          state.generals.find((gen) => gen.id === g.generalId)?.name ??
+          GENERAL_BASES[g.generalId as keyof typeof GENERAL_BASES]?.name ??
+          ''
+        return {
+          id: g.id,
+          generalId: g.generalId,
+          name: gName,
+          // 渲染层实际显示的格内姓氏大字（name[0] 繁体；e2e 断言守将格文字）
+          label: gName ? gName[0]! : '',
+          position: g.position,
+          alive: g.alive,
+          screen: this.hexToScreen(g.position)
+        }
+      }),
       neutrals: state.neutrals.map((n) => ({
         id: n.id,
         position: n.position,

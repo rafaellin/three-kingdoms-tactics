@@ -524,8 +524,8 @@ else:            战斗
 
 ### 战役模式（东岭关 · 千里走单骑）
 - [x] 战役配置 `src/data/campaigns.ts`：`CAMPAIGNS['dongling']`（手工窄路地图 / 城池 / 3 我方武将（关羽/周仓/孙乾 Lv5 带兵）/ 英雄出生点 / 守将孔秀 / 2 组中立杂兵 / 胜利条件=击败孔秀）
-- [x] 战役启动 `campaign/start`（mode=campaign 放守将+胜利、完整玩家序列 [p1,ai1]；mode=explore 不放守将自由探索、**单玩家 [p1]**——Spec §3：只保留 human 玩家，AI 不参与轮转）；多英雄渲染（每武将一英雄：六角格边框 + 格内姓氏文本，选中武将黄框 0xffd166/其他灰蓝框 0x9fb4c7，金点+白描边保留；武将名存繁体 關羽/周倉/孫乾/呂布，地图/右侧列表/城池面板/战斗武将卡自动生效）
-- [x] 守将渲染（红城寨格 + 金色旗标 + 名字标签）；杂兵渲染（深绿野怪格 + 中央兵力数）；被歼/被灭后从地图移除
+- [x] 战役启动 `campaign/start`（mode=campaign 放守将+胜利、完整玩家序列 [p1,ai1]；mode=explore 不放守将自由探索、**单玩家 [p1]**——Spec §3：只保留 human 玩家，AI 不参与轮转）；多英雄渲染（每武将一英雄：六角格边框 + 格内姓氏大字，选中武将黄框 0xffd166/其他灰蓝框 0x9fb4c7，姓氏字 26px 居中、选中金字/其他浅字、深描边，**去圆点**；武将名存繁体 關羽/周倉/孫乾/呂布，地图/右侧列表/城池面板/战斗武将卡自动生效）
+- [x] 守将渲染（红城寨格 + 格内姓氏大字，白字 26px 深描边，替代原旗标 + 名字标签）；杂兵渲染（深绿野怪格 + 中央兵力数）；被歼/被灭后从地图移除
 - [x] 窄路关卡阻塞：**移动路径不能穿过任何武将**（存活守将 / 未歼灭杂兵 / 其他英雄占据格在寻路 `makeMapCosts` 中不可通行，含己方英雄——不能穿过/重叠）；**战斗目标格放行**：点击存活守将/未歼灭杂兵格 → 英雄**直接移动上去交战**（reducer `moveHeroTo` 把守将/杂兵格作为移动终点放行、走进触发战斗；原「拦存活守将格」移除；目标格在 `makeMapCosts(goalHex)` 中不作为障碍，其余武将格照旧挡）
 - [x] 城池界面 TownPanel（驻军/驻城/访问 + 移兵/驻守/交换/出城）
 - [x] **战斗交互 + 回流（2026-08 Task 8 + Task 5 修订）**：点存活守将/未歼灭杂兵格 → 英雄**直接移动到目标格本身**（`animateMove`；`moveHeroTo` 放行走入；路径中间不穿过武将）→ 到达后触发战斗（构建双方 `BattleArmyConfig`：攻方=当前英雄 army+武将属性；守将=units+`GENERAL_BASES`+`deriveStats`；杂兵=units 无武将「野怪」）→ `scene.start('Battle', { enter: { mode, campaignId, heroId, playerId, targetPosition, garrisonId/neutralId, player, enemy, grid } })`；BattleScene `create(data.enter)` 用外部阵容开局（无 enter 仍走战斗测试固定阵容）；结算后「返回主菜单」按钮若带回流上下文 → 回 Adventure 携带 `BattleResult`；AdventureScene `create(data.result)` → `campaign/resolveBattle` 写回（剩余兵力/经验 `general/gainXp`/守将 `alive=false`/杂兵 `defeated=true`/**胜利占格**（英雄 position=targetPosition、不清空剩余移动力，已扣走进去的代价）/**失败回城**（英雄回玩家第一城格、行动力=0）`checkVictory` 胜利判定）；悬停守将/杂兵格（英雄可达）→ 刀剑光标 `cursorKind='sword'` + 目标格红色交战高亮；e2e `src/e2e/campaign-battle.spec.ts`（含**败局回归**：dev bridge 弱我强敌 → defend 循环战败 → 返回 → 英雄回玩家第一城格 + 行动力 0，杂兵不被歼）

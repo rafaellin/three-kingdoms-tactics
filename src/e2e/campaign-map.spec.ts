@@ -7,7 +7,14 @@ interface DebugState {
   mode?: string | null
   campaignId?: string | null
   heroes?: { generalId: string; faction: string; position: { q: number; r: number } }[]
-  garrisons?: { id: string; generalId: string; position: { q: number; r: number }; alive: boolean }[]
+  garrisons?: {
+    id: string
+    generalId: string
+    name?: string
+    label?: string
+    position: { q: number; r: number }
+    alive: boolean
+  }[]
   neutrals?: { id: string; position: { q: number; r: number }; defeated: boolean }[]
 }
 
@@ -36,13 +43,16 @@ test('战役模式：读东岭关配置，3 英雄 + 1 守将 + 2 杂兵，守�
   expect(garrison.alive).toBe(true)
   expect(garrison.generalId).toBe('g-kongxiu')
   expect(garrison.position).toEqual({ q: 0, r: 1 })
+  // 守将格渲染姓氏大字：孔秀 → 白字「孔」（替代原金色旗标 + 12px 名字标签）
+  expect(garrison.name).toBe('孔秀')
+  expect(garrison.label).toBe('孔')
 
   // 杂兵：2 组（练级用），开局未歼灭
   expect(s.neutrals).toHaveLength(2)
   expect(s.neutrals?.every((n) => !n.defeated)).toBe(true)
 
-  // 截图交人工目检：多英雄圆点（选中关羽金点+白圈/周仓孙乾银青点）、
-  // 孔秀红城寨格 + 名字标签、两组深绿杂兵格 + 兵力数、东岭小城、窄路山封锁
+  // 截图交人工目检：多英雄六角格边框 + 格内姓氏大字（选中关羽金字「關」/周仓孙乾浅字）、
+  // 孔秀红城寨格 + 白字「孔」、两组深绿杂兵格 + 兵力数、东岭小城、窄路山封锁
   await page.screenshot({ path: 'screenshots/campaign-dongling.png' })
 })
 
