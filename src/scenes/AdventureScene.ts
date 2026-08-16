@@ -18,6 +18,7 @@ import { getTerrain } from '../data/terrain'
 import { RESOURCE_NODE_DEFS } from '../data/resourceNode'
 import { BgmManager, getBgmManager } from '../audio/BgmManager'
 import { BgmControls } from '../ui/BgmControls'
+import { TownPanel } from '../ui/TownPanel'
 import { fadeIn } from '../ui/fade'
 import { SfxManager } from '../audio/SfxManager'
 import { HERO_STARTS, START_FACTIONS, START_GENERALS, START_TOWNS, TURN_ORDER } from '../data/bootstrap'
@@ -123,8 +124,10 @@ export class AdventureScene extends Phaser.Scene {
   private nodeSprites = new Map<string, Phaser.GameObjects.Image>()
   /** 城池图标 sprite（town.id → image） */
   private townSprites = new Map<string, Phaser.GameObjects.Image>()
-  /** 城池详情 tag（点击城池格显示） */
-  private townDetailText!: Phaser.GameObjects.Text
+  /** 城池界面（点击城池格打开；打开期间屏蔽地图输入） */
+  private townPanel: TownPanel | null = null
+  /** 弹窗刚关闭的手势锁：吞掉一次尾随 pointerup，防关闭后的点击泄漏成地图操作（与 BattleScene 同机制） */
+  private modalGestureLock = false
   /** 资源点详情 tag（悬停资源点显示：名称 + 每日产出/一次性 + 状态） */
   private nodeDetailText!: Phaser.GameObjects.Text
   /** 结束回合按钮 */
@@ -204,7 +207,7 @@ export class AdventureScene extends Phaser.Scene {
 
   /** 结束回合：dispatch game/advanceTurn，推进到下一势力（跨周自动结算） */
   private endTurn(): void {
-    if (this.busy) return
+    if (this.busy || this.townPanel) return
     this.store.dispatch('game/advanceTurn')
     this.refreshViews()
   }
@@ -347,19 +350,6 @@ export class AdventureScene extends Phaser.Scene {
         .setOrigin(0, 0.5)
         .setDepth(10)
         .setScrollFactor(0)
-    )
-    // 城池详情 tag（默认隐藏）
-    this.townDetailText = this.uiOnly(
-      this.add
-        .text(0, 0, '', {
-          fontFamily: 'sans-serif',
-          fontSize: '18px',
-          color: '#ffffff',
-          backgroundColor: 'rgba(0,0,0,0.65)'
-        })
-        .setDepth(11)
-        .setScrollFactor(0)
-        .setVisible(false)
     )
     // 资源点详情 tag（默认隐藏；悬停资源点显示）
     this.nodeDetailText = this.uiOnly(
@@ -802,7 +792,8 @@ export class AdventureScene extends Phaser.Scene {
   private setupInput(): void {
     const cam = this.cameras.main
     this.input.on('pointerdown', (p: Phaser.Input.Pointer) => {
-      if (p.button !== 0) return // 仅左键触发地图交互
+      // 城池面板打开期间 / 面板刚关闭的手势锁 / 非左键 → 不处理地图输入（防面板按钮泄漏成地图拖拽/点击）
+      if (this.townPanel || this.modalGestureLock || p.button !== 0) return
       // 仅在 Map 区启动拖拽；HUD / 工具栏区不触发地图交互
       if (!this.isInMapZone(p.y)) return
       this.dragging = true
@@ -810,6 +801,7 @@ export class AdventureScene extends Phaser.Scene {
       this.lastPointer = { x: p.x, y: p.y }
     })
     this.input.on('pointermove', (p: Phaser.Input.Pointer) => {
+      if (this.townPanel || this.modalGestureLock) return // 面板期间 / 手势锁 → 不处理拖拽/悬停
       if (this.dragging) {
         const dx = (p.x - this.lastPointer.x) / cam.zoom
         const dy = (p.y - this.lastPointer.y) / cam.zoom
@@ -822,6 +814,11 @@ export class AdventureScene extends Phaser.Scene {
     })
     this.input.on('pointerup', (p: Phaser.Input.Pointer) => {
       if (p.button !== 0) return // 仅左键触发地图交互
+      // 面板打开期间或面板刚关闭的手势收尾 → 吞掉本次 pointerup，防触发地图操作；手势收尾（up）时解锁
+      if (this.townPanel || this.modalGestureLock) {
+        if (!p.isDown) this.modalGestureLock = false
+        return
+      }
       this.dragging = false
       // 仅在 Map 区处理点击；位移过小视为点击（而非拖拽平移）
       if (!this.isInMapZone(p.y)) return
@@ -897,15 +894,21 @@ export class AdventureScene extends Phaser.Scene {
     const world = this.cameras.main.getWorldPoint(p.x, p.y)
     const hex = this.layout.pixelToHex(world.x, world.y)
     const hero = currentHero(this.state)
-    // 点击城池格：显示城池详情（不触发移动）
     const town = this.state.towns.find((t) => hexKey(t.position) === hexKey(hex))
-    if (town) {
-      this.showTownDetail(town, p)
-      this.hideNodeTooltip()
-      return
-    }
-    this.hideTownDetail()
     this.hideNodeTooltip()
+    // 点击城池格：当前英雄可走进该城（访问槽空 + 不在城上 + 可达）→ 走进去（落地自动进城）；
+    // 否则打开城池面板（查看驻军/驻将/访问，执行驻守/换将/出城/移兵）
+    if (town) {
+      const canEnter =
+        hero &&
+        !town.visitorGeneralId &&
+        hexKey(hero.position) !== hexKey(hex) &&
+        this.reachable.has(hexKey(hex))
+      if (!canEnter) {
+        this.openTownPanel(town.id)
+        return
+      }
+    }
     if (!hero || !this.mapKeys.has(hexKey(hex))) return
     // 守将/杂兵占据格在 makeMapCosts 中不可通行 → 不在可达集 → 自然 no-op（战斗接线 Task 8）
     if (!this.reachable.has(hexKey(hex))) return
@@ -914,25 +917,56 @@ export class AdventureScene extends Phaser.Scene {
     void this.animateMove(path)
   }
 
-  /** 显示城池详情 tag（点击城池格时） */
-  private showTownDetail(
-    town: { id: string; name: string; owner: FactionId; level: number; garrisonGeneralId: string | null },
-    pointer: Phaser.Input.Pointer
-  ): void {
-    const ownerName: Record<FactionId, string> = { wei: '魏', shu: '蜀', wu: '吴', qun: '群' }
-    const garrison = town.garrisonGeneralId
-      ? this.state.generals.find((g) => g.id === town.garrisonGeneralId)?.name ?? ''
-      : ''
-    this.townDetailText.setText(
-      `${town.name}  Lv${town.level}  势力:${ownerName[town.owner]}${garrison ? `  驻将:${garrison}` : ''}`
+  /** 打开城池界面：传 getState 读最新 core 状态，动作接线到 reducer 命令 + 重绘面板 + 刷新地图 */
+  private openTownPanel(townId: string): void {
+    if (this.townPanel) return
+    this.townPanel = new TownPanel(
+      this,
+      townId,
+      () => this.state,
+      {
+        onGarrison: (heroId) => {
+          this.store.dispatch('hero/garrison', { heroId, townId })
+          this.afterTownAction()
+        },
+        onLeave: (heroId) => {
+          this.store.dispatch('hero/leaveTown', { heroId, townId })
+          this.afterTownAction()
+        },
+        onSwap: () => {
+          this.store.dispatch('town/swapHeroes', { townId })
+          this.afterTownAction()
+        },
+        onTransfer: (from, defId, count) => {
+          this.store.dispatch('town/transferTroops', { townId, from, defId, count })
+          this.afterTownAction()
+        }
+      },
+      () => {
+        // 同步回调（关闭路径内）：清面板引用 + 置手势锁吞掉尾随 pointerup（防泄漏成地图操作）
+        this.townPanel = null
+        this.modalGestureLock = true
+        this.dragging = false
+      }
     )
-    // tag 跟随点击位置，视口坐标
-    this.townDetailText.setPosition(pointer.x + 12, pointer.y - 8)
-    this.townDetailText.setVisible(true)
   }
 
-  private hideTownDetail(): void {
-    this.townDetailText.setVisible(false)
+  /** 城池动作 dispatch 后：刷新地图（出城/进城会增删英雄）并重绘面板 */
+  private afterTownAction(): void {
+    this.refreshViews()
+    this.townPanel?.refresh()
+  }
+
+  /** 移动结束后：英雄落在友好城池格 → 自动进城（设为访问武将；访问槽被占/已在城 → 由 reducer 守卫 no-op） */
+  private tryAutoEnterTown(): void {
+    const hero = currentHero(this.state)
+    if (!hero || !this.state.map) return
+    const town = this.state.towns.find((t) => hexKey(t.position) === hexKey(hero.position))
+    if (!town) return
+    if (town.owner !== hero.faction) return // 只自动进友城
+    if (town.visitorGeneralId === hero.generalId || town.garrisonGeneralId === hero.generalId) return
+    this.store.dispatch('hero/enterTown', { heroId: hero.generalId, townId: town.id })
+    this.refreshViews()
   }
 
   /** 沿路径逐格移动：dispatch unit/move → tween 到位 → 刷新迷雾（揭开新地形） */
@@ -962,6 +996,8 @@ export class AdventureScene extends Phaser.Scene {
       // 移动结束（含被 reducer 拒绝/动画中断）：必须停掉脚步循环音效
       this.sfx?.stopLooped()
     }
+    // 移动结束：落在友好城池格 → 自动进城（访问武将）
+    this.tryAutoEnterTown()
   }
 
   private tweenHeroTo(hex: Axial): Promise<void> {
@@ -1016,6 +1052,12 @@ export class AdventureScene extends Phaser.Scene {
         movementLeft: h.movementLeft,
         maxMovement: h.maxMovement
       })),
+      generals: state.generals.map((g) => ({
+        id: g.id,
+        name: g.name,
+        level: g.level,
+        army: g.army
+      })),
       garrisons: state.garrisons.map((g) => ({
         id: g.id,
         generalId: g.generalId,
@@ -1043,7 +1085,17 @@ export class AdventureScene extends Phaser.Scene {
         iconX: col.icon.x,
         textX: col.text.x
       })),
-      towns: state.towns.map((t) => ({ id: t.id, name: t.name, owner: t.owner, level: t.level, position: t.position })),
+      towns: state.towns.map((t) => ({
+        id: t.id,
+        name: t.name,
+        owner: t.owner,
+        level: t.level,
+        position: t.position,
+        garrison: t.garrison,
+        garrisonGeneralId: t.garrisonGeneralId,
+        visitorGeneralId: t.visitorGeneralId
+      })),
+      townPanel: this.townPanel?.getDebugState() ?? null,
       nodeStates: {
         picked: Object.values(state.nodeStates).filter((n) => n.visited).length,
         claimedMines: Object.values(state.nodeStates).filter((n) => n.owner !== null).length

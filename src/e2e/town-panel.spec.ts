@@ -1,0 +1,187 @@
+import { expect, test } from '@playwright/test'
+import { gotoCampaign } from './helpers'
+
+/**
+ * 城池界面 e2e：TownPanel（驻军/驻城/访问 + 移兵/驻守/换将/出城）。
+ * 流程全部程序化断言（window.__game.getState()）：
+ * - 关羽从 (0,-1) 点击城池 (0,0) 走进 → 自动进城（访问武将）；
+ * - 点击城池格打开 TownPanel → 断言 驻军/驻城/访问 渲染；
+ * - 驻守 → garrisonGeneralId；移兵（英雄↔驻军 双向）；出城 → 回 heroes；换将 → 槽位互换；
+ * - 面板按钮坐标经 getDebugState().townPanel.buttons 读取后点击（与 gotoBooted 的 OK 按钮同模式）。
+ * 模型无多模态：断言一律程序化；截图仅供人工目检。
+ */
+
+/** 东岭小城 (0,0) 屏幕中心（1920×1080，相机 centerOn(0,0) → 屏幕中心 = 世界原点） */
+const TOWN_SCREEN = { x: 960, y: 540 }
+
+interface TownPanelButtonDebug {
+  key: string
+  label: string
+  x: number
+  y: number
+  enabled: boolean
+}
+
+interface DebugGameState {
+  ready?: boolean
+  heroes?: { generalId: string; position: { q: number; r: number } }[]
+  towns?: {
+    id: string
+    name: string
+    owner: string
+    level: number
+    position: { q: number; r: number }
+    garrison: { defId: string; count: number }[]
+    garrisonGeneralId: string | null
+    visitorGeneralId: string | null
+  }[]
+  generals?: { id: string; name: string; army: { defId: string; count: number }[] }[]
+  townPanel?: {
+    open: boolean
+    name?: string
+    garrison?: { defId: string; count: number }[]
+    garrisonGeneralId?: string | null
+    garrisonGeneralName?: string | null
+    garrisonGeneralArmy?: { defId: string; count: number }[]
+    visitorGeneralId?: string | null
+    visitorGeneralName?: string | null
+    buttons?: TownPanelButtonDebug[]
+  } | null
+}
+
+type Page = import('@playwright/test').Page
+
+const readState = (page: Page): Promise<DebugGameState> =>
+  page.evaluate(() => (window as { __game?: { getState(): DebugGameState } }).__game?.getState() ?? {})
+
+/** 点城池格（关羽走进）→ 自动进城（访问武将） */
+const clickTownAndEnter = (page: Page, heroId: string) =>
+  page.waitForFunction(
+    (h) => (window as { __game?: { getState(): DebugGameState } }).__game?.getState()?.towns?.[0]?.visitorGeneralId === h,
+    heroId
+  )
+
+/** 打开城池面板 */
+const openPanel = (page: Page) =>
+  page.waitForFunction(() => (window as { __game?: { getState(): DebugGameState } }).__game?.getState()?.townPanel?.open === true)
+
+/** 按 key 读面板按钮坐标并点击（面板每次重绘后坐标可能变化 → 每点前重新读） */
+const clickBtn = async (page: Page, key: string): Promise<void> => {
+  const s = await readState(page)
+  const b = s.townPanel?.buttons?.find((x) => x.key === key)
+  expect(b, `面板按钮 ${key} 应存在`).toBeDefined()
+  await page.mouse.click(b!.x, b!.y)
+}
+
+/** 武将 army 中某兵种数量 */
+const armyOf = (s: DebugGameState, generalId: string, defId: string): number =>
+  s.generals?.find((g) => g.id === generalId)?.army?.find((u) => u.defId === defId)?.count ?? 0
+
+test('城池面板：进城→展示驻军/英雄→驻守→移兵双向→出城→关闭', async ({ page }) => {
+  await gotoCampaign(page)
+  await page.evaluate(() => (window as { __game?: { setAnimationSpeed(ms: number): void } }).__game?.setAnimationSpeed(0))
+
+  // ① 关羽 (0,-1) 点城池 (0,0) → 走进 → 落地自动进城（访问=关羽）
+  await page.mouse.click(TOWN_SCREEN.x, TOWN_SCREEN.y)
+  await clickTownAndEnter(page, 'g-guan')
+  let s = await readState(page)
+  expect(s.heroes?.some((h) => h.generalId === 'g-guan')).toBe(false)
+
+  // ② 再点城池 → 打开面板：显示 访问英雄=关羽、驻军/驻城空
+  await page.mouse.click(TOWN_SCREEN.x, TOWN_SCREEN.y)
+  await openPanel(page)
+  s = await readState(page)
+  expect(s.townPanel?.name).toBe('东岭小城')
+  expect(s.townPanel?.visitorGeneralName).toBe('关羽')
+  expect(s.townPanel?.visitorGeneralId).toBe('g-guan')
+  expect(s.townPanel?.garrisonGeneralName).toBeNull()
+  expect(s.townPanel?.garrison).toEqual([])
+
+  // ③ 驻守 → 访问→驻城
+  await clickBtn(page, 'garrison')
+  await page.waitForFunction(
+    () => (window as { __game?: { getState(): DebugGameState } }).__game?.getState()?.towns?.[0]?.garrisonGeneralId === 'g-guan'
+  )
+  s = await readState(page)
+  expect(s.towns?.[0]?.garrisonGeneralId).toBe('g-guan')
+  expect(s.towns?.[0]?.visitorGeneralId).toBeNull()
+
+  // ④ 移兵 英雄→驻军：关羽刀兵 20→19，驻军 刀兵×1
+  await clickBtn(page, 'transfer-hero-swordsman-1')
+  await page.waitForFunction(
+    () =>
+      (window as { __game?: { getState(): DebugGameState } }).__game?.getState()?.towns?.[0]?.garrison?.some(
+        (u) => u.defId === 'swordsman' && u.count === 1
+      )
+  )
+  s = await readState(page)
+  expect(s.towns?.[0]?.garrison).toEqual([{ defId: 'swordsman', count: 1 }])
+  expect(armyOf(s, 'g-guan', 'swordsman')).toBe(19)
+  // 截图交人工目检：城池面板（驻军×1 + 驻城英雄关羽 + 移兵 1/全 按钮）
+  await page.screenshot({ path: 'screenshots/town-panel.png' })
+
+  // ⑤ 移兵 驻军→英雄：刀兵 1→0（关羽回到 20）
+  await clickBtn(page, 'transfer-garrison-swordsman-1')
+  await page.waitForFunction(
+    () => (window as { __game?: { getState(): DebugGameState } }).__game?.getState()?.towns?.[0]?.garrison?.length === 0
+  )
+  s = await readState(page)
+  expect(s.towns?.[0]?.garrison).toEqual([])
+  expect(armyOf(s, 'g-guan', 'swordsman')).toBe(20)
+
+  // ⑥ 出城 → 关羽回 heroes（位置=城格），军队保持
+  await clickBtn(page, 'leave')
+  await page.waitForFunction(
+    () => (window as { __game?: { getState(): DebugGameState } }).__game?.getState()?.heroes?.some((h) => h.generalId === 'g-guan')
+  )
+  s = await readState(page)
+  expect(s.towns?.[0]?.garrisonGeneralId).toBeNull()
+  expect(s.heroes?.find((h) => h.generalId === 'g-guan')?.position).toEqual({ q: 0, r: 0 })
+  expect(armyOf(s, 'g-guan', 'swordsman')).toBe(20)
+
+  // ⑦ 关闭面板
+  await clickBtn(page, 'close')
+  await page.waitForFunction(() => (window as { __game?: { getState(): DebugGameState } }).__game?.getState()?.townPanel == null)
+  expect((await readState(page)).townPanel).toBeNull()
+})
+
+test('城池面板：换将（驻城↔访问互换）', async ({ page }) => {
+  await gotoCampaign(page)
+  await page.evaluate(() => (window as { __game?: { setAnimationSpeed(ms: number): void } }).__game?.setAnimationSpeed(0))
+
+  // ① 关羽进城（访问）
+  await page.mouse.click(TOWN_SCREEN.x, TOWN_SCREEN.y)
+  await clickTownAndEnter(page, 'g-guan')
+
+  // ② 打开面板 → 驻守（garrison=关羽）
+  await page.mouse.click(TOWN_SCREEN.x, TOWN_SCREEN.y)
+  await openPanel(page)
+  await clickBtn(page, 'garrison')
+  await page.waitForFunction(
+    () => (window as { __game?: { getState(): DebugGameState } }).__game?.getState()?.towns?.[0]?.garrisonGeneralId === 'g-guan'
+  )
+
+  // ③ 关闭面板 → 点城池（当前英雄=周仓）→ 周仓走进 → 自动进城（访问=周仓）
+  await clickBtn(page, 'close')
+  await page.waitForFunction(() => (window as { __game?: { getState(): DebugGameState } }).__game?.getState()?.townPanel == null)
+  await page.mouse.click(TOWN_SCREEN.x, TOWN_SCREEN.y)
+  await clickTownAndEnter(page, 'g-zhoucang')
+
+  // ④ 打开面板：garrison=关羽、visitor=周仓 → 点换将 → 互换
+  await page.mouse.click(TOWN_SCREEN.x, TOWN_SCREEN.y)
+  await openPanel(page)
+  let s = await readState(page)
+  expect(s.towns?.[0]?.garrisonGeneralId).toBe('g-guan')
+  expect(s.towns?.[0]?.visitorGeneralId).toBe('g-zhoucang')
+  await clickBtn(page, 'swap')
+  await page.waitForFunction(() => {
+    const st = (window as { __game?: { getState(): DebugGameState } }).__game?.getState()
+    return st?.towns?.[0]?.garrisonGeneralId === 'g-zhoucang' && st?.towns?.[0]?.visitorGeneralId === 'g-guan'
+  })
+  s = await readState(page)
+  expect(s.towns?.[0]?.garrisonGeneralId).toBe('g-zhoucang')
+  expect(s.towns?.[0]?.visitorGeneralId).toBe('g-guan')
+
+  // 截图交人工目检：换将后的面板（驻城=周仓、访问=关羽）
+  await page.screenshot({ path: 'screenshots/town-panel-swap.png' })
+})

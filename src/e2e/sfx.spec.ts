@@ -119,8 +119,9 @@ test('移动音效：移动时循环播放、移动结束停止；与 BGM 同时
   expect((await getSfx(page)).volume).toBeCloseTo(0.3)
   expect((await getSfx(page)).loopPlaying).toBe(false)
 
-  // 首次交互（点击地图中心）→ 起播 BGM；此点击在 hero 格上不触发移动
-  await page.mouse.click(VIEW_W / 2, VIEW_H / 2)
+  // 首次交互（点击顶部 HUD 空白区，非地图格）→ 起播 BGM；
+  // 不点地图中心：hero 出生点 (0,0) 是城池格，点它会打开城池面板（挡住后续地图点击）
+  await page.mouse.click(VIEW_W / 2, 24)
   await waitBgmPlaying(page)
 
   // 放慢动画便于观测循环播放

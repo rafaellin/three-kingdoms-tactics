@@ -642,11 +642,11 @@ export class TownPanel extends Phaser.GameObjects.Container {
 }
 ```
 
-- [ ] **Step 1: 写失败测试** — `src/e2e/town-panel.spec.ts`：进城 → TownPanel 显示驻军/英雄 → 驻守/移兵/换将/出城断言（getState 验证 state.towns）
-- [ ] **Step 2: 运行确认失败**
-- [ ] **Step 3: 实现** — TownPanel + AdventureScene 接线
-- [ ] **Step 4: 运行确认通过**
-- [ ] **Step 5: 提交**
+- [x] **Step 1: 写失败测试** — `src/e2e/town-panel.spec.ts`：进城 → TownPanel 显示驻军/英雄 → 驻守/移兵/换将/出城断言（getState 验证 state.towns）
+- [x] **Step 2: 运行确认失败**（未实现前断言失败）
+- [x] **Step 3: 实现** — TownPanel + AdventureScene 接线
+- [x] **Step 4: 运行确认通过** — `pnpm test` + `pnpm test:e2e`（town-panel + 全量）全绿；`pnpm typecheck` 干净
+- [x] **Step 5: 提交**
 
 ```bash
 git add src/ui/TownPanel.ts src/scenes/AdventureScene.ts src/dev/debug.ts src/e2e/town-panel.spec.ts

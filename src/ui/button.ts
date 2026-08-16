@@ -14,6 +14,8 @@ export interface ButtonOptions {
   minWidth?: number
   /** 原点（默认居中 0.5,0.5；角落按钮用 1,0.5 右对齐） */
   origin?: { x: number; y: number }
+  /** 内边距（px，默认 20×10；小按钮用 8×6 之类收窄） */
+  padding?: { x: number; y: number }
 }
 
 /**
@@ -36,7 +38,8 @@ export function makeButton(
     hoverBackground,
     color = '#ffffff',
     minWidth = 0,
-    origin
+    origin,
+    padding = { x: 20, y: 10 }
   } = opts
   const hover = hoverBackground ?? lighten(background, 0.18)
   const originX = origin?.x ?? 0.5
@@ -51,7 +54,7 @@ export function makeButton(
   }
   if (minWidth > 0) style.fixedWidth = minWidth
 
-  const btn = scene.add.text(x, y, label, style).setOrigin(originX, originY).setPadding(20, 10)
+  const btn = scene.add.text(x, y, label, style).setOrigin(originX, originY).setPadding(padding.x, padding.y)
   btn.setInteractive({ useHandCursor: true })
   btn.on('pointerover', () => btn.setStyle({ backgroundColor: css(hover) }))
   btn.on('pointerout', () => btn.setStyle({ backgroundColor: css(background) }))

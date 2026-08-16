@@ -35,7 +35,9 @@ interface DebugGameState {
   nodeStates?: { picked: number; claimedMines: number }
   /** 当前渲染的资源点 hexKey（仅已探索区域；未探索资源不可见） */
   visibleNodes?: string[]
-  towns?: { id: string; name: string; owner: string; level: number; position: Axial }[]
+  towns?: { id: string; name: string; owner: string; level: number; position: Axial; garrison: { defId: string; count: number }[]; garrisonGeneralId: string | null; visitorGeneralId: string | null }[]
+  /** 城池面板（打开时非空；点击城池格打开） */
+  townPanel?: { open: boolean; name: string } | null
 }
 
 // ---- 与渲染层一致的常量 / core 复算工具 ----
@@ -181,17 +183,20 @@ test('初始化：资源条 = shu 初始资源、第1周第1天、成都城池�
   for (const col of hud) expect(col.textX).toBeGreaterThan(col.iconX + 11)
   // 各列自左向右排布（后一列文本左沿在前一列之后）
   for (let i = 1; i < hud.length; i++) expect(hud[i]!.textX).toBeGreaterThan(hud[i - 1]!.textX)
-  // 成都城池：蜀 Lv1，位于 (0,0)（与英雄出生点重合）
-  expect(s.towns).toEqual([{ id: 't-chengdu', name: '成都', owner: 'shu', level: 1, position: { q: 0, r: 0 } }])
+  // 成都城池：蜀 Lv1，位于 (0,0)（与英雄出生点重合）；沙盒开局 garrisonGeneralId 指向关羽
+  expect(s.towns).toEqual([
+    { id: 't-chengdu', name: '成都', owner: 'shu', level: 1, position: { q: 0, r: 0 }, garrison: [], garrisonGeneralId: 'g-guan', visitorGeneralId: null }
+  ])
   // 未探索区域资源不可见：渲染的资源点 = 仅开局已探索的那部分（与 core 复算一致）
   expect(s.visibleNodes).toEqual(visibleNodesFor(initialFog))
-  // 点击城池格 → 显示详情（不触发移动），英雄仍在出生点
+  // 点击城池格 → 打开城池面板（不触发移动），英雄仍在出生点
   const townScreen = hexToScreen({ q: 0, r: 0 })
   await page.mouse.click(townScreen.x, townScreen.y)
-  await page.waitForFunction(() => (window as { __game?: { getState(): DebugGameState } }).__game?.getState()?.busy === false)
+  await page.waitForFunction(() => (window as { __game?: { getState(): DebugGameState } }).__game?.getState()?.townPanel?.open === true)
   expect((await getState(page)).hero?.position).toEqual({ q: 0, r: 0 })
+  expect((await getState(page)).townPanel?.name).toBe('成都')
 
-  // 截图交人工目检：顶部资源条 + 日期 + 成都城池方块（与 hero 圆点叠在 (0,0)）
+  // 截图交人工目检：顶部资源条 + 日期 + 成都城池方块（与 hero 圆点叠在 (0,0)）+ 打开的城池面板
   await page.screenshot({ path: 'screenshots/resources-hud.png' })
 })
 
